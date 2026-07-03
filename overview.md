@@ -5,7 +5,7 @@
 ## Part 1 — Dataset Creation
 
 Two rigidly mounted, hardware-synchronized cameras capture the same scene at 10–20 m. The right camera always looks through a glass pane (clean → reference, prepared → distorted); the left camera is the ground-truth reference. A single static homography (after per-camera lens undistortion) maps the right image into the left coordinate system, yielding almost pixel-aligned **(clean, distorted)** image pairs — no manual masks needed.
-→ Details in [setup.md](setup.md).
+→ Details in [setup.md](setup.md). Eventually we can also use https://github.com/JannLi/physical_lens_soiling for creating synthetic data and use it for comparision.
 
 ## Part 2 — Network Training
 
