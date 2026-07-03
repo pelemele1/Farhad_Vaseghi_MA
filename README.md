@@ -3,10 +3,6 @@
 # Project Title
 
 
-> Adapt the badges above (versions, framework) to your actual stack via [shields.io](https://shields.io/badges).
-
----
-
 ## 🎯 Project Goal
 
 **One-sentence objective:** _State in a single sentence what this project achieves._
