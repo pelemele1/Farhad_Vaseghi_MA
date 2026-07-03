@@ -1,160 +1,258 @@
-# Student Project Title
-Use https://shields.io/badges to create badges.
+<a name="readme-top"></a>
 
-![ROS](https://img.shields.io/badge/ros-%230A0FF9.svg?style=for-the-badge&logo=ros&logoColor=white)
-![Python](https://img.shields.io/badge/python-3670A0?style=for-the-badge&logo=python&logoColor=ffdd54)
-![Pytorch](https://img.shields.io/badge/pytorch-blue?logo=pytorch)
-![Static Badge](https://img.shields.io/badge/raspberry-purple?logo=raspberrypi)
-![C++](https://img.shields.io/badge/c++-%2300599C.svg?style=for-the-badge&logo=c%2B%2B&logoColor=white)
-![Passing Badge](https://img.shields.io/badge/Build-passing-green?style=for-the-badge)
-![ROS Version](https://img.shields.io/badge/ROS%20version-humble-blue?style=for-the-badge)
+# Project Title
 
-<!-- TABLE OF CONTENTS -->
+> Adapt the badges above (versions, framework) to your actual stack via [shields.io](https://shields.io/badges).
+
+---
+
+## 🎯 Project Goal
+
+**One-sentence objective:** _State in a single sentence what this project achieves._
+
+**Problem statement:** _What problem are you solving, and why does it matter? What is the input, what is the desired output (e.g. "classify surface defects from grayscale camera images into 4 categories")?_
+
+**Success criteria:** _How do you know the project succeeded? Name the target metric and a concrete threshold (e.g. "≥ 0.90 F1 on the held-out test set", "inference < 50 ms/frame on a Raspberry Pi 5")._
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+---
+
+## 🗺️ Milestones / Roadmap
+
+Track the main milestones here. Keep this list up to date — checking boxes is the cheapest form of documentation.
+
+- [ ] **Data acquisition & inspection** — collect/download dataset, verify integrity, sanity-check with visualizations
+- [ ] **Baseline** — implement a simple, honest baseline (e.g. classical CV or a small CNN) to beat later
+- [ ] **Preprocessing pipeline** — resizing, normalization, augmentation; make it reproducible
+- [ ] **Model development** — architecture selection, training loop, checkpointing
+- [ ] **Evaluation** — metrics on a fixed train/val/test split, error analysis
+- [ ] **Experiment tracking** — log runs (config + metrics + artifacts) so results are reproducible
+- [ ] **Optimization / ablations** — hyperparameter tuning, ablation studies
+- [ ] **Documentation & handover** — finalize this README, export environment file, clean the repo
+
+See the [open issues](https://github.com/github_username/repo_name/issues) for the full list of features and known bugs.
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+---
+
 ## Table of Contents
+
 1. [About The Project](#about-the-project)
-   - [Built With](#built-with)
-2. [Getting Started](#getting-started)
-   - [Setup](#setup)
-   - [Installation](#installation)
-3. [Usage](#usage)
-4. [Roadmap](#roadmap)
-5. [License](#license)
-6. [Contact](#contact)
+2. [Data](#data)
+3. [Getting Started](#getting-started)
+4. [Usage](#usage)
+5. [Project Structure](#project-structure)
+6. [Results & Evaluation](#results--evaluation)
+7. [Reproducibility](#reproducibility)
+8. [References](#references)
+9. [License](#license)
+10. [Contact](#contact)
 
+---
 
-
-<!-- ABOUT THE PROJECT -->
 ## About The Project
 
-Explain what this project is about. Define the goals.
+_A short paragraph of context: the motivation, the setting (course, thesis, research group), and where this fits into a larger effort. Link to a proposal, paper, or related work if applicable._
 
-Here's a blank template to get started: To avoid retyping too much info. Do a search and replace with your text editor for the following: `github_username`, `repo_name`, `twitter_handle`, `linkedin_username`, `email_client`, `email`, `project_title`, `project_description`
+### Built With
 
-<p align="right">(<a href="#readme-top">back to top</a>)</p>
+_List the core libraries and frameworks (not every dependency — that goes in the environment file)._
 
-
-
-###  Software and Tools Used
-Describe here, which software and which versions you used, e.g.:
 - Python 3.12
-- Anaconda 2023.07-1
-- .....
-
+- PyTorch 2.x
+- OpenCV 4.x
+- scikit-learn / NumPy / pandas
+- _Experiment tracking:_ e.g. Weights & Biases / TensorBoard / MLflow
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
+---
 
+## Data
 
-<!-- GETTING STARTED -->
+> This is the section most ML READMEs get wrong. Without it, no one — including future-you — can reproduce your results.
+
+**Dataset(s):** _Name and briefly describe each dataset. Is it public, self-collected, or proprietary?_
+
+**Source / download:** _Where does the data come from? Provide a link or a script (`scripts/download_data.sh`). If the data cannot be shared (licensing, size, privacy), state that explicitly and describe how to obtain it._
+
+**Size & format:** _Number of samples, image resolution, color/grayscale, file format, total size on disk. Class distribution (is it imbalanced?)._
+
+**Splits:** _How are train / validation / test split? Fixed seed or predefined split files? Never tune on the test set._
+
+**Preprocessing:** _Resizing, normalization statistics (mean/std), augmentations. Point to the code that does it._
+
+**Data versioning:** _If the data changes over time, how do you version it? (e.g. DVC, a manifest file with checksums, or a dated snapshot.)_
+
+**License / ethics:** _Under what license is the data? Any privacy or usage restrictions?_
+
+> Raw data is **not** committed to Git. Keep it under `data/` (git-ignored). Large model checkpoints likewise belong in external storage or Git LFS, not the repo.
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+---
+
 ## Getting Started
-Here we describe, how to get the project running.
 
-### Setup
-Describe the setup and the used hardware.
+### Hardware
+
+_Describe the hardware you developed and tested on — this matters for ML. Example:_
+
+- GPU: NVIDIA RTX 4090 (24 GB), CUDA 12.4, driver 550.x
+- CPU / RAM: _..._
+- Target/deployment hardware if different (e.g. Raspberry Pi 5, Jetson)
 
 ### Installation
-Provide a step-by-step guide on how to get the project running locally. This should include steps to install necessary software, how to set up the environment, and how to run the application. In the following example we describe for example, how to clone the github repository, install conda, create a virtual environment from an myenv.yml file and run a python file test.py. Note, that this can also be described different and does not have to be the same structure, just make sure, that one can get your project running. Important is always, that you you specify, which versions you used of which software! Also make sure, that you create a .yml file from your environment, when you use python. Example:
+
+Always pin your versions and export an environment file so others can rebuild your exact setup.
 
 1. Clone the repo
    ```sh
    git clone https://github.com/github_username/repo_name.git
+   cd repo_name
    ```
-2. Install Anaconda as described [here](https://docs.anaconda.com/free/anaconda/install/index.html)
-3. Create an environment with conda by putting this in your command line:
+2. Create the environment (conda example)
    ```sh
-   conda env create -f myenv.yml
+   conda env create -f environment.yml
+   conda activate myenv
    ```
-4. Run the test.py file by using a IDE or run this in command line:
+   _or with pip/venv:_
    ```sh
-   python test.py
+   python -m venv .venv && source .venv/bin/activate
+   pip install -r requirements.txt
+   ```
+3. Download the data
+   ```sh
+   bash scripts/download_data.sh
+   ```
+4. (Optional) verify the setup
+   ```sh
+   python -m pytest tests/   # or a quick smoke test
    ```
 
+> **Export your environment** at the end of the project:
+> `conda env export --no-builds > environment.yml` (or `pip freeze > requirements.txt`).
 
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
 
+---
 
-<!-- USAGE EXAMPLES -->
-## Examples of Usages
-Describe, how use your code by examples:
-### Example 1
-### Example 2
+## Usage
 
-Use this space to show useful examples of how a project can be used. Additional screenshots, code examples and demos work well in this space. You may also link to more resources.
+Show the main entry points as copy-pasteable commands. Prefer config files over hardcoded parameters.
 
-_For more examples, please refer to the [Documentation](https://example.com)_
-
-
-
-<!-- ROADMAP -->
-## Roadmap
-Descripition of the milestones of this project. Example:
-- [ ] Make the camera running: Show video stream on Raspberry Pi 5 using python
-- [ ] Install Yolo8 (ultralytics), get it running on the Pi5 (at first try nano version)
-  - [ ] Example How to run yolov8 segmentation on raspberry Pi ([Link](https://medium.com/@elvenkim1/how-to-deploy-yolov8-segmentation-on-raspberry-pi-3a70470de231)
-  - [ ] Try different sizes of model (nano, small..), investigate ressourc usage (use for example psutil python package)
-- [ ] Transfer Learning: Train it to detect certain objects (you can choose which ones, use online datasets maybe)
-- [ ] Attach soiled glass in front of camera, investigate effect on object detection
-
-
-See the [open issues](https://github.com/github_username/repo_name/issues) for a full list of proposed features (and known issues).
-
-## Folder structure
-Describe here, how your project is structured:
-Examples:
-```text
-project/
-```text
-create3_project/
-├── config/
-│   ├── rviz config
-│   ├── LiDAR sensor config
-│   └── mapper config
-├── include/
-│   └── Header file of the publisher
-├── launch/
-│   ├── old_lidar/
-│   │   └── Python files from create3_examples/create3_lidar_slam
-│   ├── old_nolidar/
-│   │   └── Python files based on create3_examples/create3_lidar_slam with modifications
-│   ├── launch_publisher.py (C++ tester)
-│   └── Python files (shortcuts) to launch all lidar or all no lidar files
-├── run/
-│   ├── map.py
-│   ├── run_avoider.py
-│   └── run_mapper.py
-└── src/
-    └── Implementation file of the publisher
+**Train:**
+```sh
+python src/train.py --config configs/baseline.yaml
 ```
-Another example: A common approach for data science projects can be found [here](https://neptune.ai/blog/best-practices-for-data-science-project-workflows-and-file-organizations).
+
+**Evaluate:**
+```sh
+python src/evaluate.py --checkpoint checkpoints/best.pt --split test
+```
+
+**Inference on a single image / folder:**
+```sh
+python src/predict.py --input examples/sample.png --output outputs/
+```
+
+_Include a small example input and the expected output (an image, a printed metric, a plot) so users can confirm it works._
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+---
+
+## Project Structure
 
 ```text
-create3_project/
-├── data/
-│   ├── external
-│   ├── interim
-│   ├── processed 
-│   └── processes
-├── models
+repo_name/
+├── configs/            # YAML/Hydra configs — all hyperparameters live here, not in code
+├── data/               # datasets (git-ignored); see the Data section
+│   ├── raw/
+│   ├── interim/
+│   └── processed/
+├── notebooks/          # exploratory analysis, visualizations (kept clean, not the source of truth)
 ├── src/
-    ├── data
-    ├── features
-    └── model
+│   ├── data/           # loading, preprocessing, augmentation
+│   ├── models/         # architecture definitions
+│   ├── train.py
+│   ├── evaluate.py
+│   └── predict.py
+├── scripts/            # download_data.sh, helper scripts
+├── checkpoints/        # saved model weights (git-ignored / LFS)
+├── outputs/            # predictions, figures, logs
+├── tests/              # smoke tests / unit tests
+├── environment.yml     # or requirements.txt — pinned versions
+├── .gitignore
+├── LICENSE
+└── README.md
 ```
 
-<!-- LICENSE -->
+_A widely used reference layout for data science repos: [Cookiecutter Data Science](https://cookiecutter-data-science.drivendata.org/)._
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+---
+
+## Results & Evaluation
+
+**Metrics:** _Define exactly which metrics you report and why (e.g. F1 over accuracy for imbalanced classes; IoU/Dice for segmentation). State the evaluation split._
+
+**Main results:** _A table beats a paragraph._
+
+| Model         | Accuracy | F1 (macro) | Inference (ms) |
+|---------------|:--------:|:----------:|:--------------:|
+| Baseline      |   0.xx   |    0.xx    |      xx        |
+| Proposed      |   0.xx   |    0.xx    |      xx        |
+
+**Qualitative examples:** _For image tasks, show sample inputs with predictions (and failure cases — those are the most informative). Embed images from `outputs/`._
+
+**Experiment tracking:** _Where do the full logs live? Link the W&B / TensorBoard project. Note how to reproduce a specific run (config + seed + commit hash)._
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+---
+
+## Reproducibility
+
+_ML results are only trustworthy if they can be reproduced. Document:_
+
+- **Random seeds:** fixed and set for `numpy`, `torch`, `random`, and the dataloader.
+- **Determinism:** note any non-deterministic ops (e.g. some cuDNN kernels) and whether you enforce determinism.
+- **Software versions:** captured in `environment.yml` / `requirements.txt`; record CUDA + driver versions.
+- **Commit hash:** each reported result is tied to a specific Git commit (and config file).
+- **Compute:** the hardware each experiment was run on.
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+---
+
+## References
+
+_Cite datasets, pretrained models, and papers/methods you build on. Add a BibTeX block here if this supports a thesis or publication._
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+---
+
 ## License
 
-Distributed under the MIT License. See `LICENSE.txt` for more information.
+Distributed under the MIT License. See `LICENSE` for details. _Note: the code license and the data license can differ — check both._
 
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
 
-<!-- CONTACT -->
+---
+
 ## Contact
 
-Your Name:
-Your e-mail:
+Name — email@example.com
 
+Project link: https://github.com/github_username/repo_name
 
+## Acknowledgments
 
+_Supervisors, funding, dataset providers, code you adapted._
 
-
-
-
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
