@@ -60,8 +60,10 @@ before committing to any of them for the full dataset build.
      Gaussian "lobes"), which reads as natural irregular scratch depth without needing an
      explicit highlight marker.
 
-**Result — v2 vs. v3** (same sample photo, all three methods; own generator in the bottom
-row of each):
+**Result — v1 vs. v2 vs. v3** (same sample photo, all three methods; own generator in the
+bottom row of each):
+
+![v1: smooth tapered curve, single continuous stroke, too clean/uniform](images/scratch_comparison_v1_initial.jpg)
 
 ![v2: broken segments + glint points, rejected as artificial](images/scratch_comparison_v2_with_glints.jpg)
 
