@@ -45,8 +45,10 @@ def test_add_scratch_is_reproducible_with_seed():
     assert np.array_equal(out1, out2)
 
 
-def test_no_scratches_leaves_image_unchanged():
-    img = _sample_image()
-    out, mask = add_scratch(img, n_scratches=(0, 0), seed=5)
+def test_zero_scratches_gives_an_empty_mask():
+    # add_scratch itself no longer takes severity kwargs (matches
+    # add_dirt/add_water's style: amount is randomized internally, not a
+    # call-time parameter) -- exercise the zero-scratch edge case through
+    # generate_scratch_mask directly instead.
+    mask = generate_scratch_mask((128, 192), n_scratches=(0, 0), seed=5)
     assert mask.max() == 0.0
-    assert np.array_equal(out, img)

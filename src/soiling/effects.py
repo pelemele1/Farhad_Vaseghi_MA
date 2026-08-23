@@ -14,11 +14,22 @@ pipeline for a rendered toy car, not usable on flat photos). Chosen after
 comparing renders from both against this generator on a sample image -- see
 docs/development_log.md for the comparison and rationale.
 """
+import random
 import sys
 from pathlib import Path
 
 import numpy as np
 import cv2 as cv
+
+
+def _seed_all(seed):
+    """Some vendored functions (add_distort, via `random.choice`) use
+    Python's stdlib `random` module, not `np.random` -- seeding only numpy
+    leaves that draw dependent on whatever global stdlib random state
+    happens to be left over from earlier calls in the same process, which
+    breaks reproducibility across repeated builds. Seed both."""
+    np.random.seed(seed)
+    random.seed(seed)
 
 _THIRD_PARTY_DIR = Path(__file__).resolve().parents[2] / "third_party" / "physical_lens_soiling"
 if str(_THIRD_PARTY_DIR) not in sys.path:
@@ -118,7 +129,7 @@ def generate_scratch_mask(shape, n_scratches=(2, 5), length_frac=(0.15, 0.55),
                            seed=None):
     """Returns a float32 [0, 1] mask, 0 = clean, higher = more distortion."""
     if seed is not None:
-        np.random.seed(seed)
+        _seed_all(seed)
     H, W = shape
     mask = np.zeros((H, W), dtype=np.float32)
     diag = float(np.hypot(H, W))
@@ -143,11 +154,14 @@ def generate_scratch_mask(shape, n_scratches=(2, 5), length_frac=(0.15, 0.55),
     return np.clip(mask, 0, 1)
 
 
-def add_scratch(image, **kwargs):
+def add_scratch(image, seed=None):
     """Alpha-blends procedural scratches onto `image` as bright refraction
-    highlights (screen blend). Returns (distorted_image, mask)."""
+    highlights (screen blend). Amount/severity is randomized internally
+    (like `add_dirt`/`add_water`, not exposed as call-time parameters) --
+    use `generate_scratch_mask` directly for explicit control over
+    count/width/opacity/length. Returns (distorted_image, mask)."""
     H, W = image.shape[:2]
-    mask = generate_scratch_mask((H, W), **kwargs)
+    mask = generate_scratch_mask((H, W), seed=seed)
     alpha3 = cv.merge([mask, mask, mask])
     img_f = image.astype(np.float32) / 255.0
     screen = 1 - (1 - img_f) * (1 - alpha3)
@@ -184,7 +198,7 @@ def add_dirt(image, seed=None):
     `dirt`) -- see third_party/physical_lens_soiling/NOTICE.md. Returns
     (distorted_image, mask)."""
     if seed is not None:
-        np.random.seed(seed)
+        _seed_all(seed)
     texture = _random_dirt_water_texture()
     out, mask = add_mudByTxture(image.copy(), texture)
     return out, _normalize_mask(mask)
@@ -203,7 +217,7 @@ def add_water(image, seed=None, mechanism=None):
     Returns (distorted_image, mask). See
     third_party/physical_lens_soiling/NOTICE.md."""
     if seed is not None:
-        np.random.seed(seed)
+        _seed_all(seed)
     if mechanism is None:
         mechanism = np.random.choice(["thick", "thin", "droplet"])
 

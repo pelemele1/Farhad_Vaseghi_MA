@@ -267,3 +267,77 @@ landing near 2-13%:
 **Delivered this session:** `src/soiling/effects.py` — `_DIRT_WATER_TEXTURE_MODS` narrowed
 from 7 to 5 entries, with the measurement documented inline as a comment. No vendored file
 touched. Full suite: 17/17.
+
+---
+
+## Session 6 — Dataset builder: precompute strategy, balanced single-distortion variants
+
+**Date:** 2026-08-24
+
+**`add_scratch` interface unified with `add_dirt`/`add_water`.** It previously took
+explicit severity kwargs (`n_scratches`, `length_frac`, `width_px`, `opacity`, ...); changed
+to `add_scratch(image, seed=None)`, with the amount randomized internally, matching the
+other two effects' style — needed so all three effects can be driven identically by the
+dataset builder. `generate_scratch_mask(...)` still takes the full parameter set directly
+for anyone who wants explicit control outside the dataset pipeline.
+
+**Augmentation strategy: precompute, not on-the-fly.** Before building the dataset, we
+weighed applying distortions live during training (on-the-fly, discussed vs. precomputing a
+static set once) given training happens on the shared FAU HPC allocation. The vendored
+effects (Perlin-texture generation, piecewise-affine warps for the droplet mechanism) are
+CPU-bound and non-trivial per call; a frozen-backbone, small-head Stage A model has a cheap
+GPU step, so an on-the-fly CPU pipeline risked bottlenecking the GPU on every batch, with the
+added cost paid on every epoch instead of once. Decision: precompute a static dataset once,
+train against fixed files. `src/soiling/dataset_builder.py` and
+`scripts/build_stage_a_dataset.py` implement this — one pass over the source images writes
+distorted variants + a `metadata.csv` (`path, source_id, variant_id, split, dirt, water,
+scratch`) to `data/processed/stage_a/`.
+
+**Splits are assigned per source image, not per variant** (`assign_splits`), so all variants
+of the same source frame stay in the same split — otherwise near-duplicate variants of one
+frame could leak across train/val/test.
+
+**Reproducibility gap found and accepted as a known limitation.** `add_distort` (vendored,
+used for the water "droplet" mechanism) draws via Python's stdlib `random.choice`, not
+`np.random` — seeding only `np.random.seed()` left that draw dependent on leftover global
+state. Fixed with a `_seed_all(seed)` helper in `effects.py` that seeds both `np.random` and
+`random`, used in `add_dirt`/`add_water`/`generate_scratch_mask`. Deeper down, `add_dirt`
+and `add_water` (the texture-based mechanisms) still aren't pixel-reproducible: the vendored
+`generate_texture_paper.py` calls `pythonperlin.perlin(...)` without a `seed=` argument, and
+`pythonperlin`'s own `make_grads()` then calls `np.random.seed(None)` internally — silently
+re-randomizing the global RNG from OS entropy on every texture draw, from inside a
+*dependency* of the vendored code, not the vendored code itself. Fixing it cleanly would mean
+monkey-patching `pythonperlin.perlin` from our own code. **Decision: leave it as-is.** The
+dataset is generated once and the resulting files are the artifact — a regenerated copy
+isn't expected to be pixel-identical, only label-identical (same seed → same effect assigned
+to each variant slot). `tests/test_dataset_builder.py`'s reproducibility test checks labels
+only, with the reasoning recorded inline.
+
+**First build was rejected: too many clean images, and combined distortions.** The initial
+design sampled each of dirt/water/scratch independently per variant with `effect_prob=0.35`,
+which (a) could combine two or three distortion types onto the same image, and (b) skewed
+~65% of variants clean by chance (three independent 65%-fail rolls). Both were wrong for
+this dataset: **exactly one distortion type per image, never combined**, and **not
+overwhelmingly clean**. Replaced with deterministic balanced assignment
+(`assign_variant_kinds`): for each source image, the variant slots are filled by cycling
+through `("clean", "dirt", "water", "scratch")` and shuffling the order — with
+`variants_per_image=4` this guarantees exactly one clean + one of each distortion per source
+image, every time, rather than leaving the mix to chance.
+
+**Delivered this session:** `src/soiling/dataset_builder.py` (new), `scripts/
+build_stage_a_dataset.py` (new), `tests/test_dataset_builder.py` (new, 11 tests). Full suite:
+28/28. Ran the real build against the 1000-image MIO-TCD pilot subset
+(`data/raw/mio_tcd/images`, from Session 2):
+
+| | count |
+|---|---|
+| total images | 4000 (1000 sources × 4 variants) |
+| train / val / test | 3200 / 400 / 400 |
+| dirt positive | 1000 (25.0%) |
+| water positive | 1000 (25.0%) |
+| scratch positive | 1000 (25.0%) |
+| clean (all-zero label) | 1000 (25.0%) |
+
+Output not committed (gitignored, under `data/`) — regenerable via `python
+scripts/build_stage_a_dataset.py --source data/raw/mio_tcd/images --out
+data/processed/stage_a --variants 4 --seed 0`.
