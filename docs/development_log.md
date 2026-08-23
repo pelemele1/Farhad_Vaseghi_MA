@@ -193,3 +193,37 @@ All three distortion classes now exist behind one consistent interface:
 **Not yet done (next session):** `src/soiling/dataset_builder.py` — apply `add_dirt` /
 `add_water` / `add_scratch` in random combination (including "clean" negatives) across the
 1,000-image MIO-TCD pilot subset to produce the actual Stage A multi-label training set.
+
+---
+
+## Session 4 — Taxonomy check against the paper's own figure; scratch made harsher
+
+**Date:** 2026-08-23
+
+Discussed splitting each of `dirt`/`water` into a "fresh" vs "residue" mechanism (e.g. a
+dirt "stain" variant, blended back toward the original for a faded look) for more physical
+realism. Before building that, the user provided the physical_lens_soiling paper's own
+Figure 1, showing exactly the effects the authors demonstrate: mud stain, flare, dust,
+water mist, water droplet, water stain (two severities) — and asked for our result to match
+that figure using their actual code, not an invented addition, plus `scratch` on top.
+
+**Decision: no invented dirt-stain variant.** `add_dirt`/`add_water` stay exactly as wired
+in Session 3 (`dirt` = `add_mudByTxture` only; `water` = `add_distort` (droplet) /
+`add_dirtwaterByTxture` (stain, heavy) / `add_dirtwaterByTxture_slight` (stain, light)) —
+this already matches the paper's figure one-for-one (mud stain → (b)/(c), water droplet →
+(g), water stain heavy/light → (h)/(i)); "water mist" (f) isn't a separate function, it's
+just what `stain (light)` looks like when the random texture picker happens to draw a fog
+texture (`r_fog`/`thick_fog`) instead of a rain-drop texture — already covered by
+`_random_dirt_water_texture()`'s existing pool, no new code needed. Flare (d) and dust (e)
+stay excluded, per the earlier decision to keep strictly to architecture.md's 3-class
+taxonomy.
+
+**Scratch made harsher**, per direct feedback that it needed to read more clearly:
+`generate_scratch_mask`'s opacity floor raised `0.35 → 0.6` (a weak draw no longer fades
+into near-invisibility) and `add_scratch`'s blend strength raised `0.85 → 0.97` (closer to
+fully opaque at a streak's core instead of staying semi-transparent even at max mask value).
+
+![figure-1-style layout using only the real vendored effects, plus scratch](images/figure1_style_comparison.jpg)
+
+**Delivered this session:** tuning only, no new modules — `src/soiling/effects.py` opacity/
+blend constants adjusted. Full suite still 17/17.

@@ -108,7 +108,7 @@ def _draw_tapered_streak(mask, curve_xy, origin, base_width, brightness):
 
 
 def generate_scratch_mask(shape, n_scratches=(2, 5), length_frac=(0.15, 0.55),
-                           width_px=(1, 7), opacity=(0.35, 0.9), blur_sigma=0.6,
+                           width_px=(1, 7), opacity=(0.6, 1.0), blur_sigma=0.6,
                            seed=None):
     """Returns a float32 [0, 1] mask, 0 = clean, higher = more distortion."""
     if seed is not None:
@@ -145,7 +145,7 @@ def add_scratch(image, **kwargs):
     alpha3 = cv.merge([mask, mask, mask])
     img_f = image.astype(np.float32) / 255.0
     screen = 1 - (1 - img_f) * (1 - alpha3)
-    out = img_f * (1 - alpha3 * 0.85) + screen * (alpha3 * 0.85)
+    out = img_f * (1 - alpha3 * 0.97) + screen * (alpha3 * 0.97)
     out = np.clip(out * 255.0, 0, 255).astype(np.uint8)
     return out, mask
 
