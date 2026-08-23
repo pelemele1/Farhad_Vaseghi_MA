@@ -5,10 +5,10 @@ __pycache__/
 venv/
 .claude/
 
-data/
-checkpoints/
-outputs/
-runs/
-features_cache/
+/data/
+/checkpoints/
+/outputs/
+/runs/
+/features_cache/
 *.pt
 *.pth

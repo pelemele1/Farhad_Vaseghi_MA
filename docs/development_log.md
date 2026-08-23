@@ -96,3 +96,45 @@ random seeds that both thin and thick streaks now occur:
 into `src/soiling/effects.py` alongside `add_scratch`, build the MIO-TCD-based dataset
 pipeline (`src/soiling/dataset_builder.py`), and the Stage A model/training/eval code —
 per the approved plan.
+
+---
+
+## Session 2 — MIO-TCD pilot subset (Step 1)
+
+**Date:** 2026-08-23
+
+Downloaded `MIO-TCD-Localization.tar` (official archive, CC BY-NC-SA 4.0, 3.5 GB,
+137,743 full-frame traffic-camera images) directly from the dataset provider. The archive
+only offers a full-dataset download — no partial/per-image API — so the workflow is:
+download once, then sample locally.
+
+**Archive layout:** `train/` (110,000 images, has public ground truth in `gt_train.csv`,
+one row per object: `image_id,class,x1,y1,x2,y2`) and `test/` (27,743 images, labels held
+out for the competition, not usable). Sampled from `train/` specifically so the same pilot
+subset stays reusable for any later detection-related work, even though Stage A itself
+doesn't need the boxes.
+
+**Pilot size:** 1,000 images (~1% of the train split) — matches the project's own
+pilot-first philosophy (setup.md), and each source image will yield several synthetic
+distortion variants in the next step, so 1,000 sources is enough to produce a few thousand
+training examples for Stage A without processing the full archive.
+
+**Delivered this session:**
+- `src/data/mio_tcd.py` — pure, testable functions (`list_train_image_ids`,
+  `sample_image_ids`, `filter_gt_rows`, `extract_images`) plus `build_pilot_subset()`
+  tying them together: deterministic random sample of image ids (seeded) → extract just
+  those images from the tar (not the whole archive) → filter the matching `gt_train.csv`
+  rows → write a manifest of the sampled ids for reproducibility.
+- `scripts/sample_mio_tcd.py` — CLI wrapper (`--tar`, `--out`, `--n`, `--seed`).
+- `tests/test_mio_tcd.py` — 6 tests against a small synthetic in-memory tar (no real
+  MIO-TCD download needed to run the suite).
+- Ran it for real: `python scripts/sample_mio_tcd.py --tar D:/MasterThesis_FAU/MIO-TCD-Localization.tar --out data/raw/mio_tcd --n 1000 --seed 0`
+  → 1,000 images (27 MB), 3,168 matching ground-truth rows, seed=0 manifest. Verified a
+  random sample of the extracted images decodes correctly and looks like a diverse mix of
+  cameras/scenes. The extracted images themselves are not committed (`data/` is
+  gitignored) — only the sampling code and the seed are, so the exact same 1,000-image
+  subset is reproducible by anyone with the archive.
+
+**Not yet done (next session):** the synthetic distortion pipeline (`dirt`/`water` ported
+from `physical_lens_soiling` + the existing `add_scratch`) applied to this 1,000-image
+subset to build the actual Stage A multi-label dataset.
