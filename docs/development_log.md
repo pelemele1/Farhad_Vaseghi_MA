@@ -227,3 +227,43 @@ fully opaque at a streak's core instead of staying semi-transparent even at max 
 
 **Delivered this session:** tuning only, no new modules — `src/soiling/effects.py` opacity/
 blend constants adjusted. Full suite still 17/17.
+
+---
+
+## Session 5 — Weak mud/water outputs traced to texture-pool luck, not a code bug
+
+**Date:** 2026-08-23
+
+Follow-up: mud didn't look like the paper's Figure 1(c), and water stain was barely
+visible in our renders. Explicit instruction: **do not modify anything in
+`third_party/physical_lens_soiling/`** — it's vendored as-is and considered complete: find
+and fix the problem elsewhere.
+
+**Root cause, measured (not guessed):** the vendored functions take a texture mask as an
+argument, and *we* pick which texture style to feed them, from a 7-mode pool in `_random_dirt_water_texture()`
+(our own code in `src/soiling/effects.py`, not vendored). Measured mean mask coverage
+per texture mode, 3 trials each, vendored code completely unchanged:
+
+| mode | mud coverage | water coverage |
+|---|---|---|
+| `r_fog` / `thick_fog` / `little_rain_drop` | ~51% | ~51% |
+| `f_water_mud` / `big_rain_drop` | ~40% | ~40% |
+| `r_water_mud` / `many_rain_drop` | ~9-13% | ~9-12% |
+| `many_dust_drop` | ~2% | ~2% |
+
+Three of our seven pool entries were near-invisible by construction — most strikingly
+`r_water_mud`, despite its name sounding like the canonical mud texture, only covers ~9% of
+the mask at low intensity. Earlier demo images happened to draw from that weak tail by
+chance, which is why they didn't match the paper's figure.
+
+**Fix:** restricted `_DIRT_WATER_TEXTURE_MODS` (our sampling pool, not the vendored
+algorithm) to the five modes that measured consistently strong: `r_fog`, `thick_fog`,
+`f_water_mud`, `big_rain_drop`, `little_rain_drop`. Verified across 3 new seeds that mud and
+water_thick now both land in the ~30-55% coverage range every time instead of sometimes
+landing near 2-13%:
+
+![mud/water across 3 seeds after restricting the texture pool to the reliably-strong modes](images/dirt_water_strong_texture_pool.jpg)
+
+**Delivered this session:** `src/soiling/effects.py` — `_DIRT_WATER_TEXTURE_MODS` narrowed
+from 7 to 5 entries, with the measurement documented inline as a comment. No vendored file
+touched. Full suite: 17/17.

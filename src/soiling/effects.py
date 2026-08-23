@@ -32,9 +32,15 @@ from add_mud import (  # noqa: E402 (path must be set up first)
 from add_droplet_distort import add_distort  # noqa: E402
 from generate_texture_paper import generate_texture  # noqa: E402
 
+# Measured empirically (mean mask value / fraction of pixels > 50 out of 255,
+# 3 trials each, unchanged vendored code): r_fog/thick_fog/little_rain_drop
+# ~51% coverage, f_water_mud/big_rain_drop ~40%, but r_water_mud/many_rain_drop
+# only ~9-13% and many_dust_drop ~2% -- those three read as near-invisible
+# despite "r_water_mud" sounding like the canonical mud texture. Restricted
+# to the modes that reliably give paper-Figure-1-strength coverage.
 _DIRT_WATER_TEXTURE_MODS = [
-    "r_fog", "thick_fog", "r_water_mud", "f_water_mud",
-    "big_rain_drop", "little_rain_drop", "many_rain_drop",
+    "r_fog", "thick_fog", "f_water_mud",
+    "big_rain_drop", "little_rain_drop",
 ]
 
 
