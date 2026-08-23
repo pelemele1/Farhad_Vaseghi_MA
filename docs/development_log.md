@@ -77,6 +77,15 @@ naturally with `physical_lens_soiling`'s own mask+blend convention for `dirt`/`w
 — unlike either external option — was directly iterated against real-world reference
 evidence of what a scratched lens actually looks like.
 
+**Follow-up tweak:** the v3 renders above all looked uniformly thin. Widths were already
+random per scratch, but the default range (`width_px=(1, 3)`) was too narrow, and the
+meandering-width profile only reaches its sampled max briefly near each "lobe" center — so
+in practice almost every stroke stayed close to 1px regardless of seed. Widened the default
+to `width_px=(1, 7)` so a clearly thick scratch is actually reachable. Confirmed across 6
+random seeds that both thin and thick streaks now occur:
+
+![width variety across 6 random seeds, thin and thick scratches both occur](images/scratch_width_variety.jpg)
+
 **Delivered this session:**
 - `src/soiling/effects.py` — `add_scratch()` / `generate_scratch_mask()`, the finalized
   procedural scratch generator.

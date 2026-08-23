@@ -88,7 +88,7 @@ def _draw_tapered_streak(mask, curve_xy, origin, base_width, brightness):
 
 
 def generate_scratch_mask(shape, n_scratches=(2, 5), length_frac=(0.15, 0.55),
-                           width_px=(1, 3), opacity=(0.35, 0.9), blur_sigma=0.6,
+                           width_px=(1, 7), opacity=(0.35, 0.9), blur_sigma=0.6,
                            seed=None):
     """Returns a float32 [0, 1] mask, 0 = clean, higher = more distortion."""
     if seed is not None:
