@@ -9,10 +9,9 @@ digging through git history. One entry per development session/phase.
 
 **Date:** 2026-08-23
 
-**Context.** The repo was reset to a clean `main` after the supervisor clarified the
-project's actual scope. Going forward, `overview.md`, `architecture.md`, `setup.md`, and
-`only_for_me/only_for_my_research_thesis_concept.md` / `..._ablations.md` are the sole
-source of truth for what gets built (`README.md` is an unrelated generic template).
+`overview.md`, `architecture.md`, `setup.md`, and
+`only_for_me/only_for_my_research_thesis_concept.md` / `..._ablations.md` are the source
+of truth for what gets built (`README.md` is an unrelated generic template).
 
 **Scope for this pass**, per architecture.md §2 and the supervisor's guidance:
 - Dataset: **MIO-TCD** (Miovision Traffic Camera Dataset), not BDD100K.
@@ -60,6 +59,13 @@ before committing to any of them for the full dataset build.
      width that meanders between thick and thin along the streak (several blended random
      Gaussian "lobes"), which reads as natural irregular scratch depth without needing an
      explicit highlight marker.
+
+**Result — v2 vs. v3** (same sample photo, all three methods; own generator in the bottom
+row of each):
+
+![v2: broken segments + glint points, rejected as artificial](images/scratch_comparison_v2_with_glints.jpg)
+
+![v3 final: broken segments + meandering thick/thin width, no glints](images/scratch_comparison_v3_final.jpg)
 
 **Decision: own procedural generator.** Rationale — full parametric control (count,
 length, width, curvature, opacity all independently tunable for later class-balance
