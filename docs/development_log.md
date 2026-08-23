@@ -138,3 +138,58 @@ training examples for Stage A without processing the full archive.
 **Not yet done (next session):** the synthetic distortion pipeline (`dirt`/`water` ported
 from `physical_lens_soiling` + the existing `add_scratch`) applied to this 1,000-image
 subset to build the actual Stage A multi-label dataset.
+
+---
+
+## Session 3 — Vendoring physical_lens_soiling; `{dirt, water, scratch}` taxonomy complete
+
+**Date:** 2026-08-23
+
+The supervisor cleared direct use of `physical_lens_soiling`'s code (it ships no LICENSE
+file upstream, so this was a real permission, not an assumption). That changes Session 1's
+plan from "reimplement the technique ourselves" to vendoring the actual source.
+
+**What was vendored**, into `third_party/physical_lens_soiling/` (kept out of `src/` to
+mark it clearly as external code, not ours):
+- `add_mud.py` — `add_mudByTxture` (mud → our `dirt`), `add_dirtwaterByTxture` /
+  `add_dirtwaterByTxture_slight` (water_thick / water_thin → our `water`, blob-blend).
+- `add_droplet_distort.py` — `add_distort` (→ also `water`, but a physically different
+  mechanism: an actual optical refraction/warp rather than a color blend).
+- `generate_texture_paper.py` — the procedural texture generator both of the above depend on.
+
+Deliberately **not** vendored (outside architecture.md's 3-class taxonomy, per this
+session's earlier decision to drop them): `add_sun_glare.py`, `add_lensdust.py`, and their
+own Albumentations-based comparison baseline.
+
+**One real edit to the vendored files** (documented in
+`third_party/physical_lens_soiling/NOTICE.md`): `add_mud.py` and `add_droplet_distort.py`
+both had top-level script code that ran unconditionally on `import` (looping over a local
+`image/` folder; one line was even `os.makedirs(..., exist_ok=False)`, which would crash on
+a second import). Wrapped that code in `if __name__ == "__main__":` — no algorithmic
+change, verified by running all four functions before/after and confirming identical
+output.
+
+**Wired into `src/soiling/effects.py`** as `add_dirt()` and `add_water()`, matching
+`add_scratch`'s `(image, seed=None) -> (distorted_image, mask)` contract:
+- `add_dirt`: picks a random texture style, calls `add_mudByTxture`.
+- `add_water`: randomly picks one of three mechanisms per call — `'thick'`, `'thin'`
+  (blob-blend), or `'droplet'` (optical warp) — so the water class gets real mechanism
+  diversity, not just opacity variants of the same blend.
+
+All three distortion classes now exist behind one consistent interface:
+
+![dirt, water (all 3 mechanisms), and scratch on a real MIO-TCD image](images/dirt_water_scratch_taxonomy.jpg)
+
+**Delivered this session:**
+- `third_party/physical_lens_soiling/` — vendored source + `NOTICE.md` (provenance, what
+  was kept/dropped, the exact edit made) + `UPSTREAM_README.md`.
+- `requirements.txt` — added at the repo root (didn't exist before); includes
+  `pythonperlin`, the one new dependency the vendored code needs.
+- `src/soiling/effects.py` — `add_dirt()`, `add_water()` added alongside `add_scratch()`.
+- `tests/test_effects_dirt_water.py` — 5 tests (image changes, mask shape/range, seeded
+  reproducibility, all three water mechanisms exercised).
+- Full suite: 17 passed.
+
+**Not yet done (next session):** `src/soiling/dataset_builder.py` — apply `add_dirt` /
+`add_water` / `add_scratch` in random combination (including "clean" negatives) across the
+1,000-image MIO-TCD pilot subset to produce the actual Stage A multi-label training set.

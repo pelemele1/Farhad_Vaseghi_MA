@@ -14,8 +14,28 @@ pipeline for a rendered toy car, not usable on flat photos). Chosen after
 comparing renders from both against this generator on a sample image -- see
 docs/development_log.md for the comparison and rationale.
 """
+import sys
+from pathlib import Path
+
 import numpy as np
 import cv2 as cv
+
+_THIRD_PARTY_DIR = Path(__file__).resolve().parents[2] / "third_party" / "physical_lens_soiling"
+if str(_THIRD_PARTY_DIR) not in sys.path:
+    sys.path.insert(0, str(_THIRD_PARTY_DIR))
+
+from add_mud import (  # noqa: E402 (path must be set up first)
+    add_mudByTxture,
+    add_dirtwaterByTxture,
+    add_dirtwaterByTxture_slight,
+)
+from add_droplet_distort import add_distort  # noqa: E402
+from generate_texture_paper import generate_texture  # noqa: E402
+
+_DIRT_WATER_TEXTURE_MODS = [
+    "r_fog", "thick_fog", "r_water_mud", "f_water_mud",
+    "big_rain_drop", "little_rain_drop", "many_rain_drop",
+]
 
 
 def _smooth_curve(n_waypoints, length, angle, jitter, n_samples=300):
@@ -128,3 +148,64 @@ def add_scratch(image, **kwargs):
     out = img_f * (1 - alpha3 * 0.85) + screen * (alpha3 * 0.85)
     out = np.clip(out * 255.0, 0, 255).astype(np.uint8)
     return out, mask
+
+
+def _normalize_mask(mask):
+    """Vendored physical_lens_soiling masks come back uint8 0-255, sometimes
+    with a trailing channel dim -- collapse to a single-channel float32
+    [0, 1] mask, matching add_scratch's contract."""
+    mask = np.asarray(mask)
+    if mask.ndim == 3:
+        mask = mask.max(axis=-1)
+    return np.clip(mask.astype(np.float32) / 255.0, 0, 1)
+
+
+def _random_dirt_water_texture():
+    """physical_lens_soiling's dirt/water functions take a procedurally
+    generated texture as an argument (not self-contained) -- pick one of
+    their texture styles at random, as their own top-level demo code does."""
+    mod = np.random.choice(_DIRT_WATER_TEXTURE_MODS)
+    texture = generate_texture(mod=mod)
+    if isinstance(texture, tuple):
+        texture = texture[0]
+    if texture.ndim == 2:
+        texture = texture[:, :, np.newaxis]
+    return texture
+
+
+def add_dirt(image, seed=None):
+    """Ported from physical_lens_soiling's `add_mudByTxture` (mud -> our
+    `dirt`) -- see third_party/physical_lens_soiling/NOTICE.md. Returns
+    (distorted_image, mask)."""
+    if seed is not None:
+        np.random.seed(seed)
+    texture = _random_dirt_water_texture()
+    out, mask = add_mudByTxture(image.copy(), texture)
+    return out, _normalize_mask(mask)
+
+
+def add_water(image, seed=None, mechanism=None):
+    """Ported from physical_lens_soiling. `water` has two physically
+    different mechanisms in the source repo, picked at random unless
+    `mechanism` is given explicitly:
+      - 'thick' / 'thin': a translucent blob blended onto the image
+        (`add_dirtwaterByTxture` / `_slight`), same texture-driven style as
+        `add_dirt`, just a lighter/whiter color.
+      - 'droplet': an actual optical refraction/warp (`add_distort`) --
+        radial "lens bulge" distortion, closer to how a real water droplet
+        bends light rather than just tinting a region.
+    Returns (distorted_image, mask). See
+    third_party/physical_lens_soiling/NOTICE.md."""
+    if seed is not None:
+        np.random.seed(seed)
+    if mechanism is None:
+        mechanism = np.random.choice(["thick", "thin", "droplet"])
+
+    if mechanism == "droplet":
+        out, mask = add_distort(image.copy())
+    else:
+        texture = _random_dirt_water_texture()
+        fn = add_dirtwaterByTxture if mechanism == "thick" else add_dirtwaterByTxture_slight
+        out, mask = fn(image.copy(), texture)
+
+    return out, _normalize_mask(mask)
