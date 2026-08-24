@@ -466,3 +466,122 @@ per-class precision/recall/F1/AP on the held-out test split), then Step 7 unit t
 already mostly in place throughout Steps 3-4 (backbone/head/loss/dataset/training-smoke
 tests) — worth a final pass to confirm full coverage against the original plan once Step 6
 lands.
+
+---
+
+## Session 10 — First real run on TinyGPU: SSH access, three real-hardware bugs, successful training
+
+**Date:** 2026-08-24
+
+Walked through actually using what Session 9 built, end to end, on the user's real FAU HPC
+account (`iwnt196h`, PI: Kaup, Andre) rather than just leaving it as untested scripts.
+
+**SSH access.** A direct `ssh iwnt196h@tinyx.nhr.fau.de` failed
+(`Permission denied (publickey,hostbased)`) -- TinyGPU only accepts key-based auth through a
+proxy jump, not direct connections. Generated an ed25519 key pair
+(`ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519_nhr_fau`), uploaded the public key via the HPC
+Portal's User tab, and wrote `~/.ssh/config` with the documented `csnhr.nhr.fau.de` proxy
+jump + `tinyx` host block. Connected successfully on the first real attempt after that (key
+propagation was near-instant, not the up-to-2h the docs warn about).
+
+Also discovered while investigating: the JupyterHub launcher (`portal.hpc.fau.de`, "1x/2x
+RTX Pro 6000 BSE MIG" + "TinyFAT" options) is a *separate*, shared, 4-hour-capped interactive
+notebook service for Tier3 accounts -- unrelated to the TinyGPU SLURM batch cluster
+(`sbatch.tinygpu`) these scripts target. Confirmed via `doc.nhr.fau.de/access/jupyterhub/`
+rather than guessing from the dropdown alone.
+
+**Three bugs found that only reproduce on real hardware, all fixed:**
+
+1. **`--smoke-test` silently forced `--device cpu`**, even when `--device cuda` was passed
+   explicitly -- meant the "smoke test" never actually exercised the GPU code path before a
+   real job. Fixed to only force epochs/batch-size/sample-count, leaving `--device` as
+   whatever was passed (`scripts/train_stage_a.py`).
+2. **`pythonperlin` import crashed with `ModuleNotFoundError: No module named 'pkg_resources'`**
+   on the cluster's fresh conda env, but not locally. Root cause, in two parts: (a)
+   `requirements.txt` never declared `setuptools` at all (pkg_resources' provider) -- worked
+   locally purely by accident, since the pre-existing miniconda base env happened to already
+   have it; (b) even after adding it, `pip install setuptools` pulled the latest (84.0.0),
+   which has actually *removed* pkg_resources (not just deprecated it, like the 80.10.2
+   installed locally). Fixed by pinning `setuptools<81` in `requirements.txt`.
+3. **The a100-targeted SLURM job sat pending forever** (`squeue` reason `AssocGrpGRES`) --
+   this account's association has no GPU quota on `a100`. Confirmed via an interactive
+   `salloc.tinygpu --gres=gpu:1` test, which granted an RTX3080 (via the `work` partition)
+   without issue. Switched `scripts/hpc/train_stage_a.slurm` to `--gres=gpu:1 -p rtx3080` and
+   lowered `--batch-size` from 32 to 16 as a precaution (RTX3080 has 10GB VRAM vs. the A100's
+   40GB).
+
+**First real training run succeeded**, job `1791674` on `rtx3080`/node `tg084`, 12 minutes
+for 20 epochs (well under the 6h budget), 2.9GB/10GB peak GPU memory used:
+
+```
+epoch 1/20   train_loss=0.653  val_loss=0.431
+epoch 10/20  train_loss=0.189  val_loss=0.219
+epoch 20/20  train_loss=0.146  val_loss=0.205
+```
+
+Train loss dropped smoothly and monotonically; val loss dropped from 0.43 to ~0.20-0.24 with
+some epoch-to-epoch noise but no runaway overfitting. `checkpoints/stage_a/stage_a_head.pt`
+written successfully. Fetched back to the local machine via `scp` for Session 11's
+evaluation.
+
+**Delivered this session:** `scripts/train_stage_a.py`, `requirements.txt`,
+`scripts/hpc/train_stage_a.slurm`, `docs/hpc_stage_a.md` (all fixes), plus a new local
+`~/.ssh/config` (not part of the repo). Full local suite still 43/43 throughout (none of
+these were local-repro bugs). A trained `stage_a_head.pt` now exists, both on the cluster
+and locally.
+
+**Also this session:** the user asked to stop adding the `Co-Authored-By: Claude` trailer to
+commits in this repo -- applied from this point forward; the 8 commits before it (including
+this session's fixes, made before the request) keep the trailer, left as-is rather than
+rewriting already-pushed history.
+
+---
+
+## Session 11 — Evaluation script (Step 6) and first real Stage A results
+
+**Date:** 2026-08-24
+
+**`scripts/evaluate_stage_a.py`.** Loads a trained checkpoint + the frozen backbone, runs
+the held-out split through it, reports per-class precision/recall/F1 (at a configurable
+sigmoid threshold, default 0.5) and threshold-independent average precision (AP). Added
+`scikit-learn` to `requirements.txt` for `precision_recall_fscore_support` /
+`average_precision_score` rather than hand-rolling AP -- a well-tested standard
+implementation matters more here than avoiding one more dependency, for numbers that are
+going in a thesis.
+
+**Bug found and fixed during testing, before it could bite the real 3-class case:**
+`sklearn.metrics.precision_recall_fscore_support(labels, preds, average=None)` infers
+multilabel-vs-binary from the *array shape* -- a single-column (1-class) input gets
+misread as ordinary 2-class binary classification instead of 1-class multilabel, silently
+shifting what each output index means (confirmed directly: `support` came back `3` for an
+all-zero label column, not `0`). Doesn't affect our actual 3-class case, which is
+unambiguous, but was a live landmine in eval code producing a thesis's numbers. Rewrote
+`compute_metrics` to compute each class's precision/recall/F1 independently via
+`average="binary"` on that one column, which is correct regardless of class count instead of
+relying on sklearn's shape-based heuristic.
+
+**Ran the real evaluation** against the checkpoint trained in Session 10, on the untouched
+400-image test split (100 positive per class, never seen during training):
+
+| class | precision | recall | F1 | AP | support |
+|---|---|---|---|---|---|
+| dirt | 0.943 | 1.000 | 0.971 | 1.000 | 100 |
+| water | 0.884 | 0.990 | 0.934 | 0.996 | 100 |
+| scratch | 0.713 | 0.870 | 0.784 | 0.920 | 100 |
+
+Dirt and water are near-perfect; scratch is weaker but still solid (AP 0.920) -- plausible,
+since it's the thinnest/subtlest signal of the three and our own custom-built effect rather
+than the paper's validated code. For a frozen backbone + tiny 2-layer head trained in 12
+minutes on synthetic data, this is a genuinely strong result, and confirms the whole Stage A
+pipeline -- distortion generation, dataset balance, training, evaluation -- works end to end.
+
+**Delivered this session:** `scripts/evaluate_stage_a.py`, `scripts/__init__.py` (new,
+makes `scripts` importable for tests), `tests/test_evaluate_metrics.py` (3 tests, pure
+numpy, no weights/GPU needed), `tests/test_evaluate_stage_a.py` (1 end-to-end subprocess
+test, skips without local weights), `requirements.txt` (`scikit-learn`). Full suite: 47/47.
+
+**Not yet done:** none of the original Step 0-7 plan items remain outstanding. Possible next
+directions: raise `--batch-size` back up now that 2.9GB/10GB was used (faster iteration),
+try to close the scratch-class gap, or move beyond Stage A per architecture.md's own
+roadmap (Stage B tile classification, Stage C pixel-level segmentation) -- none of this is
+decided yet, worth discussing with the user before picking a direction.
