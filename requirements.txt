@@ -7,3 +7,5 @@ imageio
 pythonperlin
 Pillow
 pytest
+torch
+ultralytics

@@ -200,28 +200,19 @@ All three distortion classes now exist behind one consistent interface:
 
 **Date:** 2026-08-23
 
-Discussed splitting each of `dirt`/`water` into a "fresh" vs "residue" mechanism (e.g. a
-dirt "stain" variant, blended back toward the original for a faded look) for more physical
-realism. Before building that, the user provided the physical_lens_soiling paper's own
-Figure 1, showing exactly the effects the authors demonstrate: mud stain, flare, dust,
-water mist, water droplet, water stain (two severities) — and asked for our result to match
-that figure using their actual code, not an invented addition, plus `scratch` on top.
+Checked `dirt`/`water`/`scratch` against the physical_lens_soiling paper's own Figure 1
+(mud stain, flare, dust, water mist, water droplet, water stain) instead of inventing new
+mechanisms — a "residue" dirt-stain variant had been considered and was dropped in favor of
+matching the paper exactly.
 
-**Decision: no invented dirt-stain variant.** `add_dirt`/`add_water` stay exactly as wired
-in Session 3 (`dirt` = `add_mudByTxture` only; `water` = `add_distort` (droplet) /
-`add_dirtwaterByTxture` (stain, heavy) / `add_dirtwaterByTxture_slight` (stain, light)) —
-this already matches the paper's figure one-for-one (mud stain → (b)/(c), water droplet →
-(g), water stain heavy/light → (h)/(i)); "water mist" (f) isn't a separate function, it's
-just what `stain (light)` looks like when the random texture picker happens to draw a fog
-texture (`r_fog`/`thick_fog`) instead of a rain-drop texture — already covered by
-`_random_dirt_water_texture()`'s existing pool, no new code needed. Flare (d) and dust (e)
-stay excluded, per the earlier decision to keep strictly to architecture.md's 3-class
-taxonomy.
+**Decision: no invented variants.** `add_dirt`/`add_water` stay exactly as wired in Session
+3 and already match the figure one-for-one (mud stain → (b)/(c), water droplet → (g), water
+stain heavy/light → (h)/(i); "water mist" (f) is just `stain (light)` drawing a fog texture,
+already covered by the existing texture pool). Flare and dust stay excluded (outside
+architecture.md's 3-class taxonomy).
 
-**Scratch made harsher**, per direct feedback that it needed to read more clearly:
-`generate_scratch_mask`'s opacity floor raised `0.35 → 0.6` (a weak draw no longer fades
-into near-invisibility) and `add_scratch`'s blend strength raised `0.85 → 0.97` (closer to
-fully opaque at a streak's core instead of staying semi-transparent even at max mask value).
+**Scratch made harsher** per feedback that it needed to read more clearly: opacity floor
+`0.35 → 0.6`, blend strength `0.85 → 0.97`.
 
 ![figure-1-style layout using only the real vendored effects, plus scratch](images/figure1_style_comparison.jpg)
 
@@ -234,39 +225,23 @@ blend constants adjusted. Full suite still 17/17.
 
 **Date:** 2026-08-23
 
-Follow-up: mud didn't look like the paper's Figure 1(c), and water stain was barely
-visible in our renders. Explicit instruction: **do not modify anything in
-`third_party/physical_lens_soiling/`** — it's vendored as-is and considered complete: find
-and fix the problem elsewhere.
+Mud and water-stain renders were barely visible, not matching the paper's figure. Explicit
+instruction: do not modify `third_party/physical_lens_soiling/` — find and fix the problem
+elsewhere.
 
-**Root cause, measured (not guessed):** the vendored functions take a texture mask as an
-argument, and *we* pick which texture style to feed them, from a 7-mode pool in `_random_dirt_water_texture()`
-(our own code in `src/soiling/effects.py`, not vendored). Measured mean mask coverage
-per texture mode, 3 trials each, vendored code completely unchanged:
+**Root cause:** three of our seven texture-style choices in `_random_dirt_water_texture()`
+(our own sampling code, not vendored) gave near-invisible mask coverage by construction —
+most strikingly `r_water_mud`, despite its name, averaged under 13% coverage vs. ~40-51%
+for the reliable modes. Earlier demo images happened to draw from that weak tail by chance.
 
-| mode | mud coverage | water coverage |
-|---|---|---|
-| `r_fog` / `thick_fog` / `little_rain_drop` | ~51% | ~51% |
-| `f_water_mud` / `big_rain_drop` | ~40% | ~40% |
-| `r_water_mud` / `many_rain_drop` | ~9-13% | ~9-12% |
-| `many_dust_drop` | ~2% | ~2% |
-
-Three of our seven pool entries were near-invisible by construction — most strikingly
-`r_water_mud`, despite its name sounding like the canonical mud texture, only covers ~9% of
-the mask at low intensity. Earlier demo images happened to draw from that weak tail by
-chance, which is why they didn't match the paper's figure.
-
-**Fix:** restricted `_DIRT_WATER_TEXTURE_MODS` (our sampling pool, not the vendored
-algorithm) to the five modes that measured consistently strong: `r_fog`, `thick_fog`,
-`f_water_mud`, `big_rain_drop`, `little_rain_drop`. Verified across 3 new seeds that mud and
-water_thick now both land in the ~30-55% coverage range every time instead of sometimes
-landing near 2-13%:
+**Fix:** narrowed `_DIRT_WATER_TEXTURE_MODS` (our sampling pool, not the vendored
+algorithm) to the five modes that measure consistently strong: `r_fog`, `thick_fog`,
+`f_water_mud`, `big_rain_drop`, `little_rain_drop`. No vendored file touched.
 
 ![mud/water across 3 seeds after restricting the texture pool to the reliably-strong modes](images/dirt_water_strong_texture_pool.jpg)
 
 **Delivered this session:** `src/soiling/effects.py` — `_DIRT_WATER_TEXTURE_MODS` narrowed
-from 7 to 5 entries, with the measurement documented inline as a comment. No vendored file
-touched. Full suite: 17/17.
+from 7 to 5 entries. Full suite: 17/17.
 
 ---
 
@@ -341,3 +316,69 @@ build_stage_a_dataset.py` (new), `tests/test_dataset_builder.py` (new, 11 tests)
 Output not committed (gitignored, under `data/`) — regenerable via `python
 scripts/build_stage_a_dataset.py --source data/raw/mio_tcd/images --out
 data/processed/stage_a --variants 4 --seed 0`.
+
+**Follow-up (2026-08-24): dataset rebalanced again.** The 0.35 `effect_prob` design above
+still let a variant land clean or combine distortions by chance; direct feedback ("i might
+have 3/4 images clean and this shouldnt be like that", "dont, ever mix two type of
+distortion. only one") replaced it with the fully deterministic
+`assign_variant_kinds` scheme described above (cycle `("clean", "dirt", "water",
+"scratch")`, shuffle order) and dropped `variants_per_image` from 12 → 5 → **4** (final).
+Rebuilt for real against the 1000-image pilot subset: 4000 images, exactly 1000/1000/1000/
+1000 (25.0% each) for clean/dirt/water/scratch, 3200/400/400 train/val/test.
+
+---
+
+## Session 7 — Stage A model: frozen YOLO backbone + distortion head (Step 3)
+
+**Date:** 2026-08-24
+
+Added `torch` and `ultralytics` (CPU-only torch locally — training happens on the FAU HPC,
+never here) and downloaded COCO-pretrained `yolo11m.pt` into `weights/` (gitignored via the
+existing `*.pt` rule).
+
+**`src/models/backbone.py` — `FrozenYOLOBackbone`.** Traced Ultralytics' `YOLO('yolo11m.pt')
+.model.model` (a flat 24-layer `nn.Sequential`) to find the actual P5 tap: layers 0-10
+(Conv/C3k2 stages, SPPF, C2PSA) are the shared backbone, each taking input only from the
+immediately preceding layer; layer 11 is the neck's first `Upsample`, where FPN/PAN fusion
+begins. So layer 10 (`C2PSA`)'s output — confirmed 512 channels, stride 32 — is P5. The
+module runs just those 11 layers, freezes every parameter (`requires_grad = False`), and
+overrides `.train()` to always force `eval()` so batchnorm stats can't drift while only the
+head is being trained (architecture.md §3 Option 1: frozen backbone).
+
+**`src/models/distortion_head.py` — `StageADistortionHead`.** GAP + 2×FC exactly per
+architecture.md §6. Returns raw logits rather than post-sigmoid probabilities: §4 specifies
+`BCEWithLogitsLoss`, which applies sigmoid internally for numerical stability — an explicit
+`Sigmoid` layer in the head would double-apply it. `torch.sigmoid(head(features))` gives the
+per-class probabilities §2 describes; documented inline to make the reasoning explicit
+rather than silently deviating from the doc's literal "...+ sigmoid" wording.
+
+**`src/models/losses.py`.** `compute_pos_weight(metadata_csv, split=...)` reads the
+dataset's own `metadata.csv` and computes the standard `#negatives / #positives` per class
+(architecture.md §4: "`pos_weight` ... for class imbalance"); `build_stage_a_loss` just
+wraps `BCEWithLogitsLoss(pos_weight=...)`.
+
+**Crash found and fixed: `torch` + vendored `scikit-image` code together aborted the
+process.** Running the full suite (model tests + the existing effects/dataset-builder
+tests in one process) crashed with `Fatal Python error: Aborted` inside
+`add_droplet_distort.py`'s `PiecewiseAffineTransform.estimate()` — a known Windows
+MKL/OpenMP conflict: both `torch` and `numpy`/`scikit-image` bundle their own Intel OpenMP
+runtime (`libiomp5md.dll`), and loading it twice aborts on first real use. Not a bug in our
+code. Fixed with the standard `KMP_DUPLICATE_LIB_OK=TRUE` workaround, set in a new
+`tests/conftest.py` (must run before either library is imported, hence conftest rather than
+inline in a test file).
+
+**Smoke-tested end-to-end** against a real image from the Session 6 dataset: `480×720`
+input → P5 `[1, 512, 15, 23]` → head logits `[1, 3]`; `compute_pos_weight` on the train
+split correctly returned `[3.0, 3.0, 3.0]` (matches the dataset's exact 25%-positive-per-
+class balance: 3 negatives per positive); loss finite.
+
+**Delivered this session:** `src/models/backbone.py`, `src/models/distortion_head.py`,
+`src/models/losses.py` (all new), `tests/test_backbone.py`, `tests/test_distortion_head.py`,
+`tests/test_losses.py` (new, 10 tests — 3 of which skip if `weights/yolo11m.pt` isn't
+present locally), `tests/conftest.py` (new). `requirements.txt` — added `torch`,
+`ultralytics`. Full suite: 38/38 (all running, none skipped, since the weights are already
+downloaded here).
+
+**Not yet done (next session):** Step 4 — training script (`scripts/train_stage_a.py`,
+smoke-test mode only per the standing "no training from Claude" rule) combining the
+backbone, head, and loss into an actual training loop over the Stage A dataset.
