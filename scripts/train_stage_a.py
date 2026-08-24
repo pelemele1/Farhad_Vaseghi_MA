@@ -68,9 +68,9 @@ def main():
     args = parser.parse_args()
 
     if args.smoke_test:
-        args.epochs, args.batch_size, args.device = 1, 2, "cpu"
+        args.epochs, args.batch_size = 1, 2
         max_samples = 8
-        print("[smoke-test] 1 epoch, batch_size=2, device=cpu, 8 train / 8 val samples, no checkpoint written")
+        print(f"[smoke-test] 1 epoch, batch_size=2, device={args.device}, 8 train / 8 val samples, no checkpoint written")
     else:
         max_samples = None
 
