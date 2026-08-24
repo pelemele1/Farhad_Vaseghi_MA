@@ -74,13 +74,16 @@ cd $WORK/Farhad_Vaseghi_MA
 sbatch.tinygpu scripts/hpc/train_stage_a.slurm
 ```
 
-`scripts/hpc/train_stage_a.slurm` requests 1 A100 GPU for 6 hours (well under the 24h cap)
-and runs `scripts/train_stage_a.py --device cuda` with `--epochs 20 --batch-size 32`.
+`scripts/hpc/train_stage_a.slurm` requests 1 RTX3080 GPU for 6 hours (well under the 24h
+cap) and runs `scripts/train_stage_a.py --device cuda` with `--epochs 20 --batch-size 16`
+(lowered from 32 -- the RTX3080's 10GB VRAM is much smaller than an A100's 40GB).
 **Tune these** once you've seen how fast an epoch actually runs on your data — the values
-in the script are a starting point, not a validated setting.
+in the script are a starting point, not a validated setting. (`a100` was tried first, but
+this account's association has no GPU quota there -- the job sat pending forever with
+reason `AssocGrpGRES`.)
 
-If your project doesn't have `a100` access, swap the partition/GPU type — `v100` or
-`rtx3080` work the same way (edit `--gres=gpu:v100:1` / `-p v100`, etc.). Check what your
+If your account has access to a different GPU type, swap the partition/GPU type -- `a100`
+or `v100` work the same way (edit `--gres=gpu:a100:1` / `-p a100`, etc.). Check what your
 account can actually submit to with:
 
 ```bash
