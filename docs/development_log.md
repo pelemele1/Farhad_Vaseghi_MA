@@ -382,3 +382,42 @@ downloaded here).
 **Not yet done (next session):** Step 4 — training script (`scripts/train_stage_a.py`,
 smoke-test mode only per the standing "no training from Claude" rule) combining the
 backbone, head, and loss into an actual training loop over the Stage A dataset.
+
+---
+
+## Session 8 — Training script (Step 4)
+
+**Date:** 2026-08-24
+
+**`src/data/stage_a_dataset.py` — `StageADataset`.** A `torch.utils.data.Dataset` over the
+`metadata.csv` + `images/` written by `dataset_builder.py`. Filters to one `split`,
+preprocesses each image the same way Ultralytics' own predictor does (BGR→RGB, resize,
+HWC→CHW, `/255`) so the frozen backbone sees the input format it was actually trained on.
+`max_samples` truncates the row list, used by the training script's `--smoke-test` mode.
+
+**`scripts/train_stage_a.py`.** Frozen backbone, only `StageADistortionHead`'s parameters
+go to the optimizer (`torch.optim.Adam(head.parameters(), ...)`) — matches architecture.md
+§3 Option 1 exactly: backbone forward runs inside `torch.no_grad()`, only the head builds a
+graph. `pos_weight` for the loss is computed once from the dataset's own `metadata.csv`
+(train split). CLI: `--data`, `--weights`, `--epochs`, `--batch-size`, `--lr`, `--img-size`,
+`--device`, `--out` (checkpoint dir). `--smoke-test` forces 1 epoch / batch-size 2 / CPU / 8
+samples per split and skips writing a checkpoint — this is the only "training" run from this
+side, per the standing rule that real training happens on the user's own FAU HPC job, never
+launched from here.
+
+Ran the smoke test for real against the actual 4000-image dataset from Session 6:
+```
+train=8 val=8 pos_weight=[3.0, 3.0, 3.0]
+epoch 1/1  train_loss=1.0679  val_loss=1.0332  (6.0s)
+```
+Confirms the full backbone → head → loss → optimizer.step() pipeline actually runs on real
+data, not just synthetic tensors — the point of the smoke test, not a claim about learning.
+
+**Delivered this session:** `src/data/stage_a_dataset.py`, `scripts/train_stage_a.py` (both
+new), `tests/test_stage_a_dataset.py` (5 tests), `tests/test_train_stage_a.py` (1
+end-to-end subprocess test, skips without local weights). Full suite: 43/43.
+
+**Not yet done (next session):** Step 5 — FAU HPC SLURM/env scripts
+(`scripts/hpc/setup_env.sh`, `scripts/hpc/train_stage_a.slurm`), then Step 6 — evaluation
+script (`scripts/evaluate_stage_a.py`, per-class precision/recall/F1/AP on the held-out
+test split).
