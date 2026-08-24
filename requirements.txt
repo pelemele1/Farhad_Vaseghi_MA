@@ -1,4 +1,4 @@
-setuptools
+setuptools<81  # pythonperlin needs pkg_resources, removed from setuptools in later releases
 numpy
 opencv-python
 scikit-image
