@@ -421,3 +421,48 @@ end-to-end subprocess test, skips without local weights). Full suite: 43/43.
 (`scripts/hpc/setup_env.sh`, `scripts/hpc/train_stage_a.slurm`), then Step 6 — evaluation
 script (`scripts/evaluate_stage_a.py`, per-class precision/recall/F1/AP on the held-out
 test split).
+
+---
+
+## Session 9 — FAU HPC SLURM/env scripts (Step 5)
+
+**Date:** 2026-08-24
+
+Browsed the live `doc.nhr.fau.de` TinyGPU and Python/Conda docs directly (rather than
+relying on possibly-stale prior knowledge) to ground every command in what NHR@FAU actually
+documents today. `portal.hpc.fau.de/ui/user` turned out to be the login-gated account/project
+management portal, not technical docs — didn't attempt to log in (not our credentials);
+the real technical reference is `doc.nhr.fau.de`.
+
+**`scripts/hpc/setup_env.sh`.** One-time environment bootstrap, meant to be run from an
+interactive GPU job (`salloc.tinygpu --gres=gpu:1 --time=01:00:00`) so GPU support is
+correctly detected on install. Does the documented one-time conda init (points conda's
+package/env storage at `$WORK` instead of the small, backed-up `$HOME`), creates a
+`stage_a` conda env, sets the proxy vars TinyGPU compute nodes need for internet access,
+and installs `requirements.txt` — verbatim from `doc.nhr.fau.de/environment/python-env`.
+
+**`scripts/hpc/train_stage_a.slurm`.** Follows NHR@FAU's own documented "Python (single
+GPU)" batch template exactly (`#!/bin/bash -l`, `--export=NONE` + `unset
+SLURM_EXPORT_ENV`, `module load python` + `conda activate`) — requests 1 A100 GPU
+(`--gres=gpu:a100:1 -p a100`) for 6h (well under the 24h cap) and runs
+`scripts/train_stage_a.py --device cuda`.
+
+**`docs/hpc_stage_a.md`** (new, separate from the project's own source-of-truth docs) — the
+actual step-by-step: SSH in, clone the repo onto `$WORK` (not `$HOME` — code is already
+git-backed, no second backup needed; `$WORK` has the room), get the dataset/weights there
+(scp the already-built local copies, or regenerate on-cluster), run `setup_env.sh` once,
+`sbatch.tinygpu scripts/hpc/train_stage_a.slurm`, monitor with `squeue.tinygpu`, retrieve
+`checkpoints/stage_a/stage_a_head.pt`. Notes that partition availability (`a100` vs `v100`/
+`rtx3080`) depends on the user's own project allocation (`sinfo.tinygpu` to check), which
+isn't something fetchable from public docs.
+
+**Delivered this session:** `scripts/hpc/setup_env.sh`, `scripts/hpc/train_stage_a.slurm`,
+`docs/hpc_stage_a.md` (all new). No source code changed — full suite still 43/43. Nothing
+here is executable/testable from this side (it's cluster-only); syntax-checked both shell
+scripts with `bash -n`.
+
+**Not yet done (next session):** Step 6 — evaluation script (`scripts/evaluate_stage_a.py`,
+per-class precision/recall/F1/AP on the held-out test split), then Step 7 unit tests are
+already mostly in place throughout Steps 3-4 (backbone/head/loss/dataset/training-smoke
+tests) — worth a final pass to confirm full coverage against the original plan once Step 6
+lands.
