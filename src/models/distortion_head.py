@@ -31,3 +31,25 @@ class StageADistortionHead(nn.Module):
     def forward(self, features):
         pooled = self.pool(features).flatten(1)
         return self.fc(pooled)
+
+
+class StageBDistortionHead(nn.Module):
+    """Stage B distortion head (architecture.md §2): "The feature map is
+    treated as a grid ... one classification output per tile." A 1x1 conv
+    applied directly to the P5 feature map does exactly that -- no pooling,
+    no resizing, "the feature map" itself *is* the grid, one output per
+    spatial position. At img_size=512 the frozen backbone's P5 (stride 32)
+    is 16x16, matching the grid size architecture.md uses as its own
+    example.
+
+    Returns raw logits, shape (B, num_classes, H, W) -- same
+    BCE-with-logits-expects-logits reasoning as StageADistortionHead; call
+    `torch.sigmoid(head(features))` for per-tile-per-class probabilities."""
+
+    def __init__(self, in_channels, class_names=("dirt", "water", "scratch")):
+        super().__init__()
+        self.class_names = tuple(class_names)
+        self.conv = nn.Conv2d(in_channels, len(self.class_names), kernel_size=1)
+
+    def forward(self, features):
+        return self.conv(features)

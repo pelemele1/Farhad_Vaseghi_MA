@@ -1,18 +1,23 @@
 import csv
+import json
 
 import cv2 as cv
 import numpy as np
 import pytest
 
 from src.soiling.dataset_builder import (
+    EFFECT_NAMES,
     VARIANT_KINDS,
     apply_effect_combo,
     assign_splits,
     assign_variant_kinds,
     build_stage_a_dataset,
+    build_stage_b_dataset,
     build_variant,
+    build_variant_with_mask,
     derive_seed,
 )
+from src.soiling.tile_labels import rasterize_tile_label
 
 
 def _write_fake_sources(dir_path, n=6, size=(64, 96)):
@@ -181,3 +186,105 @@ def test_build_stage_a_dataset_labels_are_reproducible(tmp_path):
     labels1 = [(r["path"], r["dirt"], r["water"], r["scratch"]) for r in rows1]
     labels2 = [(r["path"], r["dirt"], r["water"], r["scratch"]) for r in rows2]
     assert labels1 == labels2
+
+
+# --- Stage B (tile-grid) -----------------------------------------------
+
+
+def test_build_stage_b_dataset_end_to_end(tmp_path):
+    source_dir = tmp_path / "source"
+    source_dir.mkdir()
+    _write_fake_sources(source_dir, n=4)
+
+    out_dir = tmp_path / "out"
+    rows, tile_labels = build_stage_b_dataset(
+        source_dir, out_dir, variants_per_image=4, seed=0, img_size=64
+    )
+
+    assert len(rows) == 4 * 4
+    assert tile_labels.shape == (len(rows), 3, 2, 2)  # img_size=64 -> grid 64//32=2
+    assert tile_labels.dtype == np.uint8
+
+    for path in ("images", "metadata.csv", "tile_labels.npy", "stage_b_meta.json"):
+        assert (out_dir / path).exists()
+
+    with open(out_dir / "stage_b_meta.json") as f:
+        meta = json.load(f)
+    assert meta["img_size"] == 64
+    assert meta["grid_h"] == meta["grid_w"] == 2
+    assert meta["class_names"] == list(EFFECT_NAMES)
+
+    loaded = np.load(out_dir / "tile_labels.npy")
+    assert np.array_equal(loaded, tile_labels)
+
+
+def test_build_stage_b_dataset_inactive_classes_have_all_zero_grid(tmp_path):
+    source_dir = tmp_path / "source"
+    source_dir.mkdir()
+    _write_fake_sources(source_dir, n=4)
+
+    out_dir = tmp_path / "out"
+    rows, tile_labels = build_stage_b_dataset(
+        source_dir, out_dir, variants_per_image=4, seed=0, img_size=64
+    )
+
+    for row, grid in zip(rows, tile_labels):
+        for i, name in enumerate(EFFECT_NAMES):
+            if row[name] == 0:
+                assert grid[i].sum() == 0, f"{name} inactive but tile grid has a positive tile"
+
+    # a clean variant (all three labels 0) must have every channel all-zero
+    clean_rows = [(r, g) for r, g in zip(rows, tile_labels) if r["dirt"] + r["water"] + r["scratch"] == 0]
+    assert clean_rows  # sanity: the fixture actually produced clean variants
+    for row, grid in clean_rows:
+        assert grid.sum() == 0
+
+
+def test_build_stage_b_dataset_tile_labels_match_the_mask_that_made_the_image(tmp_path):
+    # Recomputes the same variant (kind, seeds) the builder used internally,
+    # via the public build_variant_with_mask function, and checks the stored
+    # tile label is exactly the rasterization of *that* mask -- i.e. no
+    # discrepancy between the saved image and its tile label (the whole
+    # point of computing them in the same call, see module docstring).
+    source_dir = tmp_path / "source"
+    source_dir.mkdir()
+    _write_fake_sources(source_dir, n=2)
+
+    out_dir = tmp_path / "out"
+    rows, tile_labels = build_stage_b_dataset(
+        source_dir, out_dir, variants_per_image=4, seed=0, img_size=64
+    )
+
+    with open(out_dir / "stage_b_meta.json") as f:
+        meta = json.load(f)
+    thresholds = meta["thresholds"]
+
+    kind_order_seed = derive_seed(0, "00000000", "kind_order")
+    kinds = assign_variant_kinds(4, kind_order_seed)
+    img = cv.imread(str(source_dir / "00000000.jpg"))
+
+    for variant_idx, kind in enumerate(kinds):
+        row_idx = variant_idx  # source "00000000" is written first, variants in order
+        _, _, masks = build_variant_with_mask(img, "00000000", variant_idx, kind, base_seed=0)
+        expected = np.stack([
+            rasterize_tile_label(masks[name], meta["grid_h"], meta["grid_w"], thresholds[name])
+            for name in EFFECT_NAMES
+        ])
+        assert np.array_equal(tile_labels[row_idx], expected)
+        assert rows[row_idx]["source_id"] == "00000000"
+        assert rows[row_idx]["variant_id"] == variant_idx
+
+
+def test_apply_effect_combo_with_masks_gives_zero_mask_for_inactive_classes():
+    from src.soiling.dataset_builder import apply_effect_combo_with_masks
+
+    img = np.random.default_rng(6).integers(0, 255, size=(48, 64, 3), dtype=np.uint8)
+    out, labels, masks = apply_effect_combo_with_masks(
+        img, (False, False, True), {"scratch": 7}
+    )
+    assert labels == {"dirt": 0, "water": 0, "scratch": 1}
+    assert masks["dirt"].shape == img.shape[:2]
+    assert masks["dirt"].sum() == 0
+    assert masks["water"].sum() == 0
+    assert masks["scratch"].sum() > 0
+    assert not np.array_equal(out, img)

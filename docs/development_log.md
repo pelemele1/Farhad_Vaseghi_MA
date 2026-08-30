@@ -585,3 +585,208 @@ directions: raise `--batch-size` back up now that 2.9GB/10GB was used (faster it
 try to close the scratch-class gap, or move beyond Stage A per architecture.md's own
 roadmap (Stage B tile classification, Stage C pixel-level segmentation) -- none of this is
 decided yet, worth discussing with the user before picking a direction.
+
+---
+
+## Session 12 — Step 7 coverage audit
+
+**Date:** 2026-08-24
+
+A final pass specifically checking test coverage against the original plan, rather than
+assuming Steps 3-6's per-module tests (written alongside each module, not as an afterthought)
+added up to full coverage.
+
+**Audit:** every file under `src/` maps 1:1 to a test file (`effects.py` -> two files, split
+dirt/water vs. scratch). Step 7's explicit checklist items were all already covered from
+earlier sessions: each distortion effect (`test_effects.py`, `test_effects_dirt_water.py`),
+`dataset_builder` label correctness (`test_dataset_builder.py`), `StageADistortionHead`
+forward-pass shape (`test_distortion_head.py`), loss-finite + single-optimizer-step-strictly-
+decreases-loss (`test_distortion_head.py`, `test_losses.py`).
+
+**Real gap found:** `scripts/build_stage_a_dataset.py` and `scripts/sample_mio_tcd.py` were
+the only two CLI entry points with no test of their own -- `train_stage_a.py` and
+`evaluate_stage_a.py` both already had subprocess-level CLI tests (verifying the actual
+argparse wiring and printed output, not just the library function underneath), but these two
+didn't. Added matching subprocess tests for both, reusing `test_mio_tcd.py`'s fake-tar-archive
+fixture pattern for `sample_mio_tcd.py`.
+
+**Also added:** a syntax-check test for the two HPC shell scripts (`bash -n` on
+`setup_env.sh` and `train_stage_a.slurm`), promoting Session 9's one-off manual check into
+something the suite catches automatically on any future edit. Skips gracefully if `bash`
+isn't on `PATH`.
+
+**Delivered this session:** `tests/test_sample_mio_tcd_cli.py`, `tests/
+test_build_stage_a_dataset_cli.py`, `tests/test_hpc_scripts_syntax.py` (all new, no source
+code changed). Full suite: 51/51.
+
+**Status:** the full Step 0-7 plan is complete, tested, and validated end-to-end on real
+FAU HPC hardware (Session 10-11's actual training run + evaluation results). Next steps are
+open-ended -- see Session 11's note above.
+
+---
+
+## Session 13 — Stage A final report
+
+**Date:** 2026-08-24
+
+Wrote [`stage_a_final_report.md`](stage_a_final_report.md), a standalone summary of the
+whole phase (goal, pipeline overview, per-section detail, results, limitations) -- kept
+separate from this session log rather than folded in, since it's a synthesized deliverable
+rather than a chronological record.
+
+Built `scripts/visualize_stage_a_results.py` to generate its result images from the real
+trained checkpoint rather than describing results in prose only: a per-class metrics bar
+chart, and a grid of the model's actual predictions on 12 real test-split images (3 per
+label -- clean/dirt/water/scratch), each captioned with ground truth, predicted label, and
+raw probabilities. All 12 sampled predictions came back correct.
+
+**Follow-up: training curve added.** Fetched the real training job's raw stdout log
+(`stage_a_1791674.out`) back from `$WORK` on the cluster rather than transcribing numbers
+from memory, added `parse_training_log`/`plot_training_curve` (regex-parses `epoch N/M
+train_loss=... val_loss=...` lines, ignoring everything else in a raw SLURM job log) and a
+`--log-file` option to the same script. Train loss drops smoothly throughout (0.653 →
+0.146); val loss drops sharply for ~7 epochs then plateaus around 0.20-0.24 with noise, no
+overfitting. No separate "test curve" exists by design -- the test split is only touched
+once, for the final evaluation, not monitored during training.
+
+**Delivered this session:** `scripts/visualize_stage_a_results.py` (new),
+`tests/test_visualize_stage_a_results.py` (6 tests, pure logic, no backbone/GPU needed),
+`docs/stage_a_final_report.md` (new), `docs/images/stage_a_test_metrics.jpg`,
+`docs/images/stage_a_sample_predictions.jpg`, `docs/images/stage_a_training_curve.jpg`
+(new). Full suite: 57/57.
+
+---
+
+## Session 14 — Part 1 data collection pipeline
+
+**Date:** 2026-08-24
+
+Shifted focus from Part 2 (network) to Part 1 (real dataset capture) -- `setup.md` states the
+design rules (glass pane, sync, homography, pilot size) but was never turned into an actual
+field-usable protocol: no camera spec, no image-count target beyond the pilot, no distortion-
+application method, no capture-log schema.
+
+**Camera identified from the real hardware, not guessed.** The user connected one of the two
+cameras; Windows' device descriptor and Vimba X Viewer both confirmed **Allied Vision Alvium
+1800 U-1240c** (color, serial `05HYK`). Cross-referenced against the vendor's own 337-page user
+guide (`D:\MasterThesis_FAU\Documentation\UserGuide`, extracted via `pdftotext`) for the exact
+spec table (Sony IMX226, 12.2 MP, 1.85 micron pixels, USB3/GenICam, max 35 fps free-run / ~17 fps
+triggered, IP30 only -- no water protection, external trigger supported but no built-in
+multi-camera sync or front window) and the focal-length-vs-field-of-view table, extrapolated from
+the datasheet's 1000 mm reference distance out to the project's actual 10-20 m capture range.
+
+**Wrote `docs/data_collection_pipeline.md`** -- the field protocol: equipment (camera specs, lens
+recommendation, pane-holder fixture, shared trigger wiring, weatherproofing note), how to prepare
+each distortion pane (dirt/water/scratch, each with a light/heavy recipe), the exact step order
+for one capture session (calibrate -> lock exposure -> clean burst -> swap panes -> log), image
+count targets (Phase 1 = `setup.md`'s existing pilot number, Phase 2 = a reasoned ~150-250 scene /
+low-thousands-of-pairs proposal sized for the thesis and a possible paper), the capture-log schema
+`architecture.md` already assumes exists, file storage layout, and a short list of decisions only
+the user can make (exact lens, rig baseline, camera height, trigger hardware, final Phase-2
+number). `setup.md` gets one added pointer line to the new doc; nothing in it was changed or
+contradicted.
+
+**Follow-up: site/weather/height left too vague, made concrete.** The first draft only said to
+"record" location, weather, and height per session without giving actual numbers. Added a new
+§3 ("Choosing sites, weather, and camera height") with concrete guidance: pick ~10-20 fixed,
+revisitable sites (public ground, traffic scenes, minimize identifiable people) rather than
+scouting a new location every session; cover at least sunny/overcast/dusk weather (skip real
+rain/snow -- the cameras are IP30, not water-rated; water training data comes from the pane, not
+the sky); use ~2-2.5 m as the default camera height (closer to a real traffic-camera angle) with
+~1.2-1.5 m as a fallback where elevated access isn't available. Flagged privacy/ethics (real
+identifiable people and plates, unlike the synthetic Part 2 data) as something to confirm with
+the supervisor/institution, not something to decide unilaterally.
+
+**Delivered this session:** `docs/data_collection_pipeline.md` (new), `setup.md` (one pointer
+line added). No source code changed -- this is a field protocol document, nothing to run/pytest.
+
+**Not yet done:** the open items listed in the new doc's final section need the user's input
+before any physical fieldwork starts.
+
+---
+
+## Session 15 — Stage B: tile/grid classification (architecture.md §2)
+
+**Date:** 2026-08-31
+
+Moved to the next distortion-head stage: architecture.md §2 Stage B -- "The feature map is
+treated as a grid (e.g. 16x16), one classification output per tile. Provides coarse
+localization ('dirt in the top right') without pixel-mask annotation." Same backbone, same
+three classes, same frozen-backbone strategy as Stage A; the new part is a per-tile output
+instead of one label per image.
+
+**The real design problem, not just a bigger Stage A:** Stage B needs to know *where* each
+effect landed, not just whether it was applied. `add_dirt`/`add_water`/`add_scratch` already
+return `(image, mask)`, but `dataset_builder.py`'s Stage A path throws the mask away. And per
+Session 6, `add_dirt`/`add_water` are only *label*-reproducible across separate calls with the
+same seed, not *pixel*-reproducible (a `pythonperlin` dependency silently reseeds `np.random`
+internally) -- so a tile label computed by re-running the effect after the fact would not
+reliably correspond to an already-saved image's actual pixels. Fixed by building Stage B as a
+**separate** dataset where each variant's image and mask come from the *same* function call,
+rasterizing the mask into a tile label immediately, before it's discarded.
+
+**Key design choices:**
+- Grid size = the frozen backbone's native P5 spatial size (a 1x1 conv directly on P5, no
+  extra resizing) -- at `--img-size 512` (P5 stride 32) that's exactly **16x16**, matching
+  architecture.md's own example number.
+- Two different tile-coverage thresholds by class, not one global number: dirt/water are
+  filled regions (15% default), scratch is a thin line that would almost never clear a
+  threshold sized for filled regions (3% default). Measured for real after building the full
+  4000-image dataset: dirt 13.0%, water 17.6%, scratch 1.0% tile-positive rate overall (i.e.
+  across every tile of every image, including images where that class isn't active at all) --
+  non-degenerate for all three, no repeat of Session 5's near-invisible-coverage problem.
+- `tile_labels.npy`: one consolidated `(N, 3, 16, 16)` uint8 array, row-aligned with
+  `metadata.csv`, rather than thousands of tiny per-image files or hundreds of flattened CSV
+  columns.
+- `pos_weight` broadcasting pitfall specific to Stage B (doesn't exist in Stage A): the target
+  is `(B, C, H, W)`, so a plain `(C,)` pos_weight would broadcast against the *last* dim (W),
+  not the channel dim -- silently wrong. `build_stage_b_loss` reshapes it to `(C, 1, 1)`;
+  caught with a test that fails if the reshape is removed (constructs a case where W
+  coincidentally equals C, so the bug wouldn't even raise a shape error, just silently
+  misweight).
+- `StageBDataset` refuses to load at an `img_size` different from what the dataset was built
+  with (raises `ValueError`) -- a mismatch would misalign the backbone's feature-map grid
+  against the fixed tile-label grid, either crashing in the loss or, worse, silently
+  misaligning tiles if the sizes happened to still divide evenly.
+
+**Reused as-is, no changes needed:** `FrozenYOLOBackbone` (architecture.md: "all three stages
+use the same backbone"), `derive_seed`/`assign_variant_kinds`/`assign_splits`/`EFFECT_NAMES`
+from Stage A's dataset builder, and `scripts/train_stage_a.py`'s `run_epoch` (imported
+directly into `train_stage_b.py` rather than duplicated).
+
+**Refactor:** lifted `compute_metrics` (and `collect_predictions`) out of
+`evaluate_stage_a.py` into a new `src/eval/metrics.py`, so Stage B's evaluator reuses the
+exact same sklearn-shape-pitfall-safe implementation instead of a second copy;
+`evaluate_stage_a.py` re-exports both names so its own tests needed no changes. Also
+parameterized `visualize_stage_a_results.py`'s `plot_metrics_bar_chart` with a `title`
+argument (was hardcoded to "Stage A...") so Stage B's visualizer could reuse it directly
+instead of copy-pasting a near-identical chart function.
+
+**Validated for real, not just on synthetic test fixtures:** built a small dataset from 6 real
+MIO-TCD images, ran `train_stage_b.py --smoke-test` (backbone -> head -> loss ->
+optimizer.step(), real CPU run), `evaluate_stage_b.py`, and `visualize_stage_b_results.py`
+against an untrained checkpoint -- all completed successfully; the generated overlay image
+showed the rasterized tile grid correctly outlining the actual dirt/water/scratch regions in
+real photos (including a thin diagonal scratch line landing in the expected two tiles). Then
+ran the real full build against the existing 1000-image MIO-TCD pilot subset (same source
+images Stage A uses): 4000 images, 3200/400/400 split, tile-positive rates as above --
+confirms the thresholds hold up at full scale, not just the 6-image sample.
+
+**Delivered this session:** `src/soiling/tile_labels.py`, `src/eval/__init__.py` +
+`src/eval/metrics.py`, `src/data/stage_b_dataset.py`, `scripts/build_stage_b_dataset.py`,
+`scripts/train_stage_b.py`, `scripts/evaluate_stage_b.py`,
+`scripts/visualize_stage_b_results.py`, `scripts/hpc/train_stage_b.slurm` (all new);
+`src/soiling/dataset_builder.py` (added `build_stage_b_dataset` + helpers),
+`src/models/distortion_head.py` (added `StageBDistortionHead`), `src/models/losses.py`
+(added `compute_tile_pos_weight` + `build_stage_b_loss`), `scripts/evaluate_stage_a.py`
+(refactored to import from `src/eval/metrics.py`), `scripts/visualize_stage_a_results.py`
+(`plot_metrics_bar_chart` title parameterized), `tests/test_hpc_scripts_syntax.py` (extended).
+35 new tests across `tests/test_tile_labels.py`, `tests/test_dataset_builder.py`,
+`tests/test_distortion_head.py`, `tests/test_losses.py`, `tests/test_stage_b_dataset.py`,
+`tests/test_build_stage_b_dataset_cli.py`, `tests/test_train_stage_b.py`,
+`tests/test_evaluate_stage_b.py`, `tests/test_evaluate_stage_b_metrics.py`,
+`tests/test_visualize_stage_b_results.py`. Full suite: 92/92.
+
+**Not yet done:** no real training run (standing rule -- Claude prepares code, doesn't train).
+Real training is the user's own `sbatch.tinygpu scripts/hpc/train_stage_b.slurm` job on FAU
+HPC, same as Stage A's Session 10. Nothing from this session is committed yet.
