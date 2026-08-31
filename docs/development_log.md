@@ -790,3 +790,57 @@ confirms the thresholds hold up at full scale, not just the 6-image sample.
 **Not yet done:** no real training run (standing rule -- Claude prepares code, doesn't train).
 Real training is the user's own `sbatch.tinygpu scripts/hpc/train_stage_b.slurm` job on FAU
 HPC, same as Stage A's Session 10. Nothing from this session is committed yet.
+
+---
+
+## Session 16 — Stage B real training run on TinyGPU
+
+**Date:** 2026-08-31
+
+Committed and pushed Session 15's Stage B work, then ran it for real on the user's FAU HPC
+allocation, following the same procedure as Stage A's Session 10.
+
+**Setup:** `git pull` on the cluster (fast-forwarded straight through both the still-unpushed
+Session 11 evaluate_stage_a commit and Session 15's Stage B commit -- the cluster repo had been
+one commit further behind than expected). `pip install -r requirements.txt` in the existing
+`stage_a` conda env to pick up `scikit-learn` (added in Session 11's requirements.txt but never
+installed on the cluster since evaluate_stage_a.py had only ever been run locally). Transferred
+the already-built, already-validated local Stage B dataset (`data/processed/stage_b/`, 4000
+images + tile_labels.npy + metadata) to `$WORK` via `scp` rather than rebuilding on the
+cluster -- deliberate choice, matching Stage A's precedent, and avoids spending GPU-allocation
+time on the CPU-heavy effects pipeline.
+
+**Job `1799124`, `rtx3080`/`tg080`, ~9 minutes for 20 epochs** (faster than Stage A's ~12 min,
+consistent with the smaller 512 vs. 640 input and identical dataset size):
+```
+train=3200 val=400 pos_weight=[6.729, 4.694, 94.880]
+epoch 1/20   train_loss=0.8951  val_loss=0.7658
+epoch 10/20  train_loss=0.5272  val_loss=0.5426
+epoch 20/20  train_loss=0.4910  val_loss=0.5153
+```
+Smooth, monotonic on both curves, train/val tracking closely -- no overfitting. No quota
+surprises this time (rtx3080 already confirmed working from Stage A).
+
+**Real evaluation** (400 test images, 102400 tiles):
+
+| class | precision | recall | F1 | AP | support (tiles) |
+|---|---|---|---|---|---|
+| dirt | 0.595 | 0.904 | 0.718 | 0.864 | 13597 |
+| water | 0.699 | 0.921 | 0.795 | 0.868 | 18701 |
+| scratch | 0.063 | 0.852 | 0.117 | 0.309 | 1080 |
+
+Dirt/water localize well after just 20 epochs (AP ~0.86-0.87). **Scratch is a real, visible
+weak point**, not just a lower number: `visualize_stage_b_results.py`'s overlay on real test
+images shows the model predicting scratch-positive across large swaths of clean images (high
+recall 0.852, precision only 0.063) -- the `pos_weight=94.9` needed to counter its 1% tile-
+positive rate pushes the head toward over-predicting everywhere rather than localizing the thin
+line specifically. Expected given how much rarer and thinner the scratch signal is at tile
+granularity than dirt/water, and consistent with scratch already being Stage A's weakest class
+(AP 0.920 there vs. ~1.0) -- worse here since tile-level multiplies the imbalance. Left as an
+open problem for a future session (candidates: more epochs, a lower/tuned scratch threshold at
+dataset-build time, focal loss instead of pos_weight, or per-class thresholds at inference).
+
+**Delivered this session:** `checkpoints/stage_b/stage_b_head.pt` (trained head, local + on
+`$WORK`), `stage_b_1799124.out` (raw job log, local + on cluster), `docs/images/
+stage_b_test_metrics.jpg`, `docs/images/stage_b_sample_predictions.jpg` (both real, from the
+trained checkpoint). Session 15's code pushed as commit `19db3cb`.

@@ -3,9 +3,12 @@ import csv
 import numpy as np
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 from src.models.losses import (
+    FocalLossWithLogits,
     build_stage_a_loss,
+    build_stage_b_focal_loss,
     build_stage_b_loss,
     compute_pos_weight,
     compute_tile_pos_weight,
@@ -134,3 +137,89 @@ def test_build_stage_b_loss_reshapes_pos_weight_onto_the_channel_axis():
     got = build_stage_b_loss(pos_weight)(logits, labels)
     assert torch.allclose(got, correct)
     assert not torch.allclose(got, naive)
+
+
+# --- Focal loss (Stage B scratch-class fix, Session 17) -----------------
+
+
+def test_focal_loss_is_finite_on_random_inputs():
+    loss_fn = build_stage_b_focal_loss()
+    logits = torch.randn(2, 3, 4, 4)
+    labels = torch.randint(0, 2, (2, 3, 4, 4)).float()
+    assert torch.isfinite(loss_fn(logits, labels))
+
+
+def test_focal_loss_downweights_confident_correct_predictions_more_than_uncertain_ones():
+    # Two single-element cases, both correctly predicted positive (target=1):
+    # one confidently (large positive logit -> p close to 1, "easy"), one
+    # barely (logit near 0 -> p ~ 0.5, "hard"). gamma>0 should shrink the
+    # easy case's loss much more (relative to gamma=0, i.e. plain
+    # alpha-weighted BCE) than it shrinks the hard case's -- that's the
+    # whole point of the (1 - p_t)^gamma focusing term.
+    target = torch.tensor([[1.0]])
+    easy_logit = torch.tensor([[6.0]])   # sigmoid(6) ~ 0.9975, confidently correct
+    hard_logit = torch.tensor([[0.1]])   # sigmoid(0.1) ~ 0.525, barely correct
+
+    no_focus = FocalLossWithLogits(alpha=0.25, gamma=0.0)
+    with_focus = FocalLossWithLogits(alpha=0.25, gamma=2.0)
+
+    easy_ratio = with_focus(easy_logit, target) / no_focus(easy_logit, target)
+    hard_ratio = with_focus(hard_logit, target) / no_focus(hard_logit, target)
+    assert easy_ratio < hard_ratio
+
+
+def test_focal_loss_gamma_zero_matches_alpha_weighted_bce_by_hand():
+    logits = torch.tensor([[2.0, -1.0, 0.5]])
+    targets = torch.tensor([[1.0, 0.0, 1.0]])
+    alpha = 0.3
+
+    loss_fn = FocalLossWithLogits(alpha=alpha, gamma=0.0)
+    got = loss_fn(logits, targets)
+
+    bce = F.binary_cross_entropy_with_logits(logits, targets, reduction="none")
+    alpha_t = alpha * targets + (1 - alpha) * (1 - targets)
+    expected = (alpha_t * bce).mean()
+    assert torch.allclose(got, expected)
+
+
+def test_focal_loss_per_class_alpha_broadcasts_onto_channel_axis():
+    # Same W==C pitfall as the pos_weight broadcast test above: a (C,) alpha
+    # tensor must land on the channel dim, not silently broadcast against a
+    # same-sized last (W) dim.
+    torch.manual_seed(0)
+    alpha = torch.tensor([0.9, 0.1, 0.1])  # heavily favor class 0's positives
+    logits = torch.randn(2, 3, 4, 3)  # B, C=3, H=4, W=3 -- W matches C on purpose
+    labels = torch.randint(0, 2, (2, 3, 4, 3)).float()
+
+    loss_fn = FocalLossWithLogits(alpha=alpha, gamma=2.0)
+    got = loss_fn(logits, labels)
+
+    # hand-compute with the correct (1, C, 1, 1) broadcast
+    bce = F.binary_cross_entropy_with_logits(logits, labels, reduction="none")
+    p = torch.sigmoid(logits)
+    p_t = p * labels + (1 - p) * (1 - labels)
+    alpha_aligned = alpha.view(1, 3, 1, 1)
+    alpha_t = alpha_aligned * labels + (1 - alpha_aligned) * (1 - labels)
+    expected = (alpha_t * (1 - p_t) ** 2.0 * bce).mean()
+
+    assert torch.allclose(got, expected)
+
+
+def test_focal_loss_single_optimizer_step_decreases_loss():
+    torch.manual_seed(0)
+    from src.models.distortion_head import StageBDistortionHead
+
+    head = StageBDistortionHead(in_channels=8)
+    features = torch.randn(6, 8, 4, 4)
+    labels = torch.randint(0, 2, (6, 3, 4, 4)).float()
+    loss_fn = build_stage_b_focal_loss()
+    opt = torch.optim.SGD(head.parameters(), lr=1.0)
+
+    loss_before = loss_fn(head(features), labels)
+    opt.zero_grad()
+    loss_before.backward()
+    opt.step()
+    loss_after = loss_fn(head(features), labels)
+
+    assert torch.isfinite(loss_before)
+    assert loss_after.item() < loss_before.item()

@@ -7,6 +7,7 @@ import csv
 import numpy as np
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 from src.soiling.dataset_builder import EFFECT_NAMES
 
@@ -80,3 +81,63 @@ def build_stage_b_loss(pos_weight=None):
     if pos_weight is not None:
         pos_weight = pos_weight.view(-1, 1, 1)
     return nn.BCEWithLogitsLoss(pos_weight=pos_weight)
+
+
+def _align_per_class(vec, ndim):
+    """Reshapes a (C,) tensor to broadcast against the channel dim (dim 1)
+    of an (B, C) or (B, C, H, W) tensor -- (1, C) or (1, C, 1, 1). Same
+    broadcasting pitfall `build_stage_b_loss`'s pos_weight reshape guards
+    against: PyTorch aligns broadcast dims from the right, so a bare (C,)
+    vector would land on the *last* dim, not the channel dim, unless
+    explicitly reshaped."""
+    return vec.view(1, -1, *([1] * (ndim - 2)))
+
+
+class FocalLossWithLogits(nn.Module):
+    """Binary focal loss (Lin et al. 2017, "Focal Loss for Dense Object
+    Detection", RetinaNet) -- architecture.md §4's own listed alternative to
+    `BCEWithLogitsLoss(pos_weight=...)` for class imbalance.
+
+    Motivation (see docs/development_log.md Session 16): Stage B's scratch
+    class needed `pos_weight` ~95 to counter its ~1% tile-positive rate.
+    That's a single flat multiplier applied to *every* missed positive,
+    which empirically pushed the trained head to over-predict "scratch"
+    almost everywhere (recall 0.852, precision 0.063) rather than localize
+    it -- a large enough pos_weight rewards blanket-guessing "positive" more
+    than it rewards being selective. Focal loss instead down-weights
+    already-easy/confident examples via the `(1 - p_t) ** gamma` factor and
+    concentrates gradient on hard ones, without any single term dominating
+    the loss the way a ~95x multiplier does.
+
+    `alpha`: foreground/background balance weight -- a python float
+    (applied to every class equally) or a (num_classes,) tensor (one alpha
+    per class). Default 0.25 is the RetinaNet paper's own default, used
+    as-is here rather than re-deriving a new per-class value from this
+    dataset's positive rates -- reusing pos_weight's inverse-frequency
+    formula for alpha too would risk reproducing the same over-triggering
+    problem this loss exists to avoid.
+    `gamma`: focusing parameter (RetinaNet default 2.0; 0 reduces this to
+    plain alpha-weighted BCE, no focusing effect).
+    """
+
+    def __init__(self, alpha=0.25, gamma=2.0):
+        super().__init__()
+        self.alpha = alpha
+        self.gamma = gamma
+
+    def forward(self, logits, targets):
+        bce = F.binary_cross_entropy_with_logits(logits, targets, reduction="none")
+        p = torch.sigmoid(logits)
+        p_t = p * targets + (1 - p) * (1 - targets)
+
+        alpha = self.alpha
+        if isinstance(alpha, torch.Tensor):
+            alpha = _align_per_class(alpha.to(logits.device), logits.dim())
+        alpha_t = alpha * targets + (1 - alpha) * (1 - targets)
+
+        loss = alpha_t * (1 - p_t) ** self.gamma * bce
+        return loss.mean()
+
+
+def build_stage_b_focal_loss(alpha=0.25, gamma=2.0):
+    return FocalLossWithLogits(alpha=alpha, gamma=gamma)

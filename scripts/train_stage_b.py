@@ -8,6 +8,7 @@ real training is the user's own `sbatch` job on their HPC allocation.
 
 Usage:
     python scripts/train_stage_b.py --data data/processed/stage_b --epochs 20 --device cuda
+    python scripts/train_stage_b.py --data data/processed/stage_b --epochs 40 --loss focal --device cuda
 
 Smoke test (tiny subset, 1 epoch, CPU, no checkpoint written -- verifies the
 pipeline runs, not a real training run):
@@ -27,7 +28,7 @@ from scripts.train_stage_a import run_epoch
 from src.data.stage_b_dataset import StageBDataset
 from src.models.backbone import FrozenYOLOBackbone
 from src.models.distortion_head import StageBDistortionHead
-from src.models.losses import build_stage_b_loss, compute_tile_pos_weight
+from src.models.losses import build_stage_b_focal_loss, build_stage_b_loss, compute_tile_pos_weight
 
 
 def main():
@@ -40,6 +41,16 @@ def main():
     parser.add_argument("--img-size", type=int, default=512, help="Must be a multiple of 32 -- also sets the tile grid size (img-size // 32)")
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--out", default="checkpoints/stage_b", help="Where to write the trained head's weights")
+    parser.add_argument(
+        "--loss", default="bce", choices=["bce", "focal"],
+        help="'bce': BCEWithLogitsLoss(pos_weight=...) (default, matches Stage A's approach). "
+             "'focal': focal loss (Lin et al. 2017) -- an alternative for extreme class imbalance "
+             "(architecture.md §4); see docs/development_log.md Session 17 for why this was added "
+             "(the 'bce' path's pos_weight for Stage B's scratch class comes out ~95x, which "
+             "empirically caused over-prediction rather than localization).",
+    )
+    parser.add_argument("--focal-alpha", type=float, default=0.25, help="Only used with --loss focal")
+    parser.add_argument("--focal-gamma", type=float, default=2.0, help="Only used with --loss focal")
     parser.add_argument(
         "--smoke-test", action="store_true",
         help="Tiny subset, 1 epoch, CPU, no checkpoint written -- pipeline correctness only",
@@ -63,13 +74,17 @@ def main():
     backbone = FrozenYOLOBackbone(args.weights).to(device)
     head = StageBDistortionHead(in_channels=backbone.out_channels, class_names=train_set.class_names).to(device)
 
-    pos_weight = compute_tile_pos_weight(
-        Path(args.data) / "tile_labels.npy", Path(args.data) / "metadata.csv", split="train"
-    ).to(device)
-    loss_fn = build_stage_b_loss(pos_weight)
-    optimizer = torch.optim.Adam(head.parameters(), lr=args.lr)
+    if args.loss == "focal":
+        loss_fn = build_stage_b_focal_loss(alpha=args.focal_alpha, gamma=args.focal_gamma)
+        print(f"train={len(train_set)} val={len(val_set)} loss=focal alpha={args.focal_alpha} gamma={args.focal_gamma}")
+    else:
+        pos_weight = compute_tile_pos_weight(
+            Path(args.data) / "tile_labels.npy", Path(args.data) / "metadata.csv", split="train"
+        ).to(device)
+        loss_fn = build_stage_b_loss(pos_weight)
+        print(f"train={len(train_set)} val={len(val_set)} loss=bce pos_weight={pos_weight.tolist()}")
 
-    print(f"train={len(train_set)} val={len(val_set)} pos_weight={pos_weight.tolist()}")
+    optimizer = torch.optim.Adam(head.parameters(), lr=args.lr)
 
     for epoch in range(1, args.epochs + 1):
         start = time.time()
