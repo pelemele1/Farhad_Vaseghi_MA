@@ -21,13 +21,19 @@ def main():
     parser.add_argument("--source", required=True, help="Folder of clean source images")
     parser.add_argument("--out", default="data/processed/stage_a", help="Output directory")
     parser.add_argument("--variants", type=int, default=4,
-                         help="Variants per source image (cycles clean/dirt/water/scratch, balanced)")
+                         help="Variants per source image (cycles clean/dirt/water/scratch, balanced; "
+                         "use 8 with --include-combos for exact balance across all 8 kinds)")
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--include-combos", action="store_true",
+                         help="Also generate multi-distortion variants (the 3 pairs + the full triple, "
+                         "see COMBO_KINDS in src/soiling/dataset_builder.py) alongside the original "
+                         "clean/single-effect kinds -- 8 kinds total. Default: off, original behavior.")
     args = parser.parse_args()
 
     rows = build_stage_a_dataset(
         args.source, args.out,
         variants_per_image=args.variants, seed=args.seed,
+        include_combos=args.include_combos,
     )
 
     by_split = Counter(r["split"] for r in rows)

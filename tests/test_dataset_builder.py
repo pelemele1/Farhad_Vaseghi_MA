@@ -6,6 +6,8 @@ import numpy as np
 import pytest
 
 from src.soiling.dataset_builder import (
+    ALL_VARIANT_KINDS,
+    COMBO_KINDS,
     EFFECT_NAMES,
     VARIANT_KINDS,
     apply_effect_combo,
@@ -51,6 +53,20 @@ def test_assign_variant_kinds_is_balanced_and_deterministic():
     assert sorted(kinds_8) == sorted(VARIANT_KINDS * 2)  # cycles to stay balanced past 4
 
 
+def test_assign_variant_kinds_with_combos_is_balanced_and_deterministic():
+    # Session 19+: kinds=ALL_VARIANT_KINDS (8 kinds: clean + 3 single + 3
+    # pair + 1 triple) -- default (kinds=None) is untouched, this is purely
+    # additive/opt-in.
+    kinds = assign_variant_kinds(8, seed=0, kinds=ALL_VARIANT_KINDS)
+    assert sorted(kinds) == sorted(ALL_VARIANT_KINDS)  # exactly one of each of the 8 kinds
+
+    kinds_again = assign_variant_kinds(8, seed=0, kinds=ALL_VARIANT_KINDS)
+    assert kinds == kinds_again  # same seed -> same order
+
+    kinds_16 = assign_variant_kinds(16, seed=0, kinds=ALL_VARIANT_KINDS)
+    assert sorted(kinds_16) == sorted(ALL_VARIANT_KINDS * 2)  # cycles to stay balanced past 8
+
+
 def test_apply_effect_combo_labels_match_what_was_applied():
     img = np.random.default_rng(1).integers(0, 255, size=(48, 64, 3), dtype=np.uint8)
     out, labels = apply_effect_combo(
@@ -90,6 +106,23 @@ def test_build_variant_kind_selects_exactly_one_effect():
     out_water, labels_water = build_variant(img, source_id="00000001", variant_idx=0, kind="water", base_seed=0)
     assert labels_water == {"dirt": 0, "water": 1, "scratch": 0}
     assert not np.array_equal(out_water, img)
+
+
+def test_build_variant_kind_selects_multiple_effects_for_combo_kind():
+    # Session 19+: a "+"-joined kind string (a COMBO_KINDS member) applies
+    # more than one effect to the same image -- the additive counterpart to
+    # test_build_variant_kind_selects_exactly_one_effect above.
+    img = np.random.default_rng(4).integers(0, 255, size=(48, 64, 3), dtype=np.uint8)
+
+    out, labels = build_variant(img, source_id="00000001", variant_idx=0, kind="dirt+water", base_seed=0)
+    assert labels == {"dirt": 1, "water": 1, "scratch": 0}
+    assert not np.array_equal(out, img)
+
+    out_triple, labels_triple = build_variant(
+        img, source_id="00000001", variant_idx=0, kind="dirt+water+scratch", base_seed=0
+    )
+    assert labels_triple == {"dirt": 1, "water": 1, "scratch": 1}
+    assert not np.array_equal(out_triple, img)
 
 
 def test_build_variant_differs_across_variant_index_for_same_kind():
@@ -161,6 +194,51 @@ def test_build_stage_a_dataset_variants_are_balanced_per_source(tmp_path):
         assert clean_count == 1
         for name in ("dirt", "water", "scratch"):
             assert sum(r[name] for r in source_rows) == 1
+
+
+def test_build_stage_a_dataset_with_combos_end_to_end(tmp_path):
+    # Session 19+: include_combos=True adds the 4 combo kinds alongside the
+    # original 4 -- additive check, mirrors test_build_stage_a_dataset_end_to_end
+    # but for the 8-kind pool. variants_per_image=8 gives exact balance.
+    source_dir = tmp_path / "source"
+    source_dir.mkdir()
+    _write_fake_sources(source_dir, n=3)
+
+    out_dir = tmp_path / "out"
+    rows = build_stage_a_dataset(
+        source_dir, out_dir, variants_per_image=8, seed=0,
+        ratios=(0.7, 0.15, 0.15), include_combos=True,
+    )
+
+    assert len(rows) == 3 * 8
+    by_positives = {0: 0, 1: 0, 2: 0, 3: 0}
+    for row in rows:
+        n_positive = row["dirt"] + row["water"] + row["scratch"]
+        by_positives[n_positive] += 1
+        assert (out_dir / row["path"]).exists()
+
+    # per source image: 1 clean (0 positives), 3 singles (1 positive each),
+    # 3 pairs (2 positives each), 1 triple (3 positives) -- so across 3
+    # sources: 3 clean, 9 single, 9 pair, 3 triple.
+    assert by_positives[0] == 3
+    assert by_positives[1] == 9
+    assert by_positives[2] == 9
+    assert by_positives[3] == 3
+
+
+def test_build_stage_a_dataset_default_still_excludes_combos(tmp_path):
+    # Regression check: omitting include_combos (or passing False) must
+    # still produce the original single-distortion-or-clean-only behavior --
+    # the existing blanket "<=1 positive" invariant, unaffected by the new
+    # combo support existing in the same function.
+    source_dir = tmp_path / "source"
+    source_dir.mkdir()
+    _write_fake_sources(source_dir, n=3)
+
+    out_dir = tmp_path / "out"
+    rows = build_stage_a_dataset(source_dir, out_dir, variants_per_image=4, seed=0)
+    for row in rows:
+        assert row["dirt"] + row["water"] + row["scratch"] <= 1
 
 
 def test_build_stage_a_dataset_labels_are_reproducible(tmp_path):
@@ -273,6 +351,33 @@ def test_build_stage_b_dataset_tile_labels_match_the_mask_that_made_the_image(tm
         assert np.array_equal(tile_labels[row_idx], expected)
         assert rows[row_idx]["source_id"] == "00000000"
         assert rows[row_idx]["variant_id"] == variant_idx
+
+
+def test_build_stage_b_dataset_with_combos_inactive_classes_still_all_zero(tmp_path):
+    # Session 19+: include_combos=True -- a combo variant can have 2 or 3
+    # classes positive in the SAME tile grid at once, wherever the combined
+    # effects' masks overlap. This confirms rasterize_tile_label's existing
+    # per-class independence (it was already called once per class in a
+    # loop, unchanged by this feature) extends correctly: each class's
+    # tile-positive rate still only depends on that class's own mask, not on
+    # how many other classes are also active on the same image.
+    source_dir = tmp_path / "source"
+    source_dir.mkdir()
+    _write_fake_sources(source_dir, n=3)
+
+    out_dir = tmp_path / "out"
+    rows, tile_labels = build_stage_b_dataset(
+        source_dir, out_dir, variants_per_image=8, seed=0, img_size=64, include_combos=True,
+    )
+
+    assert len(rows) == 3 * 8
+    combo_rows = [(r, g) for r, g in zip(rows, tile_labels) if r["dirt"] + r["water"] + r["scratch"] >= 2]
+    assert combo_rows  # sanity: the fixture actually produced combo variants
+
+    for row, grid in zip(rows, tile_labels):
+        for i, name in enumerate(EFFECT_NAMES):
+            if row[name] == 0:
+                assert grid[i].sum() == 0, f"{name} inactive but tile grid has a positive tile"
 
 
 def test_apply_effect_combo_with_masks_gives_zero_mask_for_inactive_classes():

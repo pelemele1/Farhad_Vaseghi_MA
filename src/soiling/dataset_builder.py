@@ -1,13 +1,20 @@
 """
 Builds the Stage A multi-label dataset (architecture.md §2): for each source
 image, generate several distorted variants, each either clean (all-zero
-label, a negative) or carrying exactly one of `{dirt, water, scratch}` --
-never more than one distortion type combined on the same image (user
-decision). The four kinds (clean, dirt, water, scratch) are assigned to a
+label, a negative) or carrying one or more of `{dirt, water, scratch}`.
+
+Originally (Sessions 6-18) this was strictly single-distortion-or-clean --
+never more than one distortion type combined on the same image (an explicit
+user decision at the time, see docs/development_log.md Session 6). Session
+19+ (supervisor item 5) added an *additive* `include_combos` option: 4
+additional "combo" kinds (the 3 pairs + the full triple, see COMBO_KINDS)
+alongside the original 4, selected explicitly via `include_combos=True` --
+the original single-distortion-or-clean behavior is still exactly what you
+get by default. The kinds (4 or 8, see ALL_VARIANT_KINDS) are assigned to a
 source image's variant slots deterministically, cycling through the kinds
 before shuffling their order, so the dataset is balanced by construction
-(with `variants_per_image=4`: exactly one clean + one of each distortion per
-source image) rather than left to per-variant probability, which skewed
+(with `variants_per_image` equal to the kind count: exactly one of each kind
+per source image) rather than left to per-variant probability, which skewed
 heavily toward clean when the roll for "any distortion" failed independently
 each time. Precomputed once and written to disk -- not applied on-the-fly
 during training (CPU cost of the effects would bottleneck a small/frozen-
@@ -30,6 +37,17 @@ from src.soiling.tile_labels import rasterize_tile_label
 
 EFFECT_NAMES = ("dirt", "water", "scratch")
 VARIANT_KINDS = ("clean",) + EFFECT_NAMES
+# Multi-distortion variant kinds (Session 19+, supervisor item 5): every
+# 2-way combination plus the full 3-way one. Additive, not a replacement --
+# VARIANT_KINDS is untouched so every existing caller/test that never passes
+# `kinds=`/`include_combos=True` keeps today's single-distortion-or-clean
+# behavior exactly as before. `apply_effect_combo`/`apply_effect_combo_with_
+# masks`/`rasterize_tile_label` already support arbitrary multi-hot combos
+# with no changes needed -- effects.py's module docstring says composability
+# was the design intent from day one, it just was never exercised via the
+# dataset builder until now (see docs/development_log.md Session 19).
+COMBO_KINDS = ("dirt+water", "dirt+scratch", "water+scratch", "dirt+water+scratch")
+ALL_VARIANT_KINDS = VARIANT_KINDS + COMBO_KINDS
 _MAX_SEED = 2**31 - 1
 
 # Stage B (architecture.md §2) per-class tile-coverage thresholds. dirt/water
@@ -51,13 +69,16 @@ def derive_seed(*parts):
     return int.from_bytes(digest[:4], "big") % _MAX_SEED
 
 
-def assign_variant_kinds(variant_count, seed):
+def assign_variant_kinds(variant_count, seed, kinds=None):
     """Deterministically assign each of `variant_count` variant slots for one
-    source image to exactly one kind in VARIANT_KINDS. Cycles through the
-    four kinds (repeating if variant_count > 4) so counts stay as balanced
-    as possible, then shuffles the order with a seeded RNG so the sequence
-    isn't always clean-dirt-water-scratch."""
-    pattern = [VARIANT_KINDS[i % len(VARIANT_KINDS)] for i in range(variant_count)]
+    source image to exactly one kind in `kinds` (default VARIANT_KINDS, the
+    original 4: clean + one of each single effect -- pass
+    `kinds=ALL_VARIANT_KINDS` for the 8-kind set that also includes combos).
+    Cycles through the kinds (repeating if variant_count > len(kinds)) so
+    counts stay as balanced as possible, then shuffles the order with a
+    seeded RNG so the sequence isn't always in the same fixed order."""
+    kinds = VARIANT_KINDS if kinds is None else kinds
+    pattern = [kinds[i % len(kinds)] for i in range(variant_count)]
     random.Random(seed).shuffle(pattern)
     return pattern
 
@@ -80,11 +101,21 @@ def apply_effect_combo(image, combo, seeds):
     return out, labels
 
 
+def _combo_from_kind(kind):
+    """Parses a kind string -- "clean", a single effect name ("dirt"), or a
+    "+"-joined combo ("dirt+water", "dirt+water+scratch") -- into a
+    multi-hot (dirt, water, scratch) bool tuple. Handles both VARIANT_KINDS
+    and COMBO_KINDS uniformly."""
+    active = set() if kind == "clean" else set(kind.split("+"))
+    return tuple(name in active for name in EFFECT_NAMES)
+
+
 def build_variant(image, source_id, variant_idx, kind, base_seed):
-    """Deterministic single variant: `kind` (one of VARIANT_KINDS) picks which
-    single effect is applied, if any; that effect's own randomness is
-    derived from (base_seed, source_id, variant_idx)."""
-    combo = tuple(name == kind for name in EFFECT_NAMES)
+    """Deterministic single variant: `kind` (one of ALL_VARIANT_KINDS) picks
+    which effect(s) are applied, if any; each active effect's own randomness
+    is derived from (base_seed, source_id, variant_idx, effect_name) --
+    independent per effect even when several are combined on one image."""
+    combo = _combo_from_kind(kind)
     seeds = {
         name: derive_seed(base_seed, source_id, variant_idx, name)
         for name in EFFECT_NAMES
@@ -115,14 +146,20 @@ def assign_splits(source_ids, seed, ratios=(0.8, 0.1, 0.1)):
 
 
 def build_stage_a_dataset(source_dir, out_dir, variants_per_image=4, seed=0,
-                           ratios=(0.8, 0.1, 0.1)):
+                           ratios=(0.8, 0.1, 0.1), include_combos=False):
     """For every image in `source_dir`, generate `variants_per_image`
     distorted variants and write them + a metadata.csv under `out_dir`.
-    Returns the list of metadata row dicts written."""
+    `include_combos=False` (default): today's original behavior, unchanged
+    -- 4 kinds (clean + one of each single effect). `include_combos=True`:
+    8 kinds (adds the 3 pairs + the full triple, see COMBO_KINDS) --
+    `variants_per_image=8` gives exact balance, same principle as the
+    default 4-kind case. Returns the list of metadata row dicts written."""
     source_dir = Path(source_dir)
     out_dir = Path(out_dir)
     images_out = out_dir / "images"
     images_out.mkdir(parents=True, exist_ok=True)
+
+    kinds_pool = ALL_VARIANT_KINDS if include_combos else VARIANT_KINDS
 
     source_paths = sorted(source_dir.glob("*.jpg"))
     source_ids = [p.stem for p in source_paths]
@@ -134,7 +171,7 @@ def build_stage_a_dataset(source_dir, out_dir, variants_per_image=4, seed=0,
         image = cv.imread(str(path))
         split = split_of[source_id]
         kind_order_seed = derive_seed(seed, source_id, "kind_order")
-        kinds = assign_variant_kinds(variants_per_image, kind_order_seed)
+        kinds = assign_variant_kinds(variants_per_image, kind_order_seed, kinds=kinds_pool)
         for variant_idx, kind in enumerate(kinds):
             out_image, labels = build_variant(
                 image, source_id, variant_idx, kind, base_seed=seed
@@ -185,9 +222,9 @@ def apply_effect_combo_with_masks(image, combo, seeds):
 
 
 def build_variant_with_mask(image, source_id, variant_idx, kind, base_seed):
-    """Stage B counterpart to `build_variant`: same deterministic single-kind
-    variant, but also returns the per-class masks."""
-    combo = tuple(name == kind for name in EFFECT_NAMES)
+    """Stage B counterpart to `build_variant`: same deterministic variant
+    (single-effect or combo), but also returns the per-class masks."""
+    combo = _combo_from_kind(kind)
     seeds = {
         name: derive_seed(base_seed, source_id, variant_idx, name)
         for name in EFFECT_NAMES
@@ -197,13 +234,13 @@ def build_variant_with_mask(image, source_id, variant_idx, kind, base_seed):
 
 def build_stage_b_dataset(source_dir, out_dir, variants_per_image=4, seed=0,
                            ratios=(0.8, 0.1, 0.1), img_size=512,
-                           thresholds=None):
-    """Stage B dataset (architecture.md §2): same balanced single-distortion
-    variants as `build_stage_a_dataset` (reuses the same kind-assignment and
-    split logic, so results are directly comparable), plus a per-tile label
-    grid rasterized from each variant's own mask in the same call that
-    produced its image -- see module-level note on why this can't be a
-    post-hoc step.
+                           thresholds=None, include_combos=False):
+    """Stage B dataset (architecture.md §2): same balanced variants as
+    `build_stage_a_dataset` (reuses the same kind-assignment and split
+    logic, so results are directly comparable, including the same
+    `include_combos` flag -- see its docstring), plus a per-tile label grid
+    rasterized from each variant's own mask in the same call that produced
+    its image -- see module-level note on why this can't be a post-hoc step.
 
     Tile grid size = img_size // 32, matching the frozen backbone's P5
     stride (architecture.md: "the feature map is treated as a grid") --
@@ -211,12 +248,16 @@ def build_stage_b_dataset(source_dir, out_dir, variants_per_image=4, seed=0,
     Writes `images/`, `metadata.csv` (same columns as Stage A), a single
     consolidated `tile_labels.npy` (shape (N, 3, grid_h, grid_w) uint8,
     row-aligned with metadata.csv), and `stage_b_meta.json` (img_size,
-    grid_h, grid_w, thresholds) under `out_dir`.
+    grid_h, grid_w, thresholds) under `out_dir`. A combo variant's tile grid
+    can have more than one class positive in the same tile wherever the
+    combined effects' masks overlap -- `rasterize_tile_label` is already
+    called independently per class below, so this needs no special-casing.
     """
     if img_size % 32 != 0:
         raise ValueError(f"img_size must be a multiple of 32 (P5 stride), got {img_size}")
     grid_size = img_size // 32
     thresholds = dict(DEFAULT_TILE_THRESHOLDS if thresholds is None else thresholds)
+    kinds_pool = ALL_VARIANT_KINDS if include_combos else VARIANT_KINDS
 
     source_dir = Path(source_dir)
     out_dir = Path(out_dir)
@@ -234,7 +275,7 @@ def build_stage_b_dataset(source_dir, out_dir, variants_per_image=4, seed=0,
         image = cv.imread(str(path))
         split = split_of[source_id]
         kind_order_seed = derive_seed(seed, source_id, "kind_order")
-        kinds = assign_variant_kinds(variants_per_image, kind_order_seed)
+        kinds = assign_variant_kinds(variants_per_image, kind_order_seed, kinds=kinds_pool)
         for variant_idx, kind in enumerate(kinds):
             out_image, labels, masks = build_variant_with_mask(
                 image, source_id, variant_idx, kind, base_seed=seed

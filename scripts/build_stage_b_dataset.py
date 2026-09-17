@@ -29,6 +29,10 @@ def main():
                          help="Override the scratch tile-coverage threshold (default "
                          f"{DEFAULT_TILE_THRESHOLDS['scratch']}, see scripts/diagnose_scratch_threshold.py). "
                          "dirt/water thresholds are left at their default.")
+    parser.add_argument("--include-combos", action="store_true",
+                         help="Also generate multi-distortion variants (the 3 pairs + the full triple, "
+                         "see COMBO_KINDS in src/soiling/dataset_builder.py) alongside the original "
+                         "clean/single-effect kinds -- 8 kinds total. Default: off, original behavior.")
     args = parser.parse_args()
 
     thresholds = None
@@ -39,7 +43,7 @@ def main():
     rows, tile_labels = build_stage_b_dataset(
         args.source, args.out,
         variants_per_image=args.variants, seed=args.seed, img_size=args.img_size,
-        thresholds=thresholds,
+        thresholds=thresholds, include_combos=args.include_combos,
     )
 
     used_thresholds = thresholds if thresholds is not None else DEFAULT_TILE_THRESHOLDS
