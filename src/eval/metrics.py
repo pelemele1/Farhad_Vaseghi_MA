@@ -9,7 +9,11 @@ to (N*H*W, C) first.
 """
 import numpy as np
 import torch
-from sklearn.metrics import average_precision_score, precision_recall_fscore_support
+from sklearn.metrics import (
+    average_precision_score,
+    precision_recall_fscore_support,
+    roc_auc_score,
+)
 
 
 @torch.no_grad()
@@ -29,10 +33,20 @@ def collect_predictions(backbone, head, loader, device):
 
 def compute_metrics(labels, probs, class_names, threshold=0.5):
     """labels, probs: (n_samples, n_classes) arrays. Returns one dict per
-    class with precision/recall/f1 (at `threshold`) and threshold-
-    independent average precision (AP), plus the positive-class support
-    count. AP is left as NaN for a class with zero positives in this split
-    -- it isn't a meaningful score without at least one positive example.
+    class with precision/recall/f1 (at `threshold`) and two threshold-
+    independent ranking metrics -- average precision (AP, i.e. AUC-PR) and
+    ROC-AUC -- plus the positive-class support count. `threshold` is either
+    a single float applied to every class (the original behavior) or a
+    dict[class_name, float] giving each class its own decision threshold
+    (see `src.eval.thresholds.tune_per_class_thresholds`) -- a lower
+    threshold for a class with an unfavorable precision/recall tradeoff at
+    0.5 doesn't have to drag every other class's threshold along with it.
+
+    AP is left as NaN for a class with zero positives in this split -- it
+    isn't a meaningful score without at least one positive example.
+    ROC-AUC additionally needs at least one *negative* too (it isn't
+    meaningful for an all-positive or all-negative split either), so its
+    NaN guard is stricter than AP's.
 
     Computes each class's precision/recall/f1 independently via
     average="binary" on that one column, rather than calling
@@ -43,21 +57,29 @@ def compute_metrics(labels, probs, class_names, threshold=0.5):
     classification instead of 1-class multilabel, silently shifting what
     each output index means. Doesn't happen with >=2 classes (our actual
     3-class case), but per-column is correct regardless of class count."""
-    preds = (probs >= threshold).astype(int)
+    per_class_threshold = isinstance(threshold, dict)
     rows = []
     for i, name in enumerate(class_names):
-        y_true, y_pred, y_prob = labels[:, i], preds[:, i], probs[:, i]
+        t = threshold[name] if per_class_threshold else threshold
+        y_true, y_prob = labels[:, i], probs[:, i]
+        y_pred = (y_prob >= t).astype(int)
         precision, recall, f1, _ = precision_recall_fscore_support(
             y_true, y_pred, average="binary", zero_division=0
         )
         support = int(y_true.sum())
+        n = len(y_true)
         ap = average_precision_score(y_true, y_prob) if support > 0 else float("nan")
+        roc_auc = (
+            roc_auc_score(y_true, y_prob) if 0 < support < n else float("nan")
+        )
         rows.append({
             "class": name,
+            "threshold": float(t),
             "precision": float(precision),
             "recall": float(recall),
             "f1": float(f1),
             "ap": float(ap),
+            "roc_auc": float(roc_auc),
             "support": support,
         })
     return rows
