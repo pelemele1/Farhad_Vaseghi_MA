@@ -1183,3 +1183,95 @@ sub-session committed yet.
 #2 (per-class α) net negative, reverted to the uniform α=0.75 checkpoint; #3 (scratch-threshold
 rebuild) net positive, **adopted as the new canonical Stage B result** -- the original dataset and
 checkpoint are kept on disk for reference, not deleted.
+
+## Session 19 — Supervisor feedback: architecture diagram, AUC-ROC/thresholds,
+## localized SSD loss, multi-distortion dataset (5-item plan)
+
+Weekly supervisor meeting raised 5 items; full plan written and approved before
+any implementation (`C:\Users\farha\.claude\plans\majestic-conjuring-shell.md`,
+also summarized in `docs/stage_b_final_report.md` where results land). Executed
+phase by phase, committing and pushing after each phase per the user's new
+standing instruction ("from now on don't forget to commit and push on time
+after a good development").
+
+### Phase 1 — Architecture block diagram
+
+`docs/diagrams/architecture.drawio` (VS Code "Draw.io Integration" extension):
+input image → `FrozenYOLOBackbone` (styled reused/frozen, shared by both
+stages) → Stage A / Stage B heads (styled modified/new, each with their loss
+and ground-truth source) → a dashed Stage C block (planned, per
+`architecture.md`, not yet implemented). First formal architecture diagram in
+the repo. User: "for now its ok. we improve it better later on" -- left as-is,
+open to revision.
+
+### Phase 2 — AUC-ROC + reusable per-class thresholds (items 3, 4)
+
+`src/eval/metrics.py::compute_metrics`: added `roc_auc` (sklearn
+`roc_auc_score`) alongside the existing AP -- its NaN guard differs from AP's
+(needs both a positive *and* a negative present in the split, not just a
+positive). `threshold` now accepts a `dict[class_name, float]` as well as the
+original scalar float, so a per-class threshold no longer needs a workaround.
+
+New `src/eval/thresholds.py::tune_per_class_thresholds`, generalized from
+Session 18's one-off `threshold_sweep_stage_b.py::best_f1_threshold`.
+`evaluate_stage_a.py`/`evaluate_stage_b.py` both got a `--tune-thresholds`
+flag (tunes on val, evaluates the requested split with the tuned thresholds)
+and now print an AUC-ROC column. `threshold_sweep_stage_b.py` thinned into a
+wrapper around the same shared utilities (kept only for its side-by-side
+0.5-vs-tuned comparison view). Real smoke test against the canonical
+`checkpoints/stage_b_scratch15` checkpoint: tuned thresholds came out
+dirt=0.536, water=0.546, scratch=0.465 -- F1 improved slightly for every
+class over the flat 0.5 baseline (scratch 0.451→0.462), ROC-AUC came out
+dirt=0.973, water=0.970, scratch=0.940 (first time this project has reported
+it). 9 new/updated tests, all pass.
+
+### Phase 3 — Localized SSD loss vs. focal α=0.75 (item 2)
+
+New `LocalizedSSDLoss` (`src/models/losses.py`): per-tile squared error
+between `sigmoid(logits)` and the tile label, summed per sample then averaged
+over the batch -- no imbalance correction, plain SSD as literally requested.
+`train_stage_b.py --loss ssd` wired the same way as the `focal` branch. 4 new
+unit tests (finite on random input, hand-computed value, zero-loss on a
+confident-correct prediction, loss decreases after one optimizer step) plus a
+subprocess smoke test, all pass.
+
+Trained on the *current* canonical dataset (`data/processed/stage_b_scratch15`)
+for a clean single-variable comparison against the focal α=0.75 winner --
+same methodology as every prior loss comparison in this project. HPC job
+`1815542` (40 epochs, `tg085`, loss curve smooth/monotonic, train_loss
+61.8→26.2, val_loss 46.6→28.3) then evaluated (job `1815558`) at both the
+default 0.5 threshold and per-class tuned thresholds (from Phase 2's new
+`--tune-thresholds` flag):
+
+| class | metric | focal α=0.75 @0.5 | SSD @0.5 | focal α=0.75 tuned | SSD tuned |
+|---|---|---|---|---|---|
+| dirt | P/R/F1/AP/ROC-AUC | .787/.815/.801/.887/.973 | .886/.731/.801/.888/.968 | .832/.775/.803/.887/.973 | .856/.764/.807/.888/.968 |
+| water | P/R/F1/AP/ROC-AUC | .743/.907/.817/.885/.970 | .836/.809/.822/.878/.964 | .787/.870/.826/.885/.970 | .803/.854/.828/.878/.964 |
+| scratch | P/R/F1/AP/ROC-AUC | .594/.364/.451/.409/.940 | .726/.268/.391/.416/.911 | .534/.406/.462/.409/.940 | .571/.398/.469/.416/.911 |
+
+**Essentially a wash, focal α=0.75 kept as the canonical loss.** F1/AP are
+within ~0.01 of each other on every class either way (SSD even marginally
+ahead on F1/AP for all three) -- but ROC-AUC, a pure ranking-quality measure,
+is consistently *lower* for SSD on every class, most notably scratch
+(0.940→0.911, a real 0.03 drop, not noise). Since ROC-AUC/AP disagree with F1
+here and focal already has two independent cross-check runs behind it
+(Session 18), SSD doesn't clear the bar to replace it. Per the approved plan,
+whichever loss won this comparison carries into Phase 4's dataset rebuild --
+that's still focal α=0.75, γ=2.0.
+
+Delivered: `LocalizedSSDLoss`/`build_stage_b_ssd_loss` (`src/models/losses.py`),
+`--loss ssd` (`scripts/train_stage_b.py`), `scripts/hpc/train_stage_b_ssd.slurm`,
+`scripts/hpc/eval_stage_b_ssd.slurm`, `checkpoints/stage_b_ssd/stage_b_head.pt`
+(kept for the record, not canonical), `stage_b_ssd_1815542.out`,
+`eval_ssd_1815558.out`, 5 new tests.
+
+Mechanics note: the FAU VPN/SSH connection was intermittently unreachable this
+session (`Connection refused` / `Network is unreachable` to
+`csnhr.nhr.fau.de`, on and off across ~10 minutes) -- not a bug on this side;
+paused and asked the user to check their VPN, then retried once confirmed
+back up. Every HPC-facing command in this phase was wrapped in a short retry
+loop afterward (a handful of attempts, few-second backoff) since the
+flakiness came back intermittently even after the VPN was confirmed working;
+the job-status `Monitor` was similarly hardened to require **two consecutive
+successful** SSH checks both showing the job gone before reporting it
+finished, so a single dropped connection can't be misread as "the job ended."

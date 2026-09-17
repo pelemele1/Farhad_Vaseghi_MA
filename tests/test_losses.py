@@ -7,9 +7,11 @@ import torch.nn.functional as F
 
 from src.models.losses import (
     FocalLossWithLogits,
+    LocalizedSSDLoss,
     build_stage_a_loss,
     build_stage_b_focal_loss,
     build_stage_b_loss,
+    build_stage_b_ssd_loss,
     compute_pos_weight,
     compute_tile_pos_weight,
 )
@@ -213,6 +215,63 @@ def test_focal_loss_single_optimizer_step_decreases_loss():
     features = torch.randn(6, 8, 4, 4)
     labels = torch.randint(0, 2, (6, 3, 4, 4)).float()
     loss_fn = build_stage_b_focal_loss()
+    opt = torch.optim.SGD(head.parameters(), lr=1.0)
+
+    loss_before = loss_fn(head(features), labels)
+    opt.zero_grad()
+    loss_before.backward()
+    opt.step()
+    loss_after = loss_fn(head(features), labels)
+
+    assert torch.isfinite(loss_before)
+    assert loss_after.item() < loss_before.item()
+
+
+# --- Localized SSD loss (supervisor request, Session 19+) ----------------
+
+
+def test_ssd_loss_is_finite_on_random_inputs():
+    loss_fn = build_stage_b_ssd_loss()
+    logits = torch.randn(2, 3, 4, 4)
+    labels = torch.randint(0, 2, (2, 3, 4, 4)).float()
+    assert torch.isfinite(loss_fn(logits, labels))
+
+
+def test_ssd_loss_matches_hand_calculation():
+    # Two samples, 1 class, 2x2 grid -- small enough to hand-compute.
+    # logits all 0 -> sigmoid(0) = 0.5 for every tile, in both samples.
+    # sample 0 targets [1,0,1,0]: each tile's sq diff = (0.5-1)^2 or (0.5-0)^2 = 0.25
+    #   -> localized sum over the 4 tiles = 1.0
+    # sample 1 targets [1,1,1,1]: every tile's sq diff = (0.5-1)^2 = 0.25 -> sum = 1.0
+    # mean over the batch: (1.0 + 1.0) / 2 = 1.0
+    logits = torch.zeros(2, 1, 2, 2)
+    targets = torch.tensor([
+        [[[1.0, 0.0], [1.0, 0.0]]],  # sample 0
+        [[[1.0, 1.0], [1.0, 1.0]]],  # sample 1
+    ])
+
+    loss_fn = LocalizedSSDLoss()
+    got = loss_fn(logits, targets)
+    assert torch.allclose(got, torch.tensor(1.0))
+
+
+def test_ssd_loss_zero_for_perfect_predictions():
+    # logit=+inf isn't representable, but a very confident correct logit
+    # drives sigmoid arbitrarily close to the target -> loss ~0.
+    logits = torch.tensor([[[[20.0]]]])   # sigmoid(20) ~= 1.0
+    targets = torch.tensor([[[[1.0]]]])
+    loss_fn = LocalizedSSDLoss()
+    assert loss_fn(logits, targets).item() < 1e-6
+
+
+def test_ssd_loss_single_optimizer_step_decreases_loss():
+    torch.manual_seed(0)
+    from src.models.distortion_head import StageBDistortionHead
+
+    head = StageBDistortionHead(in_channels=8)
+    features = torch.randn(6, 8, 4, 4)
+    labels = torch.randint(0, 2, (6, 3, 4, 4)).float()
+    loss_fn = build_stage_b_ssd_loss()
     opt = torch.optim.SGD(head.parameters(), lr=1.0)
 
     loss_before = loss_fn(head(features), labels)

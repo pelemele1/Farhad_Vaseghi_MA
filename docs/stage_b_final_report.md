@@ -6,7 +6,11 @@ dataset rebuild (§4 "Post-decision follow-ups", option 3) — **the current can
 focal α=0.75 trained on the rebuilt dataset** (`data/processed/stage_b_scratch15`,
 `checkpoints/stage_b_scratch15/stage_b_head.pt`). The original dataset and checkpoint
 (`data/processed/stage_b`, `checkpoints/stage_b_alpha75/stage_b_head.pt`) are kept on disk for
-comparison, not deleted. **Date:** 2026-09-05.
+comparison, not deleted. Session 19: a localized sum-of-squared-differences loss was also tried
+(supervisor request) and compared against focal α=0.75 on the same dataset — essentially a wash
+on F1/AP, but consistently worse on ROC-AUC, so focal α=0.75 remains canonical (§4 "Post-decision
+follow-ups", option 4). Multi-distortion (combined) variants are next (§4, option 5, in progress).
+**Date:** 2026-09-17.
 
 This is a standalone summary of Part 2, Stage B — distinct from
 [`development_log.md`](development_log.md)'s chronological session-by-session record. See
@@ -32,10 +36,10 @@ Stage A — the new part is a per-tile output instead of one label for the whole
 |---|---|---|
 | 1 | Stage B dataset builder (tile-grid ground truth, rasterized from each effect's own pixel mask) | `src/soiling/tile_labels.py`, `src/soiling/dataset_builder.py`, `scripts/build_stage_b_dataset.py` |
 | 2 | Model: frozen backbone + 1×1 conv tile head | `src/models/distortion_head.py::StageBDistortionHead` |
-| 3 | Loss: bce+pos_weight, and focal loss (two alpha settings) | `src/models/losses.py` |
+| 3 | Loss: bce+pos_weight, focal (two alpha settings), localized SSD | `src/models/losses.py` |
 | 4 | Training script | `scripts/train_stage_b.py` |
-| 5 | FAU HPC (TinyGPU) submission | `scripts/hpc/train_stage_b.slurm`, `train_stage_b_alpha75.slurm` |
-| 6 | Evaluation (per-tile precision/recall/F1/AP) | `scripts/evaluate_stage_b.py` |
+| 5 | FAU HPC (TinyGPU) submission | `scripts/hpc/train_stage_b.slurm`, `train_stage_b_alpha75.slurm`, `train_stage_b_ssd.slurm` |
+| 6 | Evaluation (per-tile precision/recall/F1/AP/ROC-AUC, scalar or per-class thresholds) | `scripts/evaluate_stage_b.py`, `src/eval/metrics.py`, `src/eval/thresholds.py` |
 | 7 | Threshold tuning (no retraining) | `scripts/threshold_sweep_stage_b.py` |
 | 8 | Visualization | `scripts/visualize_stage_b_results.py` |
 
@@ -191,6 +195,36 @@ Three further improvement attempts against the α=0.75 winner:
    number here, since it's threshold-independent). `checkpoints/stage_b_scratch15/
    stage_b_head.pt` is now the canonical Stage B checkpoint; `checkpoints/stage_b_alpha75/` is
    kept for reference as the pre-rebuild result.
+4. **Localized sum-of-squared-differences (SSD) loss** (Session 19, supervisor request) — a new
+   `LocalizedSSDLoss` (`src/models/losses.py`, `--loss ssd`): per-tile squared error between
+   predicted probability and tile label, summed per sample then averaged over the batch, no
+   imbalance correction. Trained on the same canonical dataset (`data/processed/stage_b_scratch15`)
+   as the α=0.75 winner for a clean single-variable comparison (HPC job `1815542`), evaluated at
+   both the default 0.5 threshold and per-class tuned thresholds (job `1815558`):
+
+   | class | metric | focal α=0.75 @0.5 | SSD @0.5 | focal α=0.75 tuned | SSD tuned |
+   |---|---|---|---|---|---|
+   | dirt | P/R/F1/AP/ROC-AUC | .787/.815/.801/.887/.973 | .886/.731/.801/.888/.968 | .832/.775/.803/.887/.973 | .856/.764/.807/.888/.968 |
+   | water | P/R/F1/AP/ROC-AUC | .743/.907/.817/.885/.970 | .836/.809/.822/.878/.964 | .787/.870/.826/.885/.970 | .803/.854/.828/.878/.964 |
+   | scratch | P/R/F1/AP/ROC-AUC | .594/.364/.451/.409/.940 | .726/.268/.391/.416/.911 | .534/.406/.462/.409/.940 | .571/.398/.469/.416/.911 |
+
+   **Essentially a wash, focal α=0.75 kept as canonical.** F1/AP land within ~0.01 of each other
+   either way (SSD even marginally ahead on F1/AP for all three classes) — but ROC-AUC, a pure
+   ranking-quality measure that AP alone doesn't fully capture, is consistently *lower* for SSD on
+   every class, most notably scratch (0.940→0.911). Since the two threshold-independent metrics
+   disagree with the threshold-dependent F1 here, and focal α=0.75 already has two independent
+   cross-check training runs behind it (Session 18) that SSD hasn't been given, SSD doesn't clear
+   the bar to replace it. `checkpoints/stage_b_ssd/stage_b_head.pt` is kept on disk for the
+   record, not canonical.
+
+<details>
+<summary>SSD loss run: training curve, metrics, sample predictions (not canonical, kept for reference)</summary>
+
+![Stage B training curve, localized SSD loss (job 1815542)](images/stage_b_training_curve_ssd.jpg)
+![Stage B per-tile metrics, localized SSD loss](images/stage_b_test_metrics_ssd.jpg)
+![Stage B sample predictions, localized SSD loss](images/stage_b_sample_predictions_ssd.jpg)
+
+</details>
 
 ### Sample tile-grid predictions
 

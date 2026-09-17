@@ -28,7 +28,12 @@ from scripts.train_stage_a import run_epoch
 from src.data.stage_b_dataset import StageBDataset
 from src.models.backbone import FrozenYOLOBackbone
 from src.models.distortion_head import StageBDistortionHead
-from src.models.losses import build_stage_b_focal_loss, build_stage_b_loss, compute_tile_pos_weight
+from src.models.losses import (
+    build_stage_b_focal_loss,
+    build_stage_b_loss,
+    build_stage_b_ssd_loss,
+    compute_tile_pos_weight,
+)
 
 
 def main():
@@ -42,12 +47,15 @@ def main():
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--out", default="checkpoints/stage_b", help="Where to write the trained head's weights")
     parser.add_argument(
-        "--loss", default="bce", choices=["bce", "focal"],
+        "--loss", default="bce", choices=["bce", "focal", "ssd"],
         help="'bce': BCEWithLogitsLoss(pos_weight=...) (default, matches Stage A's approach). "
              "'focal': focal loss (Lin et al. 2017) -- an alternative for extreme class imbalance "
              "(architecture.md §4); see docs/development_log.md Session 17 for why this was added "
              "(the 'bce' path's pos_weight for Stage B's scratch class comes out ~95x, which "
-             "empirically caused over-prediction rather than localization).",
+             "empirically caused over-prediction rather than localization). "
+             "'ssd': localized (per-tile) sum of squared differences between predicted probability "
+             "and tile label, no imbalance correction -- see LocalizedSSDLoss in src/models/losses.py "
+             "(supervisor request, Session 19+, compared against the focal alpha=0.75 winner).",
     )
     parser.add_argument(
         "--focal-alpha", default="0.25", help="Only used with --loss focal. Either a single float "
@@ -92,6 +100,9 @@ def main():
         loss_fn = build_stage_b_focal_loss(alpha=alpha, gamma=args.focal_gamma)
         alpha_str = alpha.tolist() if isinstance(alpha, torch.Tensor) else alpha
         print(f"train={len(train_set)} val={len(val_set)} loss=focal alpha={alpha_str} gamma={args.focal_gamma}")
+    elif args.loss == "ssd":
+        loss_fn = build_stage_b_ssd_loss()
+        print(f"train={len(train_set)} val={len(val_set)} loss=ssd (localized sum of squared differences)")
     else:
         pos_weight = compute_tile_pos_weight(
             Path(args.data) / "tile_labels.npy", Path(args.data) / "metadata.csv", split="train"

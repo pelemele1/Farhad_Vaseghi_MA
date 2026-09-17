@@ -141,3 +141,31 @@ class FocalLossWithLogits(nn.Module):
 
 def build_stage_b_focal_loss(alpha=0.25, gamma=2.0):
     return FocalLossWithLogits(alpha=alpha, gamma=gamma)
+
+
+class LocalizedSSDLoss(nn.Module):
+    """Localized tile-based sum of squared differences (supervisor request,
+    Session 19+): squared error between the predicted per-tile probability
+    and the tile's ground-truth label, computed "locally" -- i.e. per tile,
+    the same granularity Stage B's whole task already operates at, as
+    opposed to first pooling to one image-level score and only then
+    comparing. Summed over every tile and class of one sample (the
+    "localized sum"), then averaged over the batch so the loss scale
+    doesn't grow with an unrelated choice like grid size or batch size.
+
+    Unlike `FocalLossWithLogits`, this has no alpha/gamma imbalance
+    correction -- it's the plain squared-error loss as specified. If the
+    class imbalance that motivated focal loss (docs/development_log.md
+    Session 16-17) turns out to hurt this loss the same way it hurt plain
+    BCE, a pos_weight-style extension is the natural next step, but isn't
+    added preemptively here.
+    """
+
+    def forward(self, logits, targets):
+        probs = torch.sigmoid(logits)
+        sq_diff = (probs - targets) ** 2          # (B, C, H, W), elementwise/local
+        return sq_diff.sum(dim=tuple(range(1, sq_diff.dim()))).mean()  # sum per-sample, mean over batch
+
+
+def build_stage_b_ssd_loss():
+    return LocalizedSSDLoss()

@@ -1,0 +1,65 @@
+### Starting TaskPrologue of job 1815558 on tg080 at Thu Sep 17 10:20:52 PM CEST 2026
+Running on cores 2-3,18-19,34-35,50-51 with governor powersave
+Thu Sep 17 22:20:52 2026       
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 610.57.04              KMD Version: 610.57.04     CUDA UMD Version: 13.3     |
++-----------------------------------------+------------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  NVIDIA GeForce RTX 3080        On  |   00000000:1B:00.0 Off |                  N/A |
+| 31%   50C    P5             91W /  300W |       1MiB /  10240MiB |      0%      Default |
+|                                         |                        |                  N/A |
++-----------------------------------------+------------------------+----------------------+
+
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
+|        ID   ID                                                               Usage      |
+|=========================================================================================|
+|  No running processes found                                                             |
++-----------------------------------------------------------------------------------------+
+### Finished TaskPrologue
+
+=== default threshold=0.5 ===
+Evaluated 400 images (102400 tiles) from split='test', threshold=0.5
+class      threshold precision    recall        f1        AP   ROC-AUC   support
+dirt           0.500     0.886     0.731     0.801     0.888     0.968     13567
+water          0.500     0.836     0.809     0.822     0.878     0.964     18678
+scratch        0.500     0.726     0.268     0.391     0.416     0.911      1511
+
+=== tuned per-class thresholds ===
+Tuned per-class thresholds (best-F1 on val split):
+  dirt      0.425
+  water     0.408
+  scratch   0.228
+Evaluated 400 images (102400 tiles) from split='test', threshold=tuned per-class
+class      threshold precision    recall        f1        AP   ROC-AUC   support
+dirt           0.425     0.856     0.764     0.807     0.888     0.968     13567
+water          0.408     0.803     0.854     0.828     0.878     0.964     18678
+scratch        0.228     0.571     0.398     0.469     0.416     0.911      1511
+=== JOB_STATISTICS ===
+=== current date     : Thu Sep 17 10:21:51 PM CEST 2026
+= Job-ID             : 1815558 on tinygpu
+= Job-Name           : eval_ssd
+= Job-Command        : /home/woody/iwnt/iwnt196h/Farhad_Vaseghi_MA/scripts/hpc/eval_stage_b_ssd.slurm
+= Initial workdir    : /home/woody/iwnt/iwnt196h/Farhad_Vaseghi_MA
+= Queue/Partition    : rtx3080
+= Slurm account      : iwnt with QOS=normal
+= Requested resources:  for 00:20:00
+= Elapsed runtime    : 00:01:02
+= Total RAM usage    : 1.8 GiB of requested  GiB (%)   
+= Node list          : tg080
+= Subm/Elig/Start/End: 2026-09-17T22:10:59 / 2026-09-17T22:10:59 / 2026-09-17T22:20:49 / 2026-09-17T22:21:51
+======================
+=== Quota infos ======
+    Path                 Used     SoftQ    HardQ    Gracetime  Filec    FileQ    FiHaQ    FileGrace    
+    /home/woody             8.3G  1000.0G  1500.0G        N/A      70K   5,000K   7,500K        N/A    
+    /home/hpc               6.0G   104.9G   209.7G        N/A   1,449      500K   1,000K        N/A    
+    /home/vault             0.0K  1048.6G  2097.2G        N/A       1      200K     400K        N/A    
+======================
+=== GPU utilization ==
+gpu_name, gpu_bus_id, pid, gpu_utilization [%], mem_utilization [%], max_memory_usage [MiB], time [ms]
+NVIDIA GeForce RTX 3080, 00000000:1B:00.0, 3909109, 6 %, 4 %, 3522 MiB, 14981 ms
+NVIDIA GeForce RTX 3080, 00000000:1B:00.0, 3909217, 19 %, 13 %, 3522 MiB, 10134 ms
