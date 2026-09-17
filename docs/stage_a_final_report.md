@@ -36,7 +36,8 @@ lightweight model reliably say whether the lens shows dirt, water, and/or a scra
 | 5 | Training script | `scripts/train_stage_a.py` |
 | 6 | FAU HPC (TinyGPU) setup/submission | `scripts/hpc/`, `docs/hpc_stage_a.md` |
 | 7 | Evaluation | `scripts/evaluate_stage_a.py` |
-| 8 | Test coverage audit | `tests/` (51 tests) |
+| 8 | Qualitative clean-vs-distorted examples | `scripts/visualize_stage_a_class_examples.py` |
+| 9 | Test coverage audit | `tests/` (51 tests) |
 
 ---
 
@@ -140,6 +141,29 @@ All 12 are classified correctly, most with high-confidence probabilities near 0.
 (Regenerate with `python scripts/visualize_stage_a_results.py` — a different `--seed` picks
 a different, equally representative sample.)
 
+### Qualitative examples: clean vs. distorted, per class
+
+For each class, one source photo that has both a clean variant and a variant positive for
+exactly that class (same underlying scene, only the synthetic distortion differs) — clean and
+distorted image side by side, each with the model's per-class predicted probability underneath.
+Bars are colored against ground truth at threshold 0.5: green = hit, gray = correct reject,
+orange = false alarm, red = miss.
+
+![Stage A qualitative example — dirt](images/stage_a_example_dirt.jpg)
+![Stage A qualitative example — water](images/stage_a_example_water.jpg)
+![Stage A qualitative example — scratch](images/stage_a_example_scratch.jpg)
+
+All three pairs happen to reuse the same clean source photo (deterministic seed=0 picks the
+first source in the test split that has variants for all three classes) — this is incidental,
+not a limitation of the method. Regenerate with a different `--seed` for different examples:
+
+```bash
+python scripts/visualize_stage_a_class_examples.py \
+    --checkpoint checkpoints/stage_a/stage_a_head.pt \
+    --data data/processed/stage_a --split test --device cpu \
+    --out-dir docs/images
+```
+
 ---
 
 ## 5. Known limitations
@@ -166,6 +190,8 @@ python scripts/evaluate_stage_a.py --checkpoint checkpoints/stage_a/stage_a_head
     --data data/processed/stage_a --split test
 python scripts/visualize_stage_a_results.py --checkpoint checkpoints/stage_a/stage_a_head.pt \
     --data data/processed/stage_a --split test --log-file stage_a_1791674.out
+python scripts/visualize_stage_a_class_examples.py --checkpoint checkpoints/stage_a/stage_a_head.pt \
+    --data data/processed/stage_a --split test --device cpu --out-dir docs/images
 ```
 
 `stage_a_1791674.out` is the raw stdout of the actual training job (`squeue.tinygpu` job ID
