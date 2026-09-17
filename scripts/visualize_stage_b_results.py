@@ -2,17 +2,24 @@
 Generate the visual results for a Stage B report, mirroring
 scripts/visualize_stage_a_results.py: a per-class tile metrics bar chart
 (reusing that script's plot_metrics_bar_chart directly -- it's generic over
-any list of {class, precision, recall, f1, ap} rows), and a grid of real
+any list of {class, precision, recall, f1, ap} rows), a grid of real
 predictions on test-split images showing the *coarse localization*
 architecture.md's own example describes ("dirt in the top right") -- each
 sample's ground-truth tile grid (green) overlaid together with the model's
-predicted per-tile probability (red) on the same image.
+predicted per-tile probability (red) on the same image -- and, given a saved
+training log via --log-file, the train/val loss curve (Session 18: reuses
+Stage A's parse_training_log/plot_training_curve).
+
+Multiple loss variants (bce/focal/focal-alpha75) are compared in this
+project (see docs/development_log.md Session 17-18) -- pass --tag (e.g.
+"_focal") so each variant's images get distinct filenames instead of
+overwriting each other.
 
 Usage:
     python scripts/visualize_stage_b_results.py \
-        --checkpoint checkpoints/stage_b/stage_b_head.pt \
+        --checkpoint checkpoints/stage_b/stage_b_head_focal.pt \
         --data data/processed/stage_b --split test --device cpu \
-        --out-dir docs/images
+        --log-file stage_b_1799134_focal.out --tag _focal --out-dir docs/images
 """
 import argparse
 import sys
@@ -27,7 +34,12 @@ import torch
 from torch.utils.data import DataLoader
 
 from scripts.evaluate_stage_b import flatten_tiles
-from scripts.visualize_stage_a_results import plot_metrics_bar_chart, select_diverse_sample_indices
+from scripts.visualize_stage_a_results import (
+    parse_training_log,
+    plot_metrics_bar_chart,
+    plot_training_curve,
+    select_diverse_sample_indices,
+)
 from src.data.stage_b_dataset import StageBDataset
 from src.eval.metrics import collect_predictions, compute_metrics
 from src.models.backbone import FrozenYOLOBackbone
@@ -114,6 +126,8 @@ def main():
     parser.add_argument("--per-kind", type=int, default=3, help="Sample images per label kind for the grid")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--out-dir", default="docs/images")
+    parser.add_argument("--log-file", default=None, help="Saved training stdout log (e.g. stage_b_<jobid>.out) -- if given, also plots the train/val loss curve")
+    parser.add_argument("--tag", default="", help="Suffix (e.g. '_focal') appended to every output filename, so multiple loss variants don't overwrite each other's images")
     args = parser.parse_args()
 
     device = torch.device(args.device)
@@ -135,14 +149,24 @@ def main():
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    metrics_path = out_dir / "stage_b_test_metrics.jpg"
-    plot_metrics_bar_chart(metric_rows, metrics_path, title="Stage B per-tile metrics per class")
+    metrics_path = out_dir / f"stage_b_test_metrics{args.tag}.jpg"
+    plot_metrics_bar_chart(metric_rows, metrics_path, title=f"Stage B per-tile metrics per class{args.tag}")
     print(f"wrote {metrics_path}")
 
     sample_indices = select_diverse_sample_indices(dataset.rows, class_names, per_kind=args.per_kind, seed=args.seed)
-    grid_path = out_dir / "stage_b_sample_predictions.jpg"
+    grid_path = out_dir / f"stage_b_sample_predictions{args.tag}.jpg"
     plot_tile_grid_overlay(dataset, sample_indices, probs, labels, class_names, args.threshold, grid_path)
     print(f"wrote {grid_path}")
+
+    if args.log_file:
+        records = parse_training_log(Path(args.log_file).read_text())
+        curve_path = out_dir / f"stage_b_training_curve{args.tag}.jpg"
+        plot_training_curve(
+            records, curve_path,
+            title=f"Stage B training curve{args.tag} (real TinyGPU run)",
+            ylabel="loss",
+        )
+        print(f"wrote {curve_path}")
 
 
 if __name__ == "__main__":

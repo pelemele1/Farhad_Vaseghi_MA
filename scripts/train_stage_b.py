@@ -49,7 +49,12 @@ def main():
              "(the 'bce' path's pos_weight for Stage B's scratch class comes out ~95x, which "
              "empirically caused over-prediction rather than localization).",
     )
-    parser.add_argument("--focal-alpha", type=float, default=0.25, help="Only used with --loss focal")
+    parser.add_argument(
+        "--focal-alpha", default="0.25", help="Only used with --loss focal. Either a single float "
+        "(applied to every class equally) or 3 comma-separated floats matching class order "
+        "dirt,water,scratch (e.g. '0.75,0.75,0.9') for a per-class alpha -- see "
+        "FocalLossWithLogits in src/models/losses.py for why per-class alpha is supported.",
+    )
     parser.add_argument("--focal-gamma", type=float, default=2.0, help="Only used with --loss focal")
     parser.add_argument(
         "--smoke-test", action="store_true",
@@ -75,8 +80,18 @@ def main():
     head = StageBDistortionHead(in_channels=backbone.out_channels, class_names=train_set.class_names).to(device)
 
     if args.loss == "focal":
-        loss_fn = build_stage_b_focal_loss(alpha=args.focal_alpha, gamma=args.focal_gamma)
-        print(f"train={len(train_set)} val={len(val_set)} loss=focal alpha={args.focal_alpha} gamma={args.focal_gamma}")
+        alpha_parts = [p.strip() for p in args.focal_alpha.split(",")]
+        if len(alpha_parts) == 1:
+            alpha = float(alpha_parts[0])
+        else:
+            assert len(alpha_parts) == len(train_set.class_names), (
+                f"--focal-alpha has {len(alpha_parts)} comma-separated values but there are "
+                f"{len(train_set.class_names)} classes {train_set.class_names} -- must match 1:1"
+            )
+            alpha = torch.tensor([float(p) for p in alpha_parts])
+        loss_fn = build_stage_b_focal_loss(alpha=alpha, gamma=args.focal_gamma)
+        alpha_str = alpha.tolist() if isinstance(alpha, torch.Tensor) else alpha
+        print(f"train={len(train_set)} val={len(val_set)} loss=focal alpha={alpha_str} gamma={args.focal_gamma}")
     else:
         pos_weight = compute_tile_pos_weight(
             Path(args.data) / "tile_labels.npy", Path(args.data) / "metadata.csv", split="train"

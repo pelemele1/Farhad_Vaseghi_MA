@@ -844,3 +844,342 @@ dataset-build time, focal loss instead of pos_weight, or per-class thresholds at
 `$WORK`), `stage_b_1799124.out` (raw job log, local + on cluster), `docs/images/
 stage_b_test_metrics.jpg`, `docs/images/stage_b_sample_predictions.jpg` (both real, from the
 trained checkpoint). Session 15's code pushed as commit `19db3cb`.
+
+---
+
+## Session 17 — Focal loss for the scratch class: code, a real HPC run, and its results
+
+**Date:** 2026-08-31 (code) / 2026-09-01 (HPC run, executed unattended during a scheduled
+NHR@FAU maintenance window) / 2026-09-03 (results pulled and evaluated)
+
+**Code:** Added `FocalLossWithLogits` and `build_stage_b_focal_loss` to `src/models/losses.py`
+(Lin et al. 2017, "Focal Loss for Dense Object Detection" -- see `wiki/sources/lin-2017-focal-loss.md`
+for the full paper ingest) as an alternative to Session 16's `bce`+`pos_weight` path, specifically
+targeting the scratch class's over-prediction problem (`pos_weight≈95` was pushing the head to
+predict scratch almost everywhere rather than localize it). Added `--loss {bce,focal}`,
+`--focal-alpha` (default 0.25), `--focal-gamma` (default 2.0) to `scripts/train_stage_b.py` --
+defaults match the paper's own best-found COCO/RetinaNet setting, not independently tuned for
+this project's data (see results below for why that matters). Doubled `scripts/hpc/train_stage_b.slurm`'s
+epoch count 20→40 since Session 16's train/val loss hadn't plateaued at 20. Full local suite
+(98/98) passing before commit. Pushed as commit `10fd684`.
+
+**HPC run blocked, then it wasn't:** Job `1799134` was submitted the same day, but the whole
+NHR@FAU HPC estate (all systems) entered a previously-announced scheduled maintenance window
+minutes later (Mon 2026-08-31 06:00 through, in parts, Fri 2026-09-04) -- confirmed via
+`squeue.tinygpu` (`ReqNodeNotAvail, Reserved for maintenance`) and the NHR@FAU status page. The
+job sat `PENDING` for the outage's duration, then **ran automatically once the `rtx3080` partition
+came back** -- completed 2026-09-01T11:06:57 to 11:25:35 (18m38s, exit code 0), entirely
+unattended, before anyone checked on it again. Confirmed via `sacct.tinygpu` and the partition's
+`sinfo.tinygpu` state (back to `alloc`/`drain`, no longer `maint`) on 2026-09-03.
+
+```
+train=3200 val=400 loss=focal alpha=0.25 gamma=2.0
+epoch 1/40   train_loss=0.0263  val_loss=0.0187
+epoch 20/40  train_loss=0.0123  val_loss=0.0133
+epoch 40/40  train_loss=0.0120  val_loss=0.0130
+```
+Smooth, monotonic, train/val tracking closely throughout -- no overfitting. (Loss magnitudes
+aren't comparable to Session 16's BCE numbers -- focal loss's `(1-p_t)^γ` modulating factor
+shrinks the scale of the loss itself, this isn't a 70x improvement in any meaningful sense.)
+
+**Real evaluation, focal vs. Session 16's bce baseline** (same 400 test images, 102400 tiles,
+threshold=0.5):
+
+| class | metric | bce (Session 16) | focal | |
+|---|---|---|---|---|
+| dirt | precision / recall / F1 / AP | 0.595 / 0.904 / 0.718 / 0.864 | 0.925 / 0.649 / 0.763 / **0.886** | AP ↑ |
+| water | precision / recall / F1 / AP | 0.699 / 0.921 / 0.795 / 0.868 | 0.915 / 0.608 / 0.731 / **0.895** | AP ↑ |
+| scratch | precision / recall / F1 / AP | 0.063 / 0.852 / 0.117 / 0.309 | **0.741** / 0.130 / 0.221 / **0.380** | precision ↑↑↑, AP ↑ |
+
+**The diagnosed problem is fixed, but not for free.** Scratch precision went from 0.063 to 0.741
+-- confirms the Session 16 root-cause diagnosis was correct (pos_weight-driven over-prediction)
+and that focal loss addresses it. AP improved for *every* class, meaning the model's underlying
+ranking of predictions genuinely got better across the board.
+
+But recall collapsed on all three classes, not just scratch (dirt 0.904→0.649, water 0.921→0.608,
+scratch 0.852→0.130) -- a systemic shift toward conservative predictions, not a scratch-specific
+fix. Read: `α=0.25` (the paper's default, weighting positive-class loss at 0.25 vs. 0.75 for
+negative) was tuned for RetinaNet's setting (~1:1000 foreground:background on COCO) -- this
+project's tile imbalance is far milder (13%/18%/1% positive rates), so the same default may be
+overcorrecting for an imbalance that isn't as extreme here. Since AP improved for every class, a
+better operating point likely exists further down the precision-recall curve than the fixed 0.5
+threshold captures -- two candidate next steps, not mutually exclusive: (1) tune the decision
+threshold per class on the val split (no retraining), or (2) re-run with a higher `α` (e.g.
+0.5-0.75) fit to this project's actual imbalance rather than the paper's detection-task default.
+Left open, pending direction from the next session.
+
+**Delivered this session:** `checkpoints/stage_b/stage_b_head_focal.pt` (new checkpoint, local +
+on `$WORK`, kept alongside Session 16's `stage_b_head_bce_baseline.pt`), `stage_b_1799134_focal.out`
+(raw job log). Code (commit `10fd684`) already pushed; this session's results are not yet
+committed.
+
+---
+
+## Session 18 — Testing both Session 17 remediation candidates; Stage A qualitative examples
+
+**Date:** 2026-09-04.
+
+Session 17 left two candidate fixes for the focal-loss recall collapse, not mutually exclusive.
+Both are now in progress.
+
+**(1) Threshold tuning — no retraining, done, real result.** New `scripts/threshold_sweep_stage_b.py`:
+finds each class's best-F1 decision threshold on the val split (`sklearn.metrics.precision_recall_curve`),
+using Session 17's existing `stage_b_head_focal.pt` checkpoint unchanged, then confirms on the
+held-out test split.
+
+| class | threshold | test precision | test recall | test F1 | test AP |
+|---|---|---|---|---|---|
+| dirt | 0.391 (vs. default 0.5) | 0.826 | 0.781 | **0.803** (vs. 0.763 @ 0.5) | 0.886 (unchanged, threshold-independent) |
+| water | 0.339 | 0.796 | 0.856 | **0.825** (vs. 0.731 @ 0.5) | 0.895 |
+| scratch | 0.300 | 0.485 | 0.402 | **0.440** (vs. 0.221 @ 0.5) | 0.380 |
+
+Confirms the Session 17 diagnosis directly: AP is unchanged (same underlying ranking, as
+expected -- threshold tuning can't move it), but F1 recovers substantially for every class at
+its own tuned threshold, without touching the model at all. Cheapest possible fix, and it works
+as predicted -- but scratch's F1 (0.440) is still far below dirt/water's, so this alone doesn't
+fully close the gap for scratch specifically.
+
+**(2) Retraining with α=0.75 — real HPC run, in progress, not yet complete.** New
+`scripts/hpc/train_stage_b_alpha75.slurm` (experimental, not yet committed as a project default) --
+identical to `train_stage_b.slurm` except `--focal-alpha 0.75` (vs. Session 17's paper-default
+0.25), writing to a separate `checkpoints/stage_b_alpha75/` so it can't clobber Session 17's
+checkpoint. Submitted as job `1802232`; as of this entry it is still `PENDING` in the `rtx3080`
+queue (`Priority` wait, not maintenance-blocked this time). Result to be logged in a future
+session once it completes and is evaluated against the same test split.
+
+**Stage A: qualitative per-example figures.** New `scripts/visualize_stage_a_class_examples.py`
+-- for each class, finds one test-split source photo with both a clean variant and a variant
+positive for exactly that class (same scene, distortion is the only difference), runs the
+trained Stage A model on both, and plots them side by side with a horizontal bar chart of all
+three predicted class probabilities underneath each image (green=hit, gray=correct reject,
+orange=false alarm, red=miss against ground truth at threshold 0.5) -- styled after a reference
+figure from an unrelated project the user shared. Generated `docs/images/stage_a_example_dirt.jpg`,
+`docs/images/stage_a_example_water.jpg`, `docs/images/stage_a_example_scratch.jpg` and added
+them to `docs/stage_a_final_report.md` §4. (Hit an unrelated Windows-only `OMP: Error #15`
+OpenMP-runtime conflict between numpy/MKL and PyTorch on first run -- silently aborted with exit
+code 0 and zero output; fixed with `KMP_DUPLICATE_LIB_OK=TRUE`.) All three pairs happen to reuse
+the same clean source photo since the deterministic `seed=0` shuffle picks the same first
+qualifying source each time -- cosmetic, not a bug; a different `--seed` gives different photos.
+
+**Delivered this session:** `scripts/threshold_sweep_stage_b.py`, `scripts/hpc/train_stage_b_alpha75.slurm`
+(job `1802232`, pending), `scripts/visualize_stage_a_class_examples.py`, three new images under
+`docs/images/`, this entry, and the corresponding `docs/stage_a_final_report.md` update. Nothing
+this session is committed yet.
+
+**Verifying the focal-loss implementation.** Before acting further on the Session 17 diagnosis,
+did a full correctness pass on it: reran the whole suite (98/98 pass), checked `FocalLossWithLogits`
+([losses.py:96](../src/models/losses.py)) line-by-line against the Lin et al. formula, and confirmed
+`test_losses.py`'s hand-derived checks (γ=0 reduces to plain α-weighted BCE, per-class α broadcasts
+onto the channel axis correctly) still hold. Also wrote a standalone toy script (no project code
+imported) reproducing the same qualitative effect -- α=0.25 cratering recall at a similarly mild
+imbalance -- on synthetic logistic-regression data, and compared the two real checkpoints' final
+conv-layer bias directly (bce: `[-0.031, -0.120, -0.042]`, focal: `[-0.115, -0.159, -0.135]` --
+uniformly more negative across all three classes, matching the recall drop). No bug found; the
+Session 17 diagnosis holds.
+
+**Started the Stage B final report.** New [`docs/stage_b_final_report.md`](stage_b_final_report.md)
+(status: in progress, pending the α=0.75 result), mirroring `stage_a_final_report.md`'s structure.
+Extended `scripts/visualize_stage_b_results.py` with `--log-file` (reuses Stage A's
+`parse_training_log`/`plot_training_curve`, now parameterized with `title`/`ylabel`) and `--tag`
+(so each loss variant's images get distinct filenames instead of overwriting each other) --
+generated `docs/images/stage_b_training_curve_{bce,focal}.jpg`,
+`stage_b_test_metrics_{bce,focal}.jpg`, `stage_b_sample_predictions_{bce,focal}.jpg`. Full test
+suite still green after the change (10/10 on the two visualize test files, 98/98 overall).
+
+**The α=0.75 job never ran.** Job `1802232` sat `PENDING` (`Priority` queue wait) for hours with
+no sign of starting, so -- rather than keep waiting indefinitely -- ran the exact same config
+(`--loss focal --focal-alpha 0.75 --focal-gamma 2.0`, 40 epochs, batch 16, lr 1e-3, img-size 512)
+on Google Colab (free T4 GPU) instead, driven directly through the Colab UI. Setup: mounted the
+user's Google Drive (containing a manually-uploaded copy of `data/processed/stage_b/` and
+`weights/yolo11m.pt`), cloned the pushed repo (`feature/stage-a-mio-tcd`, commit `10fd684` --
+already has the focal-loss code from Session 17, nothing from this session's uncommitted work was
+needed), symlinked the data/weights in.
+
+**Hit a real Colab pitfall first:** reading 3200+400 images per epoch straight off the
+Drive-mounted (FUSE) filesystem stalled completely -- 6+ minutes without finishing even the first
+batch (confirmed via an interrupt: the traceback landed inside `cv.imread` on a Drive path, and
+GPU memory was allocated/idle, not a hang). Standard Colab fix -- copy the dataset to local
+Colab-instance disk once (`shutil.copytree`, ~1 minute for the 4000 images), symlink the repo's
+`data/processed/stage_b` there instead -- then training ran at a steady ~53-56s/epoch, all 40
+epochs completing in ~37 minutes.
+
+**Real result** (400 test images, 102400 tiles, threshold=0.5, no tuning):
+
+| class | precision | recall | F1 | AP | support |
+|---|---|---|---|---|---|
+| dirt | 0.782 | 0.812 | **0.797** | 0.882 | 13597 |
+| water | 0.701 | 0.930 | **0.799** | 0.891 | 18701 |
+| scratch | 0.518 | 0.357 | **0.423** | 0.360 | 1080 |
+
+**α=0.75 is the winner** -- beats bce and focal-α0.25 on F1 for all three classes simultaneously,
+at the plain default threshold, no per-class threshold tuning required (see
+`docs/stage_b_final_report.md` §4 for the full comparison and the AP caveat: α=0.75's underlying
+ranking is marginally *lower* than α=0.25's, it just lands at a better default operating point on
+a similar curve). This settles the loss-function question left open at the end of Session 17.
+
+**Unplanned bonus: the HPC job also finished, giving a free independent cross-check.** Job
+`1802232` had been left running rather than cancelled ("no longer blocking anything, might be
+useful as a cross-check later") -- it finally cleared the `Priority` queue and ran for real,
+unattended, shortly after the Colab run completed: 17m52s on an actual RTX3080 (`tg084`), 40
+epochs at ~24-27s/epoch, training curve landing almost exactly on Colab's (epoch 40:
+train_loss=0.0144/val_loss=0.0158 on HPC vs. 0.0144/0.0159 on Colab). Pulled both the checkpoint
+and job log back and evaluated the same way:
+
+| class | precision | recall | F1 | AP | vs. Colab F1 |
+|---|---|---|---|---|---|
+| dirt | 0.774 | 0.818 | 0.795 | 0.881 | Δ 0.002 |
+| water | 0.728 | 0.917 | 0.811 | 0.889 | Δ 0.012 |
+| scratch | 0.541 | 0.320 | 0.403 | 0.357 | Δ 0.020 |
+
+Two independent training runs (different hardware, different random seed/shuffling) land within
+~1-2 F1 points of each other on every class -- confirms the α=0.75 result is a stable, reproducible
+property of this config, not a lucky single run.
+
+**Delivered this session (continued):** the Colab-trained checkpoint (`checkpoints/stage_b_alpha75/
+stage_b_head.pt`, canonical) and the HPC-trained one (`stage_b_head_hpc.pt`, cross-check
+reference), both local; `stage_b_a75_1802232.out` (real HPC job log, local); the evaluation and
+cross-check above; and the corresponding `docs/stage_b_final_report.md` update marking the
+loss-function comparison complete. `scripts/hpc/train_stage_b_alpha75.slurm` remains uncommitted.
+
+---
+
+## Session 18 (continued) — Three follow-up improvement attempts
+
+**Date:** 2026-09-04.
+
+Asked "can we make any improvement in Stage B", proposed 6 candidates, user said to try the top 3
+in order.
+
+### 1. Threshold-tune the winning α=0.75 model (no retraining)
+
+Same idea as Session 17/18's α=0.25 threshold sweep, applied to the actual winner this time.
+
+| class | default (0.5) F1 | tuned threshold | tuned F1 |
+|---|---|---|---|
+| dirt | 0.797 | 0.514 | 0.797 (no change) |
+| water | 0.799 | 0.573 | **0.826** |
+| scratch | 0.423 | 0.474 | 0.431 |
+
+Water gets a real bump; dirt was already sitting at its optimum; scratch only marginally better.
+Consistent with the earlier finding that α=0.75's AP (its underlying ranking quality) is already
+close to maxed for this run -- there wasn't much room for threshold-tuning to find.
+
+### 2. Per-class focal-loss α (in progress)
+
+`FocalLossWithLogits` already accepted a per-class alpha tensor, but `scripts/train_stage_b.py`'s
+CLI only ever passed a single shared float. Extended `--focal-alpha` to also accept 3
+comma-separated values (dirt,water,scratch order) -- parses to a `torch.Tensor` when multi-valued,
+falls back to the existing single-float behavior otherwise (backward compatible, existing CLI
+calls unchanged). Added `tests/test_train_stage_b.py::test_smoke_test_runs_end_to_end_with_per_class_focal_alpha`
+and `::test_focal_alpha_count_mismatch_raises`; full suite green (102/102 -- 98 + the 4 in this
+file). New `scripts/hpc/train_stage_b_perclass_alpha.slurm`: keeps dirt/water at the winning 0.75,
+pushes scratch specifically to 0.9 (`--focal-alpha 0.75,0.75,0.9`), to test whether that recovers
+more of scratch's recall without disturbing dirt/water.
+
+Tried running this on the same Colab session first (data was already copied locally there, would
+have been fast) -- but the runtime had disconnected in the interim (idle timeout) and re-mounting
+Google Drive failed 3 times in a row (`ValueError: mount failed`, 2-minute timeout each), which
+looked like a live Colab-side infra issue rather than something worth working around. Pushed the
+updated `train_stage_b.py` and the new `.slurm` file to `$WORK` and submitted to the actual HPC
+instead -- job `1802749`, completed cleanly (17m32s, smooth curve, no overfitting).
+
+**Result: not an improvement.**
+
+| class | uniform α=0.75 (Session 18 winner) | per-class α=[0.75,0.75,0.9] | Δ F1 |
+|---|---|---|---|
+| dirt | 0.782 / 0.812 / **0.797** / 0.882 | 0.727 / 0.852 / **0.784** / 0.882 | −0.013 |
+| water | 0.701 / 0.930 / **0.799** / 0.891 | 0.734 / 0.912 / **0.813** / 0.891 | +0.014 |
+| scratch | 0.518 / 0.357 / **0.423** / 0.360 | 0.365 / 0.459 / **0.407** / 0.343 | −0.016 |
+
+Pushing scratch's α to 0.9 shifted it toward higher recall as intended (0.357→0.459), but precision
+fell more than recall gained (0.518→0.365) -- net F1 slightly *worse*, and scratch's AP also
+dropped (0.360→0.343, a genuinely worse ranking, not just a different threshold point on the same
+curve). Dirt also got slightly worse; only water improved. **Kept `checkpoints/stage_b_alpha75/`
+(uniform α=0.75) as the canonical Stage B checkpoint** -- this per-class variant doesn't beat it.
+
+### 3. Re-check the scratch tile-coverage threshold (diagnostic done, rebuild done, adopted)
+
+The 3% scratch threshold (`DEFAULT_TILE_THRESHOLDS` in `src/soiling/dataset_builder.py`) was a
+plausible-looking guess when Stage B was first built, never empirically re-checked (flagged as an
+open question in the original Stage B plan). New `scripts/diagnose_scratch_threshold.py`: samples
+30 independent `add_scratch` masks (same function the real dataset build calls), rasterizes each
+at several candidate thresholds, and reports the resulting tile positive-rate and the coverage-
+fraction distribution of every tile the mask touches at all.
+
+```
+tiles touched at all (coverage>0) per mask: mean=27.3  (out of 256 tiles)
+coverage-fraction distribution over touched tiles: p50=0.017  p75=0.047  p90=0.091
+
+ threshold   mean positive tiles/mask   mean positive rate
+      0.01                      16.33               6.38%
+      0.02                      12.57               4.91%
+      0.03 (current)             9.30               3.63%
+      0.05                       6.67                2.60%
+      0.10                       2.30                0.90%
+```
+
+**Finding:** the current 3% threshold sits roughly at the *median* of the touched-tile coverage
+distribution, not at a natural gap -- it's discarding about half of all tiles the scratch mask
+actually passes through, not just the barely-grazed ones. (Sanity check: 3.63% mean positive rate
+*within* scratch-variant images × 25% of images being scratch-variant ≈ 0.9% dataset-wide, matching
+the ~1% figure already known from Session 15/16 -- confirms this diagnostic is consistent with the
+real pipeline.) A lower threshold (0.01-0.02) would roughly double scratch's usable positive-tile
+signal without being an unreasonable relabeling -- every included tile still has genuine scratch
+pixels in it, just a smaller fraction.
+
+Acting on this requires a **full Stage B dataset rebuild** (new images + masks, not just a
+re-rasterization pass) -- masks aren't persisted after build time (by design, see
+`src/soiling/tile_labels.py`'s docstring), and the effects aren't pixel-reproducible from a saved
+seed alone (Session 6 limitation), so the existing images can't be relabeled after the fact. User
+approved doing this ("you can do it. but dont throw away the current dataset just keep it"), so
+the original dataset/checkpoint stay on disk untouched and the rebuild was done as a separate copy.
+
+**Rebuild.** `scripts/build_stage_b_dataset.py` gained a `--scratch-threshold` flag (dirt/water
+thresholds unchanged); built `data/processed/stage_b_scratch15` with `--scratch-threshold 0.015`
+(same source images, variants, seed=0 as the original). New per-class tile-positive rates:
+dirt 13.0%, water 17.5%, scratch 1.5% (was ~1% at the 3% threshold). New
+`scripts/hpc/train_stage_b_scratch15.slurm` trains the exact same winning config (focal, α=0.75,
+γ=2.0, 40 epochs) against the new dataset -- single-variable comparison, only the ground truth
+changed. Ran as HPC job `1802973` (17 min, `tg085`), loss curve smooth/monotonic like every prior
+run; evaluated with a new `scripts/hpc/eval_stage_b_scratch15.slurm` (job `1802985`, on the new
+dataset's own test split):
+
+| class | precision | recall | F1 | AP | vs. original (α=0.75, 3% threshold) F1 |
+|---|---|---|---|---|---|
+| dirt | 0.787 | 0.815 | 0.801 | 0.887 | 0.782/0.812/0.797/0.882 → +0.004 |
+| water | 0.743 | 0.907 | 0.817 | 0.885 | 0.701/0.930/0.799/0.891 → +0.004 |
+| scratch | 0.593 | 0.364 | 0.451 | 0.409 | 0.518/0.357/0.423/0.360 → **+0.028** |
+
+**Net positive, adopted as canonical.** Scratch's AP rose 0.360→0.409 (a genuinely better ranking,
+not just a threshold shift) and F1 rose too, driven by a large precision gain (0.518→0.593) with
+recall roughly flat. Dirt/water unchanged within run-to-run noise (support counts differ slightly
+between the two dataset builds -- expected, since Session 6 already documented that `add_dirt`/
+`add_water`/`add_scratch` aren't pixel-reproducible run-to-run even from the same top-level seed).
+`checkpoints/stage_b_scratch15/stage_b_head.pt` is now the canonical Stage B checkpoint;
+`checkpoints/stage_b_alpha75/` (original 3%-threshold dataset) is kept on disk, unmodified, as the
+pre-rebuild reference point. `docs/stage_b_final_report.md` updated accordingly (canonical
+dataset/checkpoint, new images, pre-rebuild result moved to a collapsed reference section).
+
+Mechanics note: the SSH connection to FAU TinyGPU (`tinyx`, key-based, already configured this
+session) was used directly to build/train/evaluate this time, rather than asking the user to run
+`sbatch.tinygpu` themselves as in Sessions 10/16 -- consistent with how the Session 18 HPC
+cross-check job was already run earlier this session. One real mistake along the way: the first
+eval attempt used `sbatch --wrap='...'` directly instead of a proper `#!/bin/bash -l` script, so
+the non-login shell never sourced `module`/`conda` and the job failed with `ModuleNotFoundError:
+No module named 'torch'` -- fixed by writing `scripts/hpc/eval_stage_b_scratch15.slurm` properly
+and resubmitting (job `1802985`, succeeded).
+
+**Delivered this session (continued):** `scripts/train_stage_b.py` (per-class `--focal-alpha`
+support), 2 new tests, `scripts/hpc/train_stage_b_perclass_alpha.slurm`,
+`checkpoints/stage_b_perclass_alpha/stage_b_head.pt` and `stage_b_pca_1802749.out` (real job
+result, negative -- kept for the record), `scripts/diagnose_scratch_threshold.py` and its finding,
+`scripts/build_stage_b_dataset.py --scratch-threshold` flag, `data/processed/stage_b_scratch15`
+(new dataset, 4000 images), `scripts/hpc/train_stage_b_scratch15.slurm`,
+`scripts/hpc/eval_stage_b_scratch15.slurm`, `checkpoints/stage_b_scratch15/stage_b_head.pt` (new
+canonical checkpoint), `stage_b_s15_1802973.out`, `eval_s15_1802985.out`. Nothing from this
+sub-session committed yet.
+
+**Summary of all three improvement attempts:** #1 (threshold-tune) gave a real, free win on water;
+#2 (per-class α) net negative, reverted to the uniform α=0.75 checkpoint; #3 (scratch-threshold
+rebuild) net positive, **adopted as the new canonical Stage B result** -- the original dataset and
+checkpoint are kept on disk for reference, not deleted.

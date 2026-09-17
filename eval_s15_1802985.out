@@ -1,0 +1,52 @@
+### Starting TaskPrologue of job 1802985 on tg082 at Sat Sep  5 10:57:29 AM CEST 2026
+Running on cores 0-1,16-17,32-33,48-49 with governor powersave
+Sat Sep  5 10:57:29 2026       
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 610.57.04              KMD Version: 610.57.04     CUDA UMD Version: 13.3     |
++-----------------------------------------+------------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  NVIDIA GeForce RTX 3080        On  |   00000000:1A:00.0 Off |                  N/A |
+| 30%   33C    P8             18W /  300W |       1MiB /  10240MiB |      0%      Default |
+|                                         |                        |                  N/A |
++-----------------------------------------+------------------------+----------------------+
+
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
+|        ID   ID                                                               Usage      |
+|=========================================================================================|
+|  No running processes found                                                             |
++-----------------------------------------------------------------------------------------+
+### Finished TaskPrologue
+
+Evaluated 400 images (102400 tiles) from split='test', threshold=0.5
+class      precision    recall        f1        AP   support
+dirt           0.787     0.815     0.801     0.887     13567
+water          0.743     0.907     0.817     0.885     18678
+scratch        0.593     0.364     0.451     0.409      1511
+=== JOB_STATISTICS ===
+=== current date     : Sat Sep  5 10:57:43 AM CEST 2026
+= Job-ID             : 1802985 on tinygpu
+= Job-Name           : eval_s15
+= Job-Command        : /home/woody/iwnt/iwnt196h/Farhad_Vaseghi_MA/scripts/hpc/eval_stage_b_scratch15.slurm
+= Initial workdir    : /home/woody/iwnt/iwnt196h/Farhad_Vaseghi_MA
+= Queue/Partition    : rtx3080
+= Slurm account      : iwnt with QOS=normal
+= Requested resources:  for 00:20:00
+= Elapsed runtime    : 00:00:14
+= Total RAM usage    : 1.6 GiB of requested  GiB (%)   
+= Node list          : tg082
+= Subm/Elig/Start/End: 2026-09-05T10:57:13 / 2026-09-05T10:57:13 / 2026-09-05T10:57:29 / 2026-09-05T10:57:43
+======================
+=== Quota infos ======
+    Path                 Used     SoftQ    HardQ    Gracetime  Filec    FileQ    FiHaQ    FileGrace    
+    /home/woody             7.7G  1000.0G  1500.0G        N/A      59K   5,000K   7,500K        N/A    
+    /home/hpc               5.8G   104.9G   209.7G        N/A   1,304      500K   1,000K        N/A    
+    /home/vault             0.0K  1048.6G  2097.2G        N/A       1      200K     400K        N/A    
+======================
+=== GPU utilization ==
+gpu_name, gpu_bus_id, pid, gpu_utilization [%], mem_utilization [%], max_memory_usage [MiB], time [ms]
+NVIDIA GeForce RTX 3080, 00000000:1A:00.0, 472223, 16 %, 10 %, 3522 MiB, 6441 ms

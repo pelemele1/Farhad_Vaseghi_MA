@@ -1,0 +1,91 @@
+### Starting TaskPrologue of job 1802232 on tg084 at Fri Sep  4 12:27:23 PM CEST 2026
+Running on cores 14-15,30-31,46-47,62-63 with governor powersave
+Fri Sep  4 12:27:23 2026       
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 610.57.04              KMD Version: 610.57.04     CUDA UMD Version: 13.3     |
++-----------------------------------------+------------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  NVIDIA GeForce RTX 3080        On  |   00000000:DB:00.0 Off |                  N/A |
+| 37%   58C    P8             16W /  300W |       1MiB /  10240MiB |      0%      Default |
+|                                         |                        |                  N/A |
++-----------------------------------------+------------------------+----------------------+
+
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
+|        ID   ID                                                               Usage      |
+|=========================================================================================|
+|  No running processes found                                                             |
++-----------------------------------------------------------------------------------------+
+### Finished TaskPrologue
+
+/home/woody/iwnt/iwnt196h/software/private/conda/envs/stage_a/lib/python3.11/site-packages/pythonperlin/__init__.py:4: UserWarning: pkg_resources is deprecated as an API. See https://setuptools.pypa.io/en/latest/pkg_resources.html. The pkg_resources package is slated for removal as early as 2025-11-30. Refrain from using this package or pin to Setuptools<81.
+  from pkg_resources import get_distribution
+train=3200 val=400 loss=focal alpha=0.75 gamma=2.0
+epoch 1/40  train_loss=0.0252  val_loss=0.0210  (32.6s)
+epoch 2/40  train_loss=0.0192  val_loss=0.0190  (26.5s)
+epoch 3/40  train_loss=0.0177  val_loss=0.0180  (26.5s)
+epoch 4/40  train_loss=0.0170  val_loss=0.0176  (26.6s)
+epoch 5/40  train_loss=0.0164  val_loss=0.0175  (26.6s)
+epoch 6/40  train_loss=0.0161  val_loss=0.0168  (26.6s)
+epoch 7/40  train_loss=0.0158  val_loss=0.0167  (26.7s)
+epoch 8/40  train_loss=0.0156  val_loss=0.0166  (26.5s)
+epoch 9/40  train_loss=0.0155  val_loss=0.0165  (26.5s)
+epoch 10/40  train_loss=0.0153  val_loss=0.0165  (24.9s)
+epoch 11/40  train_loss=0.0153  val_loss=0.0163  (24.3s)
+epoch 12/40  train_loss=0.0152  val_loss=0.0162  (24.3s)
+epoch 13/40  train_loss=0.0151  val_loss=0.0162  (25.1s)
+epoch 14/40  train_loss=0.0150  val_loss=0.0162  (24.2s)
+epoch 15/40  train_loss=0.0149  val_loss=0.0161  (24.2s)
+epoch 16/40  train_loss=0.0150  val_loss=0.0160  (24.2s)
+epoch 17/40  train_loss=0.0148  val_loss=0.0159  (24.3s)
+epoch 18/40  train_loss=0.0148  val_loss=0.0159  (24.3s)
+epoch 19/40  train_loss=0.0148  val_loss=0.0160  (24.3s)
+epoch 20/40  train_loss=0.0147  val_loss=0.0161  (24.3s)
+epoch 21/40  train_loss=0.0147  val_loss=0.0160  (24.1s)
+epoch 22/40  train_loss=0.0146  val_loss=0.0158  (24.2s)
+epoch 23/40  train_loss=0.0146  val_loss=0.0158  (24.3s)
+epoch 24/40  train_loss=0.0146  val_loss=0.0158  (24.4s)
+epoch 25/40  train_loss=0.0146  val_loss=0.0158  (24.4s)
+epoch 26/40  train_loss=0.0145  val_loss=0.0159  (24.4s)
+epoch 27/40  train_loss=0.0146  val_loss=0.0158  (24.4s)
+epoch 28/40  train_loss=0.0145  val_loss=0.0162  (24.3s)
+epoch 29/40  train_loss=0.0145  val_loss=0.0158  (24.4s)
+epoch 30/40  train_loss=0.0145  val_loss=0.0159  (24.3s)
+epoch 31/40  train_loss=0.0145  val_loss=0.0159  (24.3s)
+epoch 32/40  train_loss=0.0145  val_loss=0.0157  (25.5s)
+epoch 33/40  train_loss=0.0145  val_loss=0.0157  (24.3s)
+epoch 34/40  train_loss=0.0145  val_loss=0.0158  (24.3s)
+epoch 35/40  train_loss=0.0144  val_loss=0.0158  (24.3s)
+epoch 36/40  train_loss=0.0144  val_loss=0.0159  (24.4s)
+epoch 37/40  train_loss=0.0145  val_loss=0.0158  (24.3s)
+epoch 38/40  train_loss=0.0145  val_loss=0.0157  (24.3s)
+epoch 39/40  train_loss=0.0144  val_loss=0.0156  (24.3s)
+epoch 40/40  train_loss=0.0144  val_loss=0.0158  (24.3s)
+wrote checkpoints/stage_b_alpha75/stage_b_head.pt
+=== JOB_STATISTICS ===
+=== current date     : Fri Sep  4 12:45:13 PM CEST 2026
+= Job-ID             : 1802232 on tinygpu
+= Job-Name           : stage_b_a75
+= Job-Command        : /home/woody/iwnt/iwnt196h/Farhad_Vaseghi_MA/scripts/hpc/train_stage_b_alpha75.slurm
+= Initial workdir    : /home/woody/iwnt/iwnt196h/Farhad_Vaseghi_MA
+= Queue/Partition    : rtx3080
+= Slurm account      : iwnt with QOS=normal
+= Requested resources:  for 06:00:00
+= Elapsed runtime    : 00:17:52
+= Total RAM usage    : 2.1 GiB of requested  GiB (%)   
+= Node list          : tg084
+= Subm/Elig/Start/End: 2026-09-04T09:39:37 / 2026-09-04T09:39:37 / 2026-09-04T12:27:21 / 2026-09-04T12:45:13
+======================
+=== Quota infos ======
+    Path                 Used     SoftQ    HardQ    Gracetime  Filec    FileQ    FiHaQ    FileGrace    
+    /home/woody             7.5G  1000.0G  1500.0G        N/A      55K   5,000K   7,500K        N/A    
+    /home/hpc               5.8G   104.9G   209.7G        N/A   1,304      500K   1,000K        N/A    
+    /home/vault             0.0K  1048.6G  2097.2G        N/A       1      200K     400K        N/A    
+======================
+=== GPU utilization ==
+gpu_name, gpu_bus_id, pid, gpu_utilization [%], mem_utilization [%], max_memory_usage [MiB], time [ms]
+NVIDIA GeForce RTX 3080, 00000000:DB:00.0, 170457, 34 %, 22 %, 1940 MiB, 1027939 ms

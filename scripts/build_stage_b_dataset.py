@@ -25,13 +25,24 @@ def main():
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--img-size", type=int, default=512,
                          help="Must be a multiple of 32 (P5 stride) -- sets the tile grid size (img-size // 32)")
+    parser.add_argument("--scratch-threshold", type=float, default=None,
+                         help="Override the scratch tile-coverage threshold (default "
+                         f"{DEFAULT_TILE_THRESHOLDS['scratch']}, see scripts/diagnose_scratch_threshold.py). "
+                         "dirt/water thresholds are left at their default.")
     args = parser.parse_args()
+
+    thresholds = None
+    if args.scratch_threshold is not None:
+        thresholds = dict(DEFAULT_TILE_THRESHOLDS)
+        thresholds["scratch"] = args.scratch_threshold
 
     rows, tile_labels = build_stage_b_dataset(
         args.source, args.out,
         variants_per_image=args.variants, seed=args.seed, img_size=args.img_size,
+        thresholds=thresholds,
     )
 
+    used_thresholds = thresholds if thresholds is not None else DEFAULT_TILE_THRESHOLDS
     grid_h, grid_w = tile_labels.shape[2], tile_labels.shape[3]
     by_split = Counter(r["split"] for r in rows)
     print(f"Wrote {len(rows)} images to {Path(args.out) / 'images'}")
@@ -41,7 +52,7 @@ def main():
     for i, name in enumerate(EFFECT_NAMES):
         positives = sum(r[name] for r in rows)
         print(f"  {name}: {positives}/{len(rows)} images positive ({positives / len(rows):.1%})"
-              f" | threshold={DEFAULT_TILE_THRESHOLDS[name]}"
+              f" | threshold={used_thresholds[name]}"
               f" | tile-positive rate={tile_labels[:, i].mean():.1%}")
 
 

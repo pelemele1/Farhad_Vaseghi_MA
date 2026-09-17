@@ -84,14 +84,14 @@ def parse_training_log(log_text):
     return records
 
 
-def plot_training_curve(records, out_path):
+def plot_training_curve(records, out_path, title="Stage A training curve (real TinyGPU run)", ylabel="BCE-with-logits loss"):
     epochs = [r["epoch"] for r in records]
     fig, ax = plt.subplots(figsize=(7, 4.5))
     ax.plot(epochs, [r["train_loss"] for r in records], marker="o", label="train loss")
     ax.plot(epochs, [r["val_loss"] for r in records], marker="o", label="val loss")
     ax.set_xlabel("epoch")
-    ax.set_ylabel("BCE-with-logits loss")
-    ax.set_title("Stage A training curve (real TinyGPU run)")
+    ax.set_ylabel(ylabel)
+    ax.set_title(title)
     ax.set_xticks(epochs)
     ax.legend()
     ax.grid(alpha=0.3)
