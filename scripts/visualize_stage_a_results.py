@@ -21,6 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
+from sklearn.metrics import auc, average_precision_score, precision_recall_curve, roc_curve
 from torch.utils.data import DataLoader
 
 from scripts.evaluate_stage_a import collect_predictions, compute_metrics
@@ -121,6 +122,51 @@ def plot_metrics_bar_chart(metric_rows, out_path, title="Stage A test-split metr
     plt.close(fig)
 
 
+def plot_roc_pr_curves(labels, probs, class_names, out_path, title="Stage A"):
+    """The actual curves behind the scalar AUC-ROC/AUC-PR numbers already in
+    the metrics bar chart -- one line per class in each panel: ROC (false
+    positive rate vs. true positive rate, diagonal = random guessing) on the
+    left, precision-recall (with each class's own positive rate as the
+    no-skill baseline, since unlike ROC that baseline isn't flat at 0.5) on
+    the right. labels/probs: (n_samples, n_classes) arrays -- same shape
+    compute_metrics expects (Stage B passes its flattened per-tile arrays)."""
+    fig, (ax_roc, ax_pr) = plt.subplots(1, 2, figsize=(11, 4.8))
+
+    for i, name in enumerate(class_names):
+        y_true, y_prob = labels[:, i], probs[:, i]
+        support = int(y_true.sum())
+        if support == 0 or support == len(y_true):
+            continue  # ROC/PR undefined without both a positive and a negative present
+
+        fpr, tpr, _ = roc_curve(y_true, y_prob)
+        roc_auc = auc(fpr, tpr)
+        ax_roc.plot(fpr, tpr, label=f"{name} (AUC={roc_auc:.3f})")
+
+        precision, recall, _ = precision_recall_curve(y_true, y_prob)
+        ap = average_precision_score(y_true, y_prob)
+        ax_pr.plot(recall, precision, label=f"{name} (AP={ap:.3f})")
+        ax_pr.axhline(support / len(y_true), color=ax_pr.lines[-1].get_color(), linestyle=":", alpha=0.4)
+
+    ax_roc.plot([0, 1], [0, 1], color="gray", linestyle="--", linewidth=1, label="random")
+    ax_roc.set_xlabel("false positive rate")
+    ax_roc.set_ylabel("true positive rate")
+    ax_roc.set_title(f"{title}: ROC curves")
+    ax_roc.legend(loc="lower right", fontsize=9)
+    ax_roc.set_xlim(0, 1)
+    ax_roc.set_ylim(0, 1.02)
+
+    ax_pr.set_xlabel("recall")
+    ax_pr.set_ylabel("precision")
+    ax_pr.set_title(f"{title}: PR curves\n(dotted line = that class's positive rate, i.e. random-guessing baseline)")
+    ax_pr.legend(loc="lower left", fontsize=9)
+    ax_pr.set_xlim(0, 1)
+    ax_pr.set_ylim(0, 1.02)
+
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=110)
+    plt.close(fig)
+
+
 def plot_prediction_grid(dataset, indices, probs, labels, class_names, threshold, out_path, cols=4):
     n = len(indices)
     rows_n = int(np.ceil(n / cols))
@@ -189,6 +235,10 @@ def main():
     metrics_path = out_dir / f"stage_a_test_metrics{args.tag}.jpg"
     plot_metrics_bar_chart(metric_rows, metrics_path)
     print(f"wrote {metrics_path}")
+
+    curves_path = out_dir / f"stage_a_roc_pr_curves{args.tag}.jpg"
+    plot_roc_pr_curves(labels, probs, class_names, curves_path, title=f"Stage A{args.tag}")
+    print(f"wrote {curves_path}")
 
     sample_indices = select_diverse_sample_indices(dataset.rows, class_names, per_kind=args.per_kind, seed=args.seed)
     grid_path = out_dir / f"stage_a_sample_predictions{args.tag}.jpg"

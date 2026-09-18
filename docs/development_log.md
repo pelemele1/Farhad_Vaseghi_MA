@@ -1398,3 +1398,76 @@ two genuinely dead files: `docs/images/stage_b_test_metrics.jpg` and `docs/image
 stage_b_sample_predictions.jpg` -- orphaned leftovers from Session 16 (before
 `visualize_stage_b_results.py` gained its `--tag` flag), byte-identical to their later
 `_bce.jpg` counterparts and not referenced by any report. Removed.
+
+### ROC/PR curve diagrams
+
+User asked for the actual ROC and precision-recall curve *diagrams*, not just the scalar
+AUC-ROC/AUC-PR numbers already in the metrics bar chart. New `plot_roc_pr_curves` (added to
+`scripts/visualize_stage_a_results.py`, imported by `visualize_stage_b_results.py` the same way
+`plot_metrics_bar_chart` already is): one figure, two panels -- ROC curves (with the random-
+guessing diagonal) on the left, PR curves (with each class's own positive rate marked as its
+no-skill baseline, since unlike ROC that baseline isn't flat at 0.5) on the right, one line per
+class in each. Skips a class cleanly (no crash) if it has zero positives or zero negatives, since
+neither curve is defined then. 2 new tests (smoke test + degenerate-class test). Wired into both
+`main()`s automatically -- no new CLI flag, every future `--tag` run gets `..._roc_pr_curves...
+.jpg` for free. Regenerated for both canonical checkpoints (`stage_a_combo`, `stage_b_combo`) and
+embedded in both final reports next to their metrics tables.
+
+### Analysis of current results + recommendations for further development
+
+User asked for an analysis of where things actually stand, to decide what to develop next --
+not just another options list. Looked at the real per-class numbers across both stages,
+canonical checkpoints:
+
+| stage | class | F1 (tuned) | AP | ROC-AUC |
+|---|---|---|---|---|
+| A | dirt | 0.938 | 0.990 | 0.990 |
+| A | water | 0.969 | 0.993 | 0.991 |
+| A | scratch | 0.921 | 0.978 | 0.973 |
+| B | dirt | 0.755 | 0.849 | 0.926 |
+| B | water | 0.815 | 0.880 | 0.935 |
+| B | scratch | 0.627 | 0.634 | 0.956 |
+
+**Finding 1: Stage A is essentially done on synthetic data.** Every class is F1>0.92, AP>0.97.
+Further tuning here (more epochs, different loss, etc.) has very little headroom left to buy --
+the ROC/PR curves (new this session, see above) all hug the ideal corner. Whatever effort goes
+into Stage A next should be about the *real* domain gap (see Finding 3), not more synthetic
+iteration.
+
+**Finding 2: Stage B's scratch gap is a data-volume problem, not a model-capability problem.**
+The ROC-AUC vs. AP split described above (Stage B report, §4) is the key evidence: scratch's
+ROC-AUC (0.956) is actually the *best* of the three classes -- the model ranks scratch tiles
+correctly about as well as it ranks dirt/water tiles. Its AP (0.634) is the *worst*, because AP
+is diluted by class rarity (support 6362/204800 ≈ 3%) in a way ROC-AUC structurally isn't. Two
+different loss-function interventions were already tried specifically to fix this (per-class
+focal α — Session 18, net negative; localized SSD — Session 19, a wash) and neither worked,
+which is consistent with this being a data-volume gap that a loss reweighting can't manufacture
+its way out of. **Implication: the next lever to pull for scratch is more scratch-positive
+training data** (a 5th combo-kind cycle, oversampling scratch-including variants specifically,
+or simply more source photos), not another loss variant.
+
+**Finding 3: dirt/water's regression from the combo rebuild (§ Phase 4 above) is a real but
+modest cost**, consistent with combo tiles creating genuine multi-label ambiguity the model
+didn't have to handle before. Whether more training time / more data closes this gap or whether
+it's an intrinsic difficulty of the harder task is untested -- a cheap next experiment (more
+epochs on the existing combo dataset, no rebuild needed) would tell.
+
+**Finding 4 (the one every "Known limitations" section in this project has flagged since
+Session 1): everything above is still 100% synthetic, frozen-backbone data.** No amount of
+further synthetic-data iteration answers the actual question this thesis needs answered --
+does any of this transfer to the real dual-camera rig's captures? This is the single highest-
+leverage next step, and everything else is optimization within a domain gap that's still
+completely unmeasured.
+
+**Recommended priority order, given the above (not yet actioned, pending user decision):**
+1. **Start Part 1 real-capture data collection** (or at minimum, a small pilot batch) -- highest
+   leverage by a wide margin; every synthetic result above is a ceiling estimate, not a floor,
+   until this exists.
+2. **More scratch-positive synthetic data for Stage B** (cheap, targeted at Finding 2's specific
+   diagnosed gap) -- e.g. a 5th combo-cycle biased toward scratch, or oversampling during
+   training. Low effort, clear hypothesis to test.
+3. **More training epochs on the existing combo dataset** (near-zero cost, tests Finding 3's
+   open question about whether dirt/water's regression is fixable without new data).
+4. **Backbone unfreezing** (architecture.md's documented "Option 2") -- higher effort, save for
+   after 1-3 have been tried, since it's the biggest architectural change and hardest to isolate
+   if tried alongside everything else.

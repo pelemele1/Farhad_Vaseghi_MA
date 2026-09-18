@@ -37,6 +37,7 @@ from scripts.evaluate_stage_b import flatten_tiles
 from scripts.visualize_stage_a_results import (
     parse_training_log,
     plot_metrics_bar_chart,
+    plot_roc_pr_curves,
     plot_training_curve,
     select_diverse_sample_indices,
 )
@@ -207,6 +208,10 @@ def main():
     metrics_path = out_dir / f"stage_b_test_metrics{args.tag}.jpg"
     plot_metrics_bar_chart(metric_rows, metrics_path, title=f"Stage B per-tile metrics per class{args.tag}")
     print(f"wrote {metrics_path}")
+
+    curves_path = out_dir / f"stage_b_roc_pr_curves{args.tag}.jpg"
+    plot_roc_pr_curves(labels_flat, probs_flat, class_names, curves_path, title=f"Stage B{args.tag}")
+    print(f"wrote {curves_path}")
 
     sample_indices = select_diverse_sample_indices(dataset.rows, class_names, per_kind=args.per_kind, seed=args.seed)
     grid_path = out_dir / f"stage_b_sample_predictions{args.tag}.jpg"

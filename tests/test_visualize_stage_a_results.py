@@ -3,6 +3,7 @@ import numpy as np
 from scripts.visualize_stage_a_results import (
     kind_from_scores,
     parse_training_log,
+    plot_roc_pr_curves,
     select_diverse_sample_indices,
 )
 
@@ -66,3 +67,30 @@ wrote checkpoints/stage_a/stage_a_head.pt
 
 def test_parse_training_log_returns_empty_list_for_no_matches():
     assert parse_training_log("nothing relevant here\njust some text") == []
+
+
+def test_plot_roc_pr_curves_writes_a_file(tmp_path):
+    # Smoke test only (matplotlib output isn't otherwise unit-tested in this
+    # project) -- confirms it runs end to end on ordinary multi-class input
+    # and actually writes an image, not that the pixels are correct.
+    rng = np.random.default_rng(0)
+    labels = rng.integers(0, 2, size=(50, 3))
+    probs = rng.random((50, 3))
+    out_path = tmp_path / "curves.jpg"
+
+    plot_roc_pr_curves(labels, probs, ("dirt", "water", "scratch"), out_path)
+
+    assert out_path.exists()
+    assert out_path.stat().st_size > 0
+
+
+def test_plot_roc_pr_curves_skips_degenerate_class_without_crashing(tmp_path):
+    # A class with zero positives (or zero negatives) has no defined ROC/PR
+    # curve -- must be skipped, not raise.
+    labels = np.array([[1, 0], [0, 0], [1, 0], [0, 0]])  # class 1 (index 1) is all-negative
+    probs = np.array([[0.8, 0.1], [0.2, 0.3], [0.7, 0.4], [0.1, 0.2]])
+    out_path = tmp_path / "curves_degenerate.jpg"
+
+    plot_roc_pr_curves(labels, probs, ("a", "b"), out_path)
+
+    assert out_path.exists()

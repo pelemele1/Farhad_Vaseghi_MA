@@ -123,6 +123,8 @@ curve), plateaued by ~epoch 20, smooth and monotonic.
 | water | 0.569 (tuned) | 0.760 | 0.878 | 0.815 | 0.880 | 0.935 | 71210 | 0.826→0.815 (−0.011) |
 | scratch | 0.539 (tuned) | 0.659 | 0.598 | 0.627 | 0.634 | 0.956 | 6362 | **0.462→0.627 (+0.165)** |
 
+![Stage B ROC and precision-recall curves, combo dataset](images/stage_b_roc_pr_curves_combo.jpg)
+
 **A genuinely mixed result, not a clean win or loss.** Scratch improved dramatically — AP
 nearly doubled (0.409→0.634), the biggest single jump seen in this whole project's Stage B
 work — while dirt/water both degraded somewhat (F1 down 0.01-0.05, AP down ~0.04, ROC-AUC down
@@ -135,6 +137,19 @@ appears in every combo variant that includes it, not just the single-effect one)
 historically weakest class dramatically more usable positive-tile signal. Net effect on the
 model's *practical* usefulness: probably positive overall, since scratch was the clear weak
 point every prior session flagged, and the dirt/water cost is real but modest against real
+
+**A finding the ROC/PR curves make visible that the scalar numbers alone didn't:** scratch has
+the *highest* ROC-AUC of the three classes (0.956, vs. dirt's 0.926 and water's 0.935) but by
+far the *lowest* AP (0.634 vs. 0.849/0.880) — the ROC curve hugs the top-left corner just as
+tightly as dirt/water's, but the PR curve sags well below them. ROC-AUC doesn't care how rare
+the positive class is (it only compares the ranks of positives vs. negatives); AP does, because
+precision is directly diluted by how many negatives sit above each threshold. This is the
+signature of a class the model ranks *well* but that's still structurally rare (6362 of 204800
+tiles, ~3%) — i.e. scratch's remaining gap looks like a **data-volume problem, not a
+model-capability problem**. That reframes what's worth trying next (§ recommendations in
+`docs/development_log.md`): oversampling/more scratch-positive data is a better-targeted next
+move than another loss-function change, since two loss changes (per-class α, SSD) were already
+tried without closing this specific gap.
 support of >50k tiles each.
 
 ![Stage B sample predictions, combo dataset](images/stage_b_sample_predictions_combo.jpg)

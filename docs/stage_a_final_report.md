@@ -129,6 +129,13 @@ images instead of 4000.
 | water | 0.814 (tuned) | 0.995 | 0.945 | 0.969 | 0.993 | 0.991 | 400 |
 | scratch | 0.220 (tuned) | 0.929 | 0.912 | 0.921 | 0.978 | 0.973 | 400 |
 
+![Stage A ROC and precision-recall curves, combo dataset](images/stage_a_roc_pr_curves_combo.jpg)
+
+The curves behind the AP/ROC-AUC numbers above: every class hugs the top-left corner of the ROC
+panel (far from the diagonal "random guessing" line) and stays near the top of the PR panel
+across nearly the whole recall range, confirming these are high scores because the ranking is
+genuinely good, not an artifact of an easy default threshold.
+
 **Noticeably stronger across the board than the original single-distortion result** (§4
 "Pre-combo result" below) — scratch F1 rose from 0.784 to 0.911-0.921, dirt/water both landed
 above 0.94. The most likely driver isn't the combos themselves teaching anything new about
