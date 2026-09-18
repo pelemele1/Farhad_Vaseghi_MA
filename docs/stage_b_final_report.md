@@ -329,6 +329,28 @@ Three further improvement attempts against the α=0.75 winner:
    points of F1/AP/ROC-AUC — judged a net win given scratch was the clear weak point in every
    prior session, and the dirt/water cost is modest against real per-class support over 50k
    tiles. `checkpoints/stage_b_combo/stage_b_head.pt` is now canonical.
+6. **Per-class focal α, re-tried on the combo dataset** (user follow-up to option 5's dirt/water
+   regression) — the combo rebuild shifted the tile-level class balance a lot (train-split
+   positive rate: dirt 26%, water 35%, both far less rare than their pre-combo 13%/18%; scratch
+   3%, pos_weight 32 vs. ~95 before), so the uniform α=0.75 canonical config — tuned for the
+   *old*, more extreme imbalance — was worth re-checking. Tried `α=[0.5, 0.5, 0.75]` (dirt/water
+   lowered to neutral, scratch left unchanged to isolate the variable) — HPC job `1815794`,
+   evaluated as job `1815839`:
+
+   | class | metric | uniform α=0.75 (canonical, tuned) | α=[0.5,0.5,0.75] (tuned) |
+   |---|---|---|---|
+   | dirt | P/R/F1/AP/ROC-AUC | .749/.762/.755/.849/.926 | .753/.757/.755/.850/.925 |
+   | water | P/R/F1/AP/ROC-AUC | .760/.878/.815/.880/.935 | .768/.867/.815/.883/.935 |
+   | scratch | P/R/F1/AP/ROC-AUC | .659/.598/.627/.634/.956 | .644/.613/.628/.634/.956 |
+
+   **No effect, within noise on every metric for every class.** Lowering dirt/water's alpha
+   didn't recover any of their combo-rebuild regression, and didn't hurt scratch either (kept at
+   the same 0.75) — a clean null result, not a mixed one. This is evidence *against* Finding 3's
+   "maybe more training time or a different loss weighting fixes it" open question in
+   `docs/development_log.md` — the regression looks more like an intrinsic difficulty of the
+   harder multi-label combo task than something a loss-reweighting knob can undo. Uniform
+   α=0.75 (`checkpoints/stage_b_combo/`) stays canonical;
+   `checkpoints/stage_b_combo_perclass_alpha/` kept on disk for the record.
 
 ### Sample tile-grid predictions
 

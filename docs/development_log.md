@@ -1452,6 +1452,18 @@ didn't have to handle before. Whether more training time / more data closes this
 it's an intrinsic difficulty of the harder task is untested -- a cheap next experiment (more
 epochs on the existing combo dataset, no rebuild needed) would tell.
 
+**Update (user follow-up, same day): per-class α re-tried on the combo dataset, ruled out.**
+The combo rebuild shifted the tile-level class balance a lot (dirt 26%, water 35% positive on
+train now, vs. 13%/18% pre-combo), so the canonical uniform α=0.75 -- tuned for the old, more
+extreme imbalance -- was worth re-checking. Tried `α=[0.5, 0.5, 0.75]` (dirt/water lowered to
+neutral 0.5, scratch left at 0.75 to isolate the variable) -- HPC job `1815794`/`1815839`. F1,
+AP, and ROC-AUC all landed within noise of the canonical uniform-α run on every class,
+dirt/water included. **This rules out loss-reweighting as the fix** -- the dirt/water
+regression is not a training-imbalance artifact a per-class α can correct, strengthening the
+"intrinsic difficulty of the harder task" half of Finding 3 over the "needs more data/epochs"
+half. Full table and checkpoint in `docs/stage_b_final_report.md` §4 "Post-decision
+follow-ups", option 6.
+
 **Finding 4 (the one every "Known limitations" section in this project has flagged since
 Session 1): everything above is still 100% synthetic, frozen-backbone data.** No amount of
 further synthetic-data iteration answers the actual question this thesis needs answered --
@@ -1466,8 +1478,9 @@ completely unmeasured.
 2. **More scratch-positive synthetic data for Stage B** (cheap, targeted at Finding 2's specific
    diagnosed gap) -- e.g. a 5th combo-cycle biased toward scratch, or oversampling during
    training. Low effort, clear hypothesis to test.
-3. **More training epochs on the existing combo dataset** (near-zero cost, tests Finding 3's
-   open question about whether dirt/water's regression is fixable without new data).
+3. **More training epochs on the existing combo dataset** (near-zero cost, tests what's left of
+   Finding 3's open question now that loss-reweighting has been ruled out above -- whether more
+   training time closes the gap, or it really is intrinsic to the harder multi-label task).
 4. **Backbone unfreezing** (architecture.md's documented "Option 2") -- higher effort, save for
    after 1-3 have been tried, since it's the biggest architectural change and hardest to isolate
    if tried alongside everything else.

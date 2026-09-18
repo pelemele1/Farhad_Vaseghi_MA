@@ -1,0 +1,91 @@
+### Starting TaskPrologue of job 1815794 on tg083 at Fri Sep 18 07:43:22 AM CEST 2026
+Running on cores 2-3,18-19,34-35,50-51 with governor powersave
+Fri Sep 18 07:43:22 2026       
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 610.57.04              KMD Version: 610.57.04     CUDA UMD Version: 13.3     |
++-----------------------------------------+------------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  NVIDIA GeForce RTX 3080        On  |   00000000:1B:00.0 Off |                  N/A |
+| 38%   59C    P8             24W /  300W |       1MiB /  10240MiB |      0%      Default |
+|                                         |                        |                  N/A |
++-----------------------------------------+------------------------+----------------------+
+
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
+|        ID   ID                                                               Usage      |
+|=========================================================================================|
+|  No running processes found                                                             |
++-----------------------------------------------------------------------------------------+
+### Finished TaskPrologue
+
+/home/woody/iwnt/iwnt196h/software/private/conda/envs/stage_a/lib/python3.11/site-packages/pythonperlin/__init__.py:4: UserWarning: pkg_resources is deprecated as an API. See https://setuptools.pypa.io/en/latest/pkg_resources.html. The pkg_resources package is slated for removal as early as 2025-11-30. Refrain from using this package or pin to Setuptools<81.
+  from pkg_resources import get_distribution
+train=6400 val=800 loss=focal alpha=[0.5, 0.5, 0.75] gamma=2.0
+epoch 1/40  train_loss=0.0372  val_loss=0.0336  (64.4s)
+epoch 2/40  train_loss=0.0320  val_loss=0.0320  (55.9s)
+epoch 3/40  train_loss=0.0309  val_loss=0.0312  (55.6s)
+epoch 4/40  train_loss=0.0304  val_loss=0.0309  (55.6s)
+epoch 5/40  train_loss=0.0300  val_loss=0.0306  (54.0s)
+epoch 6/40  train_loss=0.0298  val_loss=0.0304  (52.3s)
+epoch 7/40  train_loss=0.0297  val_loss=0.0306  (50.3s)
+epoch 8/40  train_loss=0.0296  val_loss=0.0303  (50.2s)
+epoch 9/40  train_loss=0.0295  val_loss=0.0303  (50.5s)
+epoch 10/40  train_loss=0.0294  val_loss=0.0303  (50.6s)
+epoch 11/40  train_loss=0.0294  val_loss=0.0301  (50.9s)
+epoch 12/40  train_loss=0.0293  val_loss=0.0304  (50.6s)
+epoch 13/40  train_loss=0.0293  val_loss=0.0302  (50.3s)
+epoch 14/40  train_loss=0.0292  val_loss=0.0304  (50.5s)
+epoch 15/40  train_loss=0.0292  val_loss=0.0302  (50.1s)
+epoch 16/40  train_loss=0.0292  val_loss=0.0302  (50.3s)
+epoch 17/40  train_loss=0.0292  val_loss=0.0303  (50.3s)
+epoch 18/40  train_loss=0.0291  val_loss=0.0300  (50.1s)
+epoch 19/40  train_loss=0.0291  val_loss=0.0300  (50.5s)
+epoch 20/40  train_loss=0.0291  val_loss=0.0300  (50.5s)
+epoch 21/40  train_loss=0.0291  val_loss=0.0301  (50.6s)
+epoch 22/40  train_loss=0.0291  val_loss=0.0301  (50.2s)
+epoch 23/40  train_loss=0.0291  val_loss=0.0301  (50.1s)
+epoch 24/40  train_loss=0.0291  val_loss=0.0300  (50.4s)
+epoch 25/40  train_loss=0.0291  val_loss=0.0301  (50.2s)
+epoch 26/40  train_loss=0.0291  val_loss=0.0302  (50.3s)
+epoch 27/40  train_loss=0.0291  val_loss=0.0300  (50.5s)
+epoch 28/40  train_loss=0.0291  val_loss=0.0300  (50.9s)
+epoch 29/40  train_loss=0.0291  val_loss=0.0299  (50.8s)
+epoch 30/40  train_loss=0.0291  val_loss=0.0300  (50.6s)
+epoch 31/40  train_loss=0.0291  val_loss=0.0300  (50.8s)
+epoch 32/40  train_loss=0.0291  val_loss=0.0300  (50.6s)
+epoch 33/40  train_loss=0.0291  val_loss=0.0301  (50.6s)
+epoch 34/40  train_loss=0.0290  val_loss=0.0301  (51.4s)
+epoch 35/40  train_loss=0.0290  val_loss=0.0302  (54.5s)
+epoch 36/40  train_loss=0.0290  val_loss=0.0300  (54.6s)
+epoch 37/40  train_loss=0.0291  val_loss=0.0300  (55.1s)
+epoch 38/40  train_loss=0.0290  val_loss=0.0299  (54.8s)
+epoch 39/40  train_loss=0.0290  val_loss=0.0300  (55.0s)
+epoch 40/40  train_loss=0.0290  val_loss=0.0300  (55.5s)
+wrote checkpoints/stage_b_combo_perclass_alpha/stage_b_head.pt
+=== JOB_STATISTICS ===
+=== current date     : Fri Sep 18 08:18:20 AM CEST 2026
+= Job-ID             : 1815794 on tinygpu
+= Job-Name           : stage_b_combo_pca
+= Job-Command        : /home/woody/iwnt/iwnt196h/Farhad_Vaseghi_MA/scripts/hpc/train_stage_b_combo_perclass_alpha.slurm
+= Initial workdir    : /home/woody/iwnt/iwnt196h/Farhad_Vaseghi_MA
+= Queue/Partition    : rtx3080
+= Slurm account      : iwnt with QOS=normal
+= Requested resources:  for 06:00:00
+= Elapsed runtime    : 00:35:10
+= Total RAM usage    : 2.3 GiB of requested  GiB (%)   
+= Node list          : tg083
+= Subm/Elig/Start/End: 2026-09-18T07:07:57 / 2026-09-18T07:07:57 / 2026-09-18T07:43:10 / 2026-09-18T08:18:20
+======================
+=== Quota infos ======
+    Path                 Used     SoftQ    HardQ    Gracetime  Filec    FileQ    FiHaQ    FileGrace    
+    /home/woody             8.6G  1000.0G  1500.0G        N/A      78K   5,000K   7,500K        N/A    
+    /home/hpc               6.0G   104.9G   209.7G        N/A   1,449      500K   1,000K        N/A    
+    /home/vault             0.0K  1048.6G  2097.2G        N/A       1      200K     400K        N/A    
+======================
+=== GPU utilization ==
+gpu_name, gpu_bus_id, pid, gpu_utilization [%], mem_utilization [%], max_memory_usage [MiB], time [ms]
+NVIDIA GeForce RTX 3080, 00000000:1B:00.0, 2083702, 34 %, 22 %, 1940 MiB, 2087742 ms
