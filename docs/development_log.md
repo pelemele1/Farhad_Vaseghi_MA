@@ -843,7 +843,9 @@ dataset-build time, focal loss instead of pos_weight, or per-class thresholds at
 **Delivered this session:** `checkpoints/stage_b/stage_b_head.pt` (trained head, local + on
 `$WORK`), `stage_b_1799124.out` (raw job log, local + on cluster), `docs/images/
 stage_b_test_metrics.jpg`, `docs/images/stage_b_sample_predictions.jpg` (both real, from the
-trained checkpoint). Session 15's code pushed as commit `19db3cb`.
+trained checkpoint; later regenerated with a `--tag` suffix as `_bce.jpg` once the loss-variant
+comparison started -- the untagged copies were byte-identical duplicates and removed in a
+repo-cleanup pass, see Session 19+). Session 15's code pushed as commit `19db3cb`.
 
 ---
 
@@ -1382,3 +1384,17 @@ rebuild), `data/processed/stage_a` and `data/processed/stage_b_scratch15` rebuil
 localized SSD loss tried and compared (focal α=0.75 stayed canonical), (3) reusable per-class
 threshold tuning, (4) AUC-ROC added alongside AUC-PR everywhere, (5) multi-distortion dataset
 built, both stages retrained and evaluated on it.
+
+### Repo cleanup
+
+User asked for a pass over the repo for unnecessary/redundant files. Audited: every root-level
+`.out` job log, every `scripts/hpc/*.slurm`, and every `docs/images/*.jpg` against what the two
+final reports actually reference (`![...](images/...)` syntax) plus a byte-for-byte duplicate
+check across all git-tracked files. Everything else -- job logs, slurm scripts, checkpoints
+listed in the reports (gitignored, not actually committed), `raw/`/`wiki/` knowledge base,
+`only_for_me/` personal thesis-planning notes -- is either actively referenced from a report's
+reproduction section or clearly a deliberate, distinct artifact, so left alone. Found exactly
+two genuinely dead files: `docs/images/stage_b_test_metrics.jpg` and `docs/images/
+stage_b_sample_predictions.jpg` -- orphaned leftovers from Session 16 (before
+`visualize_stage_b_results.py` gained its `--tag` flag), byte-identical to their later
+`_bce.jpg` counterparts and not referenced by any report. Removed.
