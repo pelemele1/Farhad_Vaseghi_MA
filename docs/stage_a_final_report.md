@@ -76,6 +76,23 @@ lightweight model reliably say whether the lens shows dirt, water, and/or a scra
   (each class appears in exactly 4 of the 8 kinds). Same source photos, same
   source-photo-level split (no leakage) as before.
 
+**Distribution by kind (exact, by construction):**
+
+| kind | images | % of dataset |
+|---|---|---|
+| clean (no distortion) | 1000 | 12.5% |
+| dirt only | 1000 | 12.5% |
+| water only | 1000 | 12.5% |
+| scratch only | 1000 | 12.5% |
+| dirt + water | 1000 | 12.5% |
+| dirt + scratch | 1000 | 12.5% |
+| water + scratch | 1000 | 12.5% |
+| dirt + water + scratch | 1000 | 12.5% |
+| **total** | **8000** | **100%** |
+
+Each class (dirt/water/scratch) is therefore *present* — alone or combined with another — in
+exactly 4000/8000 images (50%), since it appears in 4 of the 8 kinds above.
+
 ### Model
 
 - **Backbone:** Ultralytics YOLOv11-m, COCO-pretrained, entirely frozen (`requires_grad =

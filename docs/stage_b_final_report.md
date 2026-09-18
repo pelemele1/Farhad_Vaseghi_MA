@@ -65,6 +65,27 @@ variant's tile grid can have more than one class positive in the *same* tile whe
 combined effects' masks overlap; `rasterize_tile_label` is called independently per class, so
 this needed no code changes (see `docs/development_log.md` Session 19).
 
+**Distribution by kind (exact, by construction — identical to Stage A's, since both builders
+share the same balanced-kind-cycling logic):**
+
+| kind | images | % of dataset |
+|---|---|---|
+| clean (no distortion) | 1000 | 12.5% |
+| dirt only | 1000 | 12.5% |
+| water only | 1000 | 12.5% |
+| scratch only | 1000 | 12.5% |
+| dirt + water | 1000 | 12.5% |
+| dirt + scratch | 1000 | 12.5% |
+| water + scratch | 1000 | 12.5% |
+| dirt + water + scratch | 1000 | 12.5% |
+| **total** | **8000** | **100%** |
+
+This is the **image-level** distribution only — each class is *present* in exactly 4000/8000
+images (50%) either way. At the **tile level** it's a different picture: scratch is a thin line
+that only ever covers ~3% of tiles even in an image where it's present (vs. dirt/water's filled
+regions covering much more per image), so its tile-level support stays far below 50% no matter
+how balanced the image-level kind mix is — see the per-class tile-positive rates in §4.
+
 ### Model
 
 `StageBDistortionHead`: a single `Conv2d(in_channels, 3, kernel_size=1)` directly on the frozen
