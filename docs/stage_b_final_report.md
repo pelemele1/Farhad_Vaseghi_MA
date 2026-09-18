@@ -88,12 +88,24 @@ backbone's P5 feature map → raw per-tile logits `(B, 3, 16, 16)`. Backbone unc
    beats every other variant on all three classes at the plain default threshold (0.5), with no
    threshold tuning needed (§4).
 
-### Threshold tuning (Session 18, no retraining)
+### Decision threshold (per class, no retraining)
 
-Independent of the loss-function question: per-class best-F1 thresholds found on the val split
-of the focal-α0.25 checkpoint, confirmed on test. Since AP (threshold-independent) already
-improved for every class in that run, this checks whether a better *operating point* exists on
-the same curve, without touching the model.
+The model outputs a probability per tile per class; a **decision threshold** is the cutoff
+above which that probability counts as "yes, this tile has this distortion" — everything in
+the precision/recall/F1 columns depends on where that cutoff is set, while AP and ROC-AUC don't
+(they rank probabilities, not compare them against a cutoff). A single shared threshold (0.5)
+forces every class onto whatever point that happens to land on its own precision/recall curve,
+even though the three classes' curves — and where the best tradeoff sits on each — differ a
+lot. **The threshold is tuned separately per class**: sweep every candidate threshold on the
+**val** split (never the test split, which is only evaluated once the threshold is fixed),
+picking whichever gives the best F1, then apply that class's own threshold when evaluating
+**test**. Implemented once, reusably, in `src/eval/thresholds.py::tune_per_class_thresholds`
+and exposed as `evaluate_stage_b.py --tune-thresholds` (Session 19+; originally a one-off
+script for a single Session 18 checkpoint, generalized so every checkpoint since — including
+the canonical combo result — gets it for free). The actual tuned values (a different number per
+class, and different again for every checkpoint, since a differently-trained model's curves
+differ) are in the `threshold` column of every results table in §4 below, alongside the plain
+0.5-threshold row for comparison.
 
 ---
 

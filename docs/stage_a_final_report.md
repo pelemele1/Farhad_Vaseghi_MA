@@ -39,7 +39,7 @@ lightweight model reliably say whether the lens shows dirt, water, and/or a scra
 | 4 | Model: frozen backbone + distortion head + loss | `src/models/backbone.py`, `distortion_head.py`, `losses.py` |
 | 5 | Training script | `scripts/train_stage_a.py` |
 | 6 | FAU HPC (TinyGPU) setup/submission | `scripts/hpc/`, `docs/hpc_stage_a.md` |
-| 7 | Evaluation | `scripts/evaluate_stage_a.py` |
+| 7 | Evaluation (precision/recall/F1/AP/ROC-AUC, scalar or per-class tuned thresholds) | `scripts/evaluate_stage_a.py`, `src/eval/metrics.py`, `src/eval/thresholds.py` |
 | 8 | Qualitative clean-vs-distorted examples | `scripts/visualize_stage_a_class_examples.py` |
 | 9 | Test coverage audit | `tests/` (51 tests) |
 
@@ -90,6 +90,19 @@ lightweight model reliably say whether the lens shows dirt, water, and/or a scra
   split's own class frequencies (came out to `[3.0, 3.0, 3.0]`, matching the exact 25%
   positive rate per class).
 - Only the head's parameters are ever passed to the optimizer.
+
+### Decision threshold (per class, no retraining)
+
+The model outputs a probability per class; a **decision threshold** is the cutoff above which
+that probability counts as "yes, this image has this distortion" — precision/recall/F1 depend
+on where that cutoff sits, while AP and ROC-AUC don't (they rank probabilities, not compare
+them against a cutoff). Rather than one shared threshold (0.5) for all three classes, **each
+class gets its own**: swept on the **val** split (never test, which is only evaluated once the
+threshold is fixed) for the highest-F1 cutoff, then applied to **test**. Implemented in
+`src/eval/thresholds.py::tune_per_class_thresholds`, exposed as `evaluate_stage_a.py
+--tune-thresholds` (added Session 19+, shared with Stage B's evaluator). The actual tuned
+values are in the `threshold` column of §4's results table below, alongside the plain
+0.5-threshold row for comparison.
 
 ### Training
 
