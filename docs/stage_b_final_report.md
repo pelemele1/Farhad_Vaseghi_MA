@@ -2,15 +2,17 @@
 
 **Status:** loss function decided (**focal loss, α=0.75, γ=2.0**, §4), then the scratch tile
 ground-truth threshold was found to be discarding half of all real scratch signal and fixed by a
-dataset rebuild (§4 "Post-decision follow-ups", option 3) — **the current canonical result is
-focal α=0.75 trained on the rebuilt dataset** (`data/processed/stage_b_scratch15`,
-`checkpoints/stage_b_scratch15/stage_b_head.pt`). The original dataset and checkpoint
-(`data/processed/stage_b`, `checkpoints/stage_b_alpha75/stage_b_head.pt`) are kept on disk for
-comparison, not deleted. Session 19: a localized sum-of-squared-differences loss was also tried
-(supervisor request) and compared against focal α=0.75 on the same dataset — essentially a wash
-on F1/AP, but consistently worse on ROC-AUC, so focal α=0.75 remains canonical (§4 "Post-decision
-follow-ups", option 4). Multi-distortion (combined) variants are next (§4, option 5, in progress).
-**Date:** 2026-09-17.
+dataset rebuild (§4 "Post-decision follow-ups", option 3). Session 19: a localized
+sum-of-squared-differences loss was also tried (supervisor request) and compared against focal
+α=0.75 on the same dataset — essentially a wash on F1/AP, but consistently worse on ROC-AUC, so
+focal α=0.75 stayed canonical (option 4). Then the dataset was rebuilt again to include
+multi-distortion (combo) variants and the model retrained — **the current canonical result is
+focal α=0.75 trained on the combo dataset** (`data/processed/stage_b_scratch15`,
+`checkpoints/stage_b_combo/stage_b_head.pt`, option 5). Every earlier checkpoint
+(`stage_b_alpha75`, `stage_b_scratch15`, `stage_b_ssd`) is kept on disk for comparison, not
+deleted — only the *dataset* was replaced in place (irreversible, `data/` is gitignored); those
+older checkpoints can no longer be re-evaluated against their original datasets locally, but
+their numbers are recorded in this report from before the rebuild. **Date:** 2026-09-18.
 
 This is a standalone summary of Part 2, Stage B — distinct from
 [`development_log.md`](development_log.md)'s chronological session-by-session record. See
@@ -56,6 +58,13 @@ at 3%, later found to be too strict (§4, option 3) and lowered to **1.5%** in t
 dataset. Stored as one consolidated `tile_labels.npy`, `(N, 3, 16, 16)` uint8, row-aligned with
 `metadata.csv`.
 
+**Session 19+ (option 5):** the dataset now also includes multi-distortion (combo) variants —
+8 kinds per source image (clean, 3 single effects, 3 pairwise combos, the full triple) instead
+of the original 4 — **8000 images total**, 50% positive rate per class (was 25%). A combo
+variant's tile grid can have more than one class positive in the *same* tile wherever the
+combined effects' masks overlap; `rasterize_tile_label` is called independently per class, so
+this needed no code changes (see `docs/development_log.md` Session 19).
+
 ### Model
 
 `StageBDistortionHead`: a single `Conv2d(in_channels, 3, kernel_size=1)` directly on the frozen
@@ -89,6 +98,63 @@ the same curve, without touching the model.
 ---
 
 ## 4. Results
+
+### Canonical result (Session 19+): combo dataset retrain
+
+Focal α=0.75, γ=2.0 (the loss decided below, confirmed the winner again over SSD earlier this
+session) retrained on the combo-inclusive dataset (option 5 in "Post-decision follow-ups"
+below) — HPC job `1815701`, evaluated as job `1815738`:
+
+![Stage B training curve, combo dataset (job 1815701)](images/stage_b_training_curve_combo.jpg)
+
+Train loss: 0.061 → 0.026 (SSD-loss-shaped numbers aside, this is the BCE-style focal loss
+curve), plateaued by ~epoch 20, smooth and monotonic.
+
+![Stage B per-tile metrics, combo dataset](images/stage_b_test_metrics_combo.jpg)
+
+**Per-class metrics (held-out test split, 800 images, 204800 tiles)**
+
+| class | threshold | precision | recall | F1 | AP | ROC-AUC | support | vs. pre-combo F1 (tuned) |
+|---|---|---|---|---|---|---|---|---|
+| dirt | 0.5 (default) | 0.713 | 0.795 | 0.752 | 0.849 | 0.926 | 53452 | |
+| water | 0.5 (default) | 0.692 | 0.933 | 0.794 | 0.880 | 0.935 | 71210 | |
+| scratch | 0.5 (default) | 0.612 | 0.640 | 0.626 | 0.634 | 0.956 | 6362 | |
+| dirt | 0.523 (tuned) | 0.749 | 0.762 | 0.755 | 0.849 | 0.926 | 53452 | 0.803→0.755 (−0.048) |
+| water | 0.569 (tuned) | 0.760 | 0.878 | 0.815 | 0.880 | 0.935 | 71210 | 0.826→0.815 (−0.011) |
+| scratch | 0.539 (tuned) | 0.659 | 0.598 | 0.627 | 0.634 | 0.956 | 6362 | **0.462→0.627 (+0.165)** |
+
+**A genuinely mixed result, not a clean win or loss.** Scratch improved dramatically — AP
+nearly doubled (0.409→0.634), the biggest single jump seen in this whole project's Stage B
+work — while dirt/water both degraded somewhat (F1 down 0.01-0.05, AP down ~0.04, ROC-AUC down
+~0.03-0.05). The likely mechanism for both halves of this is the same thing: combo variants
+create genuine spatial tile-level ambiguity (a tile can now legitimately need to fire for two
+classes at once, wherever two effects' masks overlap), which is a harder task for dirt/water
+than the mostly-disjoint tiles they had before — but it also means scratch tiles now co-occur
+with far more of the training data (support jumped from 1511 to 6362 tiles, since scratch now
+appears in every combo variant that includes it, not just the single-effect one), giving the
+historically weakest class dramatically more usable positive-tile signal. Net effect on the
+model's *practical* usefulness: probably positive overall, since scratch was the clear weak
+point every prior session flagged, and the dirt/water cost is real but modest against real
+support of >50k tiles each.
+
+![Stage B sample predictions, combo dataset](images/stage_b_sample_predictions_combo.jpg)
+
+**Direct visual proof of the combo capability:**
+
+![Stage B combo sample: two classes active on one image](images/stage_b_combo_sample_combo.jpg)
+
+A real test-split image where two distortions are genuinely both present, each class's own
+ground-truth tile grid (green) and predicted probability (red) shown in its own panel — this
+is the concrete version of architecture.md's "dirt in the top right" example extended to
+"dirt in the top right *and* water in the bottom left, same image."
+
+`checkpoints/stage_b_combo/stage_b_head.pt` is now the canonical Stage B checkpoint.
+`checkpoints/stage_b_scratch15/` (pre-combo dataset) is kept for comparison, but its original
+dataset (`data/processed/stage_b_scratch15` before the rebuild) no longer exists locally — the
+numbers above and in "Post-decision follow-ups" below are recorded from before the rebuild.
+
+<details>
+<summary>Pre-combo result (single-distortion-only dataset, superseded — kept for reference; see "Post-decision follow-ups" for how this was reached)</summary>
 
 ### Training curves
 
@@ -161,7 +227,9 @@ measurably better than every earlier attempt (§4, option 3 above).
 
 </details>
 
-### Post-decision follow-ups (Session 18, tried in order)
+</details>
+
+### Post-decision follow-ups (Session 18-19, tried in order)
 
 Three further improvement attempts against the α=0.75 winner:
 
@@ -226,6 +294,15 @@ Three further improvement attempts against the α=0.75 winner:
 
 </details>
 
+5. **Multi-distortion (combo) dataset rebuild** (Session 19, supervisor item 5) — see "Canonical
+   result" above for the full writeup and images. Rebuilt `data/processed/stage_b_scratch15` in
+   place (`--include-combos`, 8 kinds instead of 4, 8000 images, carries forward the 1.5% scratch
+   threshold) and retrained the winning focal α=0.75 config on it. **Mixed result, adopted as
+   canonical anyway**: scratch AP nearly doubled (0.409→0.634) while dirt/water each lost a few
+   points of F1/AP/ROC-AUC — judged a net win given scratch was the clear weak point in every
+   prior session, and the dirt/water cost is modest against real per-class support over 50k
+   tiles. `checkpoints/stage_b_combo/stage_b_head.pt` is now canonical.
+
 ### Sample tile-grid predictions
 
 Ground-truth tile grid (green) overlaid with predicted per-tile probability (red) on real
@@ -238,14 +315,18 @@ test-split images:
 
 ## 5. Known limitations
 
-- **Scratch localization is still the weakest class**, even after the threshold rebuild. Current
-  best F1 is 0.45 (canonical scratch15 model) — usable as a coarse signal, not a reliable
-  per-tile localizer.
+- **Scratch localization improved a lot but dirt/water paid a small price.** Current: scratch
+  F1 0.627/AP 0.634 (up from 0.462/0.409), dirt F1 0.755 (down from 0.803), water F1 0.815 (down
+  from 0.826) — all at tuned per-class thresholds. Still a coarse signal, not a pixel-precise
+  localizer for any class.
+- **Combos now included, but untested against real multi-distortion photos** — same caveat as
+  [`stage_a_final_report.md`](stage_a_final_report.md) §5: synthetic combos are covered now,
+  real photos with two distortions at once are not.
 - **Backbone frozen, purely synthetic data, small pilot dataset** — same caveats as
   [`stage_a_final_report.md`](stage_a_final_report.md) §5, unchanged here since Stage B reuses
   the same backbone and dataset-generation pipeline.
-- **Final configuration:** focal loss, α=0.75, γ=2.0, trained on the scratch-threshold-1.5%
-  dataset (`checkpoints/stage_b_scratch15/stage_b_head.pt`,
+- **Final configuration:** focal loss, α=0.75, γ=2.0, trained on the combo-inclusive,
+  scratch-threshold-1.5% dataset (`checkpoints/stage_b_combo/stage_b_head.pt`,
   `data/processed/stage_b_scratch15`).
 
 ---
@@ -253,28 +334,34 @@ test-split images:
 ## 6. Reproducing this report
 
 ```bash
-# canonical (scratch15 dataset, focal alpha=0.75)
+# canonical (combo dataset, focal alpha=0.75)
 python scripts/build_stage_b_dataset.py --source data/raw/mio_tcd/images \
-    --out data/processed/stage_b_scratch15 --scratch-threshold 0.015
-python scripts/evaluate_stage_b.py --checkpoint checkpoints/stage_b_scratch15/stage_b_head.pt \
-    --data data/processed/stage_b_scratch15 --split test
-python scripts/visualize_stage_b_results.py --checkpoint checkpoints/stage_b_scratch15/stage_b_head.pt \
-    --data data/processed/stage_b_scratch15 --split test --log-file stage_b_s15_1802973.out \
-    --tag _scratch15 --out-dir docs/images
+    --out data/processed/stage_b_scratch15 --variants 8 --include-combos --scratch-threshold 0.015
+python scripts/evaluate_stage_b.py --checkpoint checkpoints/stage_b_combo/stage_b_head.pt \
+    --data data/processed/stage_b_scratch15 --split test --tune-thresholds
+python scripts/visualize_stage_b_results.py --checkpoint checkpoints/stage_b_combo/stage_b_head.pt \
+    --data data/processed/stage_b_scratch15 --split test --log-file stage_b_combo_1815701.out \
+    --tag _combo --out-dir docs/images
 
-# earlier loss-variant comparisons (original 3%-threshold dataset, kept for reference)
+# earlier loss/dataset comparisons (superseded, kept for reference -- their datasets no longer
+# exist locally since data/processed/stage_b_scratch15 was replaced in place by the rebuild above)
+python scripts/evaluate_stage_b.py --checkpoint checkpoints/stage_b_ssd/stage_b_head.pt \
+    --data data/processed/stage_b_scratch15 --split test   # pre-combo dataset originally
 python scripts/evaluate_stage_b.py --checkpoint checkpoints/stage_b_alpha75/stage_b_head.pt \
-    --data data/processed/stage_b --split test
-python scripts/evaluate_stage_b.py --checkpoint checkpoints/stage_b/stage_b_head_focal.pt \
     --data data/processed/stage_b --split test
 python scripts/threshold_sweep_stage_b.py --checkpoint checkpoints/stage_b/stage_b_head_focal.pt \
     --data data/processed/stage_b
 ```
 
-Both datasets (`data/processed/stage_b`, `data/processed/stage_b_scratch15`) and all checkpoints
-(`stage_b_head_bce_baseline.pt`, `stage_b_head_focal.pt`, `stage_b_alpha75/stage_b_head.pt`,
-`stage_b_scratch15/stage_b_head.pt`) exist locally and on the FAU HPC `$WORK`; the raw job logs
+All checkpoints (`stage_b_head_bce_baseline.pt`, `stage_b_head_focal.pt`,
+`stage_b_alpha75/stage_b_head.pt`, `stage_b_scratch15/stage_b_head.pt`,
+`stage_b_ssd/stage_b_head.pt`, `stage_b_combo/stage_b_head.pt`) and the raw job logs
 (`stage_b_1799124.out`, `stage_b_1799134_focal.out`, `stage_b_s15_1802973.out`,
-`eval_s15_1802985.out`) are kept alongside them. The pre-rebuild α=0.75 checkpoint additionally
-exists on Google Drive (see `development_log.md` Session 18) since it was originally trained
-there.
+`eval_s15_1802985.out`, `stage_b_ssd_1815542.out`, `eval_ssd_1815558.out`,
+`stage_b_combo_1815701.out`, `eval_b_combo_1815738.out`) exist locally and (job logs and
+checkpoints, not the now-replaced dataset) on the FAU HPC `$WORK`. `data/processed/stage_b`
+(the original 3%-threshold, single-distortion dataset) is the only dataset still unchanged from
+Session 16 — every other Stage B dataset generation since has written to
+`data/processed/stage_b_scratch15`, rebuilt twice in place (scratch threshold, then combos). The
+pre-rebuild α=0.75 checkpoint additionally exists on Google Drive (see `development_log.md`
+Session 18) since it was originally trained there.

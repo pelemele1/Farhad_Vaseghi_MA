@@ -1,0 +1,72 @@
+### Starting TaskPrologue of job 1815700 on tg082 at Fri Sep 18 03:07:51 AM CEST 2026
+Running on cores 8-9,24-25,40-41,56-57 with governor powersave
+Fri Sep 18 03:07:51 2026       
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 610.57.04              KMD Version: 610.57.04     CUDA UMD Version: 13.3     |
++-----------------------------------------+------------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  NVIDIA GeForce RTX 3080        On  |   00000000:B1:00.0 Off |                  N/A |
+| 30%   44C    P8             53W /  300W |       1MiB /  10240MiB |      0%      Default |
+|                                         |                        |                  N/A |
++-----------------------------------------+------------------------+----------------------+
+
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
+|        ID   ID                                                               Usage      |
+|=========================================================================================|
+|  No running processes found                                                             |
++-----------------------------------------------------------------------------------------+
+### Finished TaskPrologue
+
+/home/woody/iwnt/iwnt196h/software/private/conda/envs/stage_a/lib/python3.11/site-packages/pythonperlin/__init__.py:4: UserWarning: pkg_resources is deprecated as an API. See https://setuptools.pypa.io/en/latest/pkg_resources.html. The pkg_resources package is slated for removal as early as 2025-11-30. Refrain from using this package or pin to Setuptools<81.
+  from pkg_resources import get_distribution
+train=6400 val=800 pos_weight=[1.0, 1.0, 1.0]
+epoch 1/20  train_loss=0.3912  val_loss=0.2810  (90.7s)
+epoch 2/20  train_loss=0.2540  val_loss=0.2290  (69.4s)
+epoch 3/20  train_loss=0.2165  val_loss=0.2057  (65.9s)
+epoch 4/20  train_loss=0.1979  val_loss=0.2004  (66.1s)
+epoch 5/20  train_loss=0.1855  val_loss=0.1976  (65.7s)
+epoch 6/20  train_loss=0.1784  val_loss=0.1983  (66.1s)
+epoch 7/20  train_loss=0.1700  val_loss=0.1747  (65.7s)
+epoch 8/20  train_loss=0.1653  val_loss=0.1699  (65.5s)
+epoch 9/20  train_loss=0.1598  val_loss=0.1676  (65.4s)
+epoch 10/20  train_loss=0.1555  val_loss=0.1763  (65.3s)
+epoch 11/20  train_loss=0.1504  val_loss=0.1562  (65.8s)
+epoch 12/20  train_loss=0.1470  val_loss=0.1557  (65.9s)
+epoch 13/20  train_loss=0.1443  val_loss=0.1565  (66.4s)
+epoch 14/20  train_loss=0.1425  val_loss=0.1640  (65.8s)
+epoch 15/20  train_loss=0.1375  val_loss=0.1445  (65.6s)
+epoch 16/20  train_loss=0.1365  val_loss=0.1548  (66.1s)
+epoch 17/20  train_loss=0.1340  val_loss=0.1538  (66.5s)
+epoch 18/20  train_loss=0.1309  val_loss=0.1446  (66.7s)
+epoch 19/20  train_loss=0.1303  val_loss=0.1579  (66.0s)
+epoch 20/20  train_loss=0.1280  val_loss=0.1529  (66.1s)
+wrote checkpoints/stage_a_combo/stage_a_head.pt
+=== JOB_STATISTICS ===
+=== current date     : Fri Sep 18 03:30:45 AM CEST 2026
+= Job-ID             : 1815700 on tinygpu
+= Job-Name           : stage_a_combo
+= Job-Command        : /home/woody/iwnt/iwnt196h/Farhad_Vaseghi_MA/scripts/hpc/train_stage_a_combo.slurm
+= Initial workdir    : /home/woody/iwnt/iwnt196h/Farhad_Vaseghi_MA
+= Queue/Partition    : rtx3080
+= Slurm account      : iwnt with QOS=normal
+= Requested resources:  for 06:00:00
+= Elapsed runtime    : 00:22:57
+= Total RAM usage    : 2.3 GiB of requested  GiB (%)   
+= Node list          : tg082
+= Subm/Elig/Start/End: 2026-09-18T03:02:08 / 2026-09-18T03:02:08 / 2026-09-18T03:07:48 / 2026-09-18T03:30:45
+======================
+=== Quota infos ======
+    Path                 Used     SoftQ    HardQ    Gracetime  Filec    FileQ    FiHaQ    FileGrace    
+    /home/woody             8.6G  1000.0G  1500.0G        N/A      78K   5,000K   7,500K        N/A    
+    /home/hpc               6.0G   104.9G   209.7G        N/A   1,449      500K   1,000K        N/A    
+    /home/vault             0.0K  1048.6G  2097.2G        N/A       1      200K     400K        N/A    
+======================
+=== GPU utilization ==
+gpu_name, gpu_bus_id, pid, gpu_utilization [%], mem_utilization [%], max_memory_usage [MiB], time [ms]
+NVIDIA GeForce RTX 3080, 00000000:B1:00.0, 1249378, 14 %, 2 %, 8360 MiB, 2421448 ms
+NVIDIA GeForce RTX 3080, 00000000:B1:00.0, 1252441, 39 %, 27 %, 2862 MiB, 1361472 ms

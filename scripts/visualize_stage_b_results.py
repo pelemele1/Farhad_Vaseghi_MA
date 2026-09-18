@@ -115,6 +115,61 @@ def plot_tile_grid_overlay(dataset, indices, probs, labels, class_names, thresho
     plt.close(fig)
 
 
+def find_combo_sample_index(rows, class_names):
+    """First row (in dataset order) with 2+ active classes at once, or None
+    if the dataset has no combo variants (e.g. the pre-Session-19 datasets).
+    Returns (idx, active_class_names)."""
+    for idx, row in enumerate(rows):
+        active = [c for c in class_names if int(row[c])]
+        if len(active) >= 2:
+            return idx, active
+    return None, []
+
+
+def plot_combo_sample(dataset, idx, active_classes, probs, labels, class_names, threshold, out_path):
+    """One subplot per active class, each in the same GT-green/pred-red
+    style as plot_tile_grid_overlay -- direct visual proof that a combo
+    variant's tile grid genuinely has more than one class positive on the
+    same image (Session 19+, supervisor item 5), which a single-class
+    overlay (plot_tile_grid_overlay picks only the first active class)
+    doesn't show."""
+    image_tensor, _ = dataset[idx]
+    image = (image_tensor.permute(1, 2, 0).numpy() * 255).astype(np.uint8)
+    H, W = image.shape[:2]
+
+    n = len(active_classes)
+    fig, axes = plt.subplots(1, n, figsize=(4.6 * n, 5.0))
+    axes = np.atleast_1d(axes).flatten()
+
+    for ax, cls in zip(axes, active_classes):
+        class_idx = class_names.index(cls)
+        gt_grid = labels[idx, class_idx].astype(np.float32)
+        pred_grid = probs[idx, class_idx].astype(np.float32)
+        gt_up = cv.resize(gt_grid, (W, H), interpolation=cv.INTER_NEAREST)
+        pred_up = cv.resize(pred_grid, (W, H), interpolation=cv.INTER_NEAREST)
+
+        overlay = np.zeros((H, W, 4), dtype=np.float32)
+        overlay[..., 1] = gt_up
+        overlay[..., 0] = pred_up
+        overlay[..., 3] = np.clip(np.maximum(gt_up, pred_up) * 0.55, 0, 0.55)
+
+        ax.imshow(image)
+        ax.imshow(overlay)
+        ax.axis("off")
+
+        pred_active = bool(pred_grid.max() >= threshold)
+        ax.set_title(
+            f"{cls} (GT green / pred red)\nmax pred prob={pred_grid.max():.2f}"
+            f"{'  (missed)' if not pred_active else ''}",
+            fontsize=9, color=("seagreen" if pred_active else "crimson"),
+        )
+
+    fig.suptitle(f"Combo variant: {' + '.join(active_classes)} all active on the same image", fontsize=11)
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=110)
+    plt.close(fig)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--checkpoint", default="checkpoints/stage_b/stage_b_head.pt")
@@ -157,6 +212,12 @@ def main():
     grid_path = out_dir / f"stage_b_sample_predictions{args.tag}.jpg"
     plot_tile_grid_overlay(dataset, sample_indices, probs, labels, class_names, args.threshold, grid_path)
     print(f"wrote {grid_path}")
+
+    combo_idx, combo_classes = find_combo_sample_index(dataset.rows, class_names)
+    if combo_idx is not None:
+        combo_path = out_dir / f"stage_b_combo_sample{args.tag}.jpg"
+        plot_combo_sample(dataset, combo_idx, combo_classes, probs, labels, class_names, args.threshold, combo_path)
+        print(f"wrote {combo_path}")
 
     if args.log_file:
         records = parse_training_log(Path(args.log_file).read_text())

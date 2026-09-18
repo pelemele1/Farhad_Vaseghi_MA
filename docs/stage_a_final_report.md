@@ -1,6 +1,10 @@
 # Stage A Final Report — Image-Level Distortion Classification
 
-**Status:** complete. **Date:** 2026-08-24.
+**Status:** complete, then extended (Session 19+, supervisor item 5): the dataset was rebuilt to
+also include multi-distortion (combo) variants and the model retrained on it — **the current
+canonical result is the combo-dataset retrain** (`data/processed/stage_a`,
+`checkpoints/stage_a_combo/stage_a_head.pt`). The original single-distortion-only result is kept
+below as a historical reference (§4). **Date:** 2026-09-18.
 
 This is a standalone summary of Part 2, Stage A — distinct from
 [`development_log.md`](development_log.md)'s chronological session-by-session record. See
@@ -31,7 +35,7 @@ lightweight model reliably say whether the lens shows dirt, water, and/or a scra
 | 0 | Scratch-effect method decision | `src/soiling/effects.py` |
 | 1 | MIO-TCD pilot subset (1000 images) | `src/data/mio_tcd.py`, `scripts/sample_mio_tcd.py` |
 | 2 | Distortion synthesis (dirt/water vendored, scratch custom) | `src/soiling/effects.py`, `third_party/physical_lens_soiling/` |
-| 3 | Stage A dataset builder (balanced, single-distortion variants) | `src/soiling/dataset_builder.py`, `scripts/build_stage_a_dataset.py` |
+| 3 | Stage A dataset builder (balanced variants, optionally including multi-distortion combos) | `src/soiling/dataset_builder.py`, `scripts/build_stage_a_dataset.py` |
 | 4 | Model: frozen backbone + distortion head + loss | `src/models/backbone.py`, `distortion_head.py`, `losses.py` |
 | 5 | Training script | `scripts/train_stage_a.py` |
 | 6 | FAU HPC (TinyGPU) setup/submission | `scripts/hpc/`, `docs/hpc_stage_a.md` |
@@ -62,13 +66,15 @@ lightweight model reliably say whether the lens shows dirt, water, and/or a scra
 ### Dataset
 
 - 1000 MIO-TCD traffic-camera frames (reproducibly sampled from the official
-  `MIO-TCD-Localization` archive, seed=0), each producing **exactly 4 variants**: one clean
-  + one each of dirt/water/scratch — **never combined on the same image** (an explicit
-  design requirement). This guarantees an exact 25%/25%/25%/25% class balance by
-  construction, rather than leaving it to chance.
-- **4000 images total**, split **3200 / 400 / 400** (train/val/test) by *source photo*, not
-  by variant — so no two variants of the same underlying scene can end up on opposite sides
-  of the split. Verified directly: zero source-photo overlap between any two splits.
+  `MIO-TCD-Localization` archive, seed=0). **Originally** (Sessions 1-18): exactly 4 variants
+  per source photo — one clean + one each of dirt/water/scratch, never combined on the same
+  image (an explicit design requirement at the time) — 4000 images, exact 25% positive rate
+  per class.
+- **Session 19+ (current, supervisor item 5):** rebuilt with `--include-combos` — 8 variants
+  per source photo (clean, 3 single effects, the 3 pairwise combos, and the full triple) —
+  **8000 images total**, split **6400 / 800 / 800**, exact **50%** positive rate per class
+  (each class appears in exactly 4 of the 8 kinds). Same source photos, same
+  source-photo-level split (no leakage) as before.
 
 ### Model
 
@@ -101,6 +107,48 @@ lightweight model reliably say whether the lens shows dirt, water, and/or a scra
 ---
 
 ## 4. Results
+
+### Canonical result (Session 19+): combo dataset retrain
+
+![Stage A train/val loss, combo dataset (job 1815700)](images/stage_a_training_curve_combo.jpg)
+
+Train loss: 0.391 → 0.128, smooth and monotonic. Val loss: 0.281 → 0.153, noisy but no
+runaway overfitting — same qualitative shape as the original run, just over 20 epochs on 8000
+images instead of 4000.
+
+**Per-class metrics (held-out test split, 800 images, 400 positive per class)**
+
+![Stage A per-class precision/recall/F1/AP/ROC-AUC, combo dataset](images/stage_a_test_metrics_combo.jpg)
+
+| class | threshold | precision | recall | F1 | AP | ROC-AUC | support |
+|---|---|---|---|---|---|---|---|
+| dirt | 0.5 (default) | 0.928 | 0.968 | 0.947 | 0.990 | 0.990 | 400 |
+| water | 0.5 (default) | 0.975 | 0.965 | 0.970 | 0.993 | 0.991 | 400 |
+| scratch | 0.5 (default) | 0.985 | 0.848 | 0.911 | 0.978 | 0.973 | 400 |
+| dirt | 0.438 (tuned) | 0.909 | 0.970 | 0.938 | 0.990 | 0.990 | 400 |
+| water | 0.814 (tuned) | 0.995 | 0.945 | 0.969 | 0.993 | 0.991 | 400 |
+| scratch | 0.220 (tuned) | 0.929 | 0.912 | 0.921 | 0.978 | 0.973 | 400 |
+
+**Noticeably stronger across the board than the original single-distortion result** (§4
+"Pre-combo result" below) — scratch F1 rose from 0.784 to 0.911-0.921, dirt/water both landed
+above 0.94. The most likely driver isn't the combos themselves teaching anything new about
+*localizing* a distortion (Stage A has no spatial output to begin with) — it's that each class's
+positive rate doubled (25%→50%), giving the small head roughly twice the positive training
+signal per class to learn from. This is a real, useful result either way (more usable at
+default threshold, AUC-ROC in the high 0.97-0.99 range for every class), but the *why* is worth
+being explicit about in case it comes up.
+
+**Predictions on real test images**
+
+![Real Stage A predictions, combo dataset](images/stage_a_sample_predictions_combo.jpg)
+
+Sampled by "first active class" per row (a combo row like dirt+water is bucketed under
+"dirt") — see `scripts/visualize_stage_a_results.py::select_diverse_sample_indices`; the
+combo-specific visual proof (multiple classes lighting up on one image) lives in the Stage B
+report instead, since Stage A has no spatial grid to show it on.
+
+<details>
+<summary>Pre-combo result (original single-distortion-only dataset, superseded — kept for reference)</summary>
 
 ### Training curve (real TinyGPU run, job 1791674)
 
@@ -138,8 +186,8 @@ scratch), each captioned with its ground-truth label, the model's prediction at 
 ![Real Stage A predictions on 12 held-out test images, 3 per class](images/stage_a_sample_predictions.jpg)
 
 All 12 are classified correctly, most with high-confidence probabilities near 0.0 or 1.0.
-(Regenerate with `python scripts/visualize_stage_a_results.py` — a different `--seed` picks
-a different, equally representative sample.)
+
+</details>
 
 ### Qualitative examples: clean vs. distorted, per class
 
@@ -155,11 +203,12 @@ orange = false alarm, red = miss.
 
 All three pairs happen to reuse the same clean source photo (deterministic seed=0 picks the
 first source in the test split that has variants for all three classes) — this is incidental,
-not a limitation of the method. Regenerate with a different `--seed` for different examples:
+not a limitation of the method. Regenerated against the current combo checkpoint/dataset
+(Session 19+); regenerate with a different `--seed` for different examples:
 
 ```bash
 python scripts/visualize_stage_a_class_examples.py \
-    --checkpoint checkpoints/stage_a/stage_a_head.pt \
+    --checkpoint checkpoints/stage_a_combo/stage_a_head.pt \
     --data data/processed/stage_a --split test --device cpu \
     --out-dir docs/images
 ```
@@ -171,32 +220,40 @@ python scripts/visualize_stage_a_class_examples.py \
 - **The backbone was never fine-tuned.** All learning happened in a ~33k-parameter head on
   top of frozen COCO features — the strong scores say those generic features already
   separate these distortion types well, not that the backbone understands lens soiling.
-- **Trained only on single-distortion images.** No training example ever combined two
-  distortion types on one image, by design. The model's sigmoid output *can* express
-  multiple simultaneous positives, but that combination was never demonstrated during
-  training — a real image with both dirt and water at once is untested territory.
+- **Combos now included, but untested against real multi-distortion photos.** As of Session
+  19+, training does include multi-distortion (combo) variants (dirt+water, dirt+scratch,
+  water+scratch, all three) — the "untested territory" caveat from earlier sessions is
+  resolved for *synthetic* combos. What's still untested is how this generalizes to a real
+  photo with two distortions at once, since all training data remains synthetic (next point).
 - **Purely synthetic distortions.** `physical_lens_soiling`'s renders (and this project's
   own scratch generator) are a physics-inspired approximation, not real camera captures.
   There's an unmeasured domain gap between this and an actual soiled lens.
-- **Small pilot dataset.** 1000 source photos, 4000 total training images — enough to
-  validate the pipeline, well short of the scale a production model would use.
+- **Small pilot dataset.** 1000 source photos, 8000 total training images (Session 19+) —
+  enough to validate the pipeline, well short of the scale a production model would use.
 
 ---
 
 ## 6. Reproducing this report
 
 ```bash
-python scripts/evaluate_stage_a.py --checkpoint checkpoints/stage_a/stage_a_head.pt \
-    --data data/processed/stage_a --split test
-python scripts/visualize_stage_a_results.py --checkpoint checkpoints/stage_a/stage_a_head.pt \
-    --data data/processed/stage_a --split test --log-file stage_a_1791674.out
-python scripts/visualize_stage_a_class_examples.py --checkpoint checkpoints/stage_a/stage_a_head.pt \
+# canonical (combo dataset)
+python scripts/build_stage_a_dataset.py --source data/raw/mio_tcd/images \
+    --out data/processed/stage_a --variants 8 --include-combos
+python scripts/evaluate_stage_a.py --checkpoint checkpoints/stage_a_combo/stage_a_head.pt \
+    --data data/processed/stage_a --split test --tune-thresholds
+python scripts/visualize_stage_a_results.py --checkpoint checkpoints/stage_a_combo/stage_a_head.pt \
+    --data data/processed/stage_a --split test --log-file stage_a_combo_1815700.out --tag _combo
+python scripts/visualize_stage_a_class_examples.py --checkpoint checkpoints/stage_a_combo/stage_a_head.pt \
     --data data/processed/stage_a --split test --device cpu --out-dir docs/images
+
+# pre-combo result (original single-distortion-only dataset, superseded, kept for reference)
+python scripts/evaluate_stage_a.py --checkpoint checkpoints/stage_a/stage_a_head.pt \
+    --data data/processed/stage_a --split test   # NOTE: data/processed/stage_a was replaced
+    # in place by the combo rebuild -- this checkpoint can no longer be re-evaluated against
+    # its original dataset locally; the numbers above are from before the rebuild.
 ```
 
-`stage_a_1791674.out` is the raw stdout of the actual training job (`squeue.tinygpu` job ID
-`1791674`), still sitting in `$WORK/Farhad_Vaseghi_MA/` on the cluster; `--log-file` is
-optional and only needed to regenerate the training-curve plot.
-
-Both scripts, the trained checkpoint, and the full dataset already exist locally and on the
-FAU HPC `$WORK` — see `docs/hpc_stage_a.md` for cluster paths.
+`stage_a_1791674.out` (original run) and `stage_a_combo_1815700.out` (combo-dataset run) are
+the raw stdout of the actual TinyGPU training jobs; `eval_a_combo_1815727.out` is the combo
+checkpoint's evaluation job output. All exist locally and (job logs only, not the now-replaced
+dataset) on the FAU HPC `$WORK` — see `docs/hpc_stage_a.md` for cluster paths.

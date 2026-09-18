@@ -1,6 +1,6 @@
 import numpy as np
 
-from scripts.visualize_stage_b_results import class_index_for_sample
+from scripts.visualize_stage_b_results import class_index_for_sample, find_combo_sample_index
 
 
 def test_class_index_for_sample_active_class():
@@ -11,8 +11,10 @@ def test_class_index_for_sample_active_class():
 
 
 def test_class_index_for_sample_picks_first_active_when_multiple_flagged():
-    # Shouldn't happen for real Stage B data (never-combine-distortions
-    # rule), but the function should still behave predictably if it did.
+    # Combo variants (Session 19+) do have multiple classes flagged at once --
+    # class_index_for_sample only ever shows one (the overlay is single-class);
+    # find_combo_sample_index (below) is what finds a genuine combo row to
+    # show both classes for.
     row = {"dirt": "0", "water": "1", "scratch": "1"}
     kind, idx = class_index_for_sample(row, ("dirt", "water", "scratch"))
     assert kind == "water"
@@ -34,3 +36,26 @@ def test_class_index_for_sample_clean_without_probs_defaults_to_zero():
     kind, idx = class_index_for_sample(row, ("dirt", "water", "scratch"))
     assert kind == "clean"
     assert idx == 0
+
+
+def test_find_combo_sample_index_finds_first_multi_active_row():
+    rows = [
+        {"dirt": "1", "water": "0", "scratch": "0"},
+        {"dirt": "0", "water": "0", "scratch": "0"},
+        {"dirt": "1", "water": "1", "scratch": "0"},  # first combo row
+        {"dirt": "1", "water": "1", "scratch": "1"},
+    ]
+    idx, active = find_combo_sample_index(rows, ("dirt", "water", "scratch"))
+    assert idx == 2
+    assert active == ["dirt", "water"]
+
+
+def test_find_combo_sample_index_returns_none_when_no_combos_present():
+    rows = [
+        {"dirt": "1", "water": "0", "scratch": "0"},
+        {"dirt": "0", "water": "0", "scratch": "0"},
+        {"dirt": "0", "water": "1", "scratch": "0"},
+    ]
+    idx, active = find_combo_sample_index(rows, ("dirt", "water", "scratch"))
+    assert idx is None
+    assert active == []

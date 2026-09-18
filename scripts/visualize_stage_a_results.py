@@ -164,6 +164,9 @@ def main():
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--out-dir", default="docs/images")
     parser.add_argument("--log-file", default=None, help="Saved training stdout log (e.g. stage_a_<jobid>.out) -- if given, also plots the train/val loss curve")
+    parser.add_argument("--tag", default="", help="Suffix (e.g. '_combo') appended to every output filename, "
+                         "so multiple checkpoints/datasets don't overwrite each other's images "
+                         "(same convention as visualize_stage_b_results.py)")
     args = parser.parse_args()
 
     device = torch.device(args.device)
@@ -183,12 +186,12 @@ def main():
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    metrics_path = out_dir / "stage_a_test_metrics.jpg"
+    metrics_path = out_dir / f"stage_a_test_metrics{args.tag}.jpg"
     plot_metrics_bar_chart(metric_rows, metrics_path)
     print(f"wrote {metrics_path}")
 
     sample_indices = select_diverse_sample_indices(dataset.rows, class_names, per_kind=args.per_kind, seed=args.seed)
-    grid_path = out_dir / "stage_a_sample_predictions.jpg"
+    grid_path = out_dir / f"stage_a_sample_predictions{args.tag}.jpg"
     plot_prediction_grid(dataset, sample_indices, probs, labels, class_names, args.threshold, grid_path)
     print(f"wrote {grid_path}")
 
@@ -197,7 +200,7 @@ def main():
         if not records:
             print(f"warning: no 'epoch N/M train_loss=... val_loss=...' lines found in {args.log_file}")
         else:
-            curve_path = out_dir / "stage_a_training_curve.jpg"
+            curve_path = out_dir / f"stage_a_training_curve{args.tag}.jpg"
             plot_training_curve(records, curve_path)
             print(f"wrote {curve_path}")
 

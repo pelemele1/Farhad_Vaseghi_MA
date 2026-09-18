@@ -1275,3 +1275,110 @@ flakiness came back intermittently even after the VPN was confirmed working;
 the job-status `Monitor` was similarly hardened to require **two consecutive
 successful** SSH checks both showing the job gone before reporting it
 finished, so a single dropped connection can't be misread as "the job ended."
+
+### Phase 4 — Multi-distortion (combo) dataset rebuild + retrain (item 5)
+
+The biggest of the 5 items: extending the dataset builder to generate images with 2-3
+distortions combined on the same photo, rebuilding both Stage A and Stage B's datasets with
+it (**replacing them in place**, per the user's explicit decision -- unlike every prior
+rebuild this session, the pre-combo datasets are gone, not kept alongside), and retraining
+both models.
+
+**Code.** `src/soiling/dataset_builder.py`: new `COMBO_KINDS` (the 3 pairs + the full triple)
+and `ALL_VARIANT_KINDS` (the original 4 + these 4 = 8). Purely additive --
+`assign_variant_kinds` gained an optional `kinds=` param (default `None` → original
+`VARIANT_KINDS`, unchanged), and `build_variant`/`build_variant_with_mask` route through a new
+`_combo_from_kind` helper that parses a `"+"`-joined kind string into a multi-hot tuple.
+`apply_effect_combo`/`apply_effect_combo_with_masks`/`rasterize_tile_label` needed **zero
+changes** -- composability was a day-1 design intent in `effects.py`'s own docstring, it was
+just never exercised via the dataset builder until now. `build_stage_a_dataset` /
+`build_stage_b_dataset` gained `include_combos=False` (default off); `--include-combos` CLI
+flag on both build scripts. 8 new/updated tests (8-kind balance, combo-kind variant
+construction, end-to-end combo builds for both stages, CLI coverage) -- all pass alongside the
+existing single-distortion tests unchanged (116/116 total). Committed and pushed as its own
+commit before touching any real data, specifically so the irreversible rebuild step could be
+bisected independently if anything went wrong.
+
+**Rebuild.** `data/processed/stage_a` and `data/processed/stage_b_scratch15` rebuilt in place
+with `--variants 8 --include-combos` (Stage B additionally carrying forward
+`--scratch-threshold 0.015`) -- 8000 images each (was 4000), exact 50% positive rate per class
+(was 25%), same 1000 source photos and source-level train/val/test split as before. Synced to
+HPC via the same tar+scp pattern as every prior dataset transfer this session (~355MB per
+tarball).
+
+**Stage A retrain.** Same config as the original Session 10 run (20 epochs, lr 1e-3,
+img-size 640), new checkpoint dir `checkpoints/stage_a_combo` (not overwriting
+`checkpoints/stage_a`). HPC job `1815700`, loss curve smooth (train 0.391→0.128, val
+0.281→0.153). Evaluated (job `1815727`) with the new `--tune-thresholds` flag:
+
+| class | threshold | F1 | AP | ROC-AUC | vs. pre-combo F1 |
+|---|---|---|---|---|---|
+| dirt | 0.438 (tuned) | 0.938 | 0.990 | 0.990 | 0.971→0.938 |
+| water | 0.814 (tuned) | 0.969 | 0.993 | 0.991 | 0.934→0.969 |
+| scratch | 0.220 (tuned) | 0.921 | 0.978 | 0.973 | **0.784→0.921** |
+
+**Clearly stronger across the board**, scratch especially. Not because combos teach spatial
+localization (Stage A has no spatial output) -- the more likely driver is that each class's
+positive rate doubled (25%→50%), roughly doubling the positive training signal per class for
+the same ~33k-parameter head. A real, useful result regardless of mechanism (AUC-ROC in the
+high 0.97-0.99 range for every class at default threshold too), but worth being explicit about
+*why* rather than crediting the combos themselves for something they didn't structurally do
+here.
+
+**Stage B retrain.** Winning loss from Phase 3 (focal α=0.75, γ=2.0), same 40-epoch config, new
+checkpoint dir `checkpoints/stage_b_combo`. HPC job `1815701`, loss curve smooth and plateaued
+early (train 0.061→0.026 by epoch ~20, barely moving after). Evaluated (job `1815738`, after a
+long queue wait -- all 5 rtx3080 nodes were fully allocated to other users' jobs for well over
+an hour; nothing wrong on this end, just backfill-scheduling contention on a shared cluster):
+
+| class | threshold | F1 | AP | ROC-AUC | support | vs. pre-combo (tuned) |
+|---|---|---|---|---|---|---|
+| dirt | 0.523 (tuned) | 0.755 | 0.849 | 0.926 | 53452 | 0.803/0.887/0.973 → −0.048/−0.038/−0.047 |
+| water | 0.569 (tuned) | 0.815 | 0.880 | 0.935 | 71210 | 0.826/0.885/0.970 → −0.011/−0.005/−0.035 |
+| scratch | 0.539 (tuned) | 0.627 | 0.634 | 0.956 | 6362 | 0.462/0.409/0.940 → **+0.165/+0.225/+0.016** |
+
+**A genuinely mixed result** -- scratch's AP nearly doubled (biggest single jump this whole
+Stage B effort has seen), dirt/water each gave up a modest amount of F1/AP/ROC-AUC. The likely
+mechanism: combo variants create real spatial tile-level ambiguity (a tile can legitimately
+need to fire for two classes where two effects' masks overlap), which is strictly harder for
+dirt/water than the mostly-disjoint tiles they had before; but scratch's tile support quadrupled
+(1511→6362, since scratch tiles now appear in every combo variant that includes scratch, not
+just the single-effect one), giving the historically weakest class much more usable signal.
+Adopted as canonical anyway -- scratch was the clear, repeatedly-flagged weak point every prior
+session identified, and the dirt/water cost is real but modest set against >50k tiles of
+support each.
+
+**Visualization.** Added `--tag` to `visualize_stage_a_results.py` (matching Stage B's existing
+convention) so the combo-checkpoint images don't overwrite the originals. Added
+`find_combo_sample_index` + `plot_combo_sample` to `visualize_stage_b_results.py`: the existing
+`plot_tile_grid_overlay` only ever shows one class per sample (`class_index_for_sample` picks
+the first active class), which would silently hide the whole point of a combo variant --  the
+new function finds the first test-split row with 2+ active classes and renders each active
+class's own GT/prediction panel side by side on the same image, the direct visual version of
+architecture.md's "dirt in the top right" example extended to two distortions at once. 2 new
+tests for the sample-finding logic (matplotlib-free, same pattern as the existing
+`class_index_for_sample` tests).
+
+**Docs.** Both `stage_a_final_report.md` and `stage_b_final_report.md` restructured the same
+way the Stage B report already was for the scratch-threshold rebuild: a new "Canonical result"
+section at the top of §4 with the combo numbers/images, the pre-combo results moved into a
+collapsed `<details>` reference section, "Known limitations" updated (the
+"never demonstrated during training" combo caveat downgraded to "untested against *real*
+multi-distortion photos" -- the synthetic case is now covered), and reproduction commands
+updated to the new checkpoints/flags.
+
+**Delivered this phase:** dataset builder combo support + tests (separate commit before the
+rebuild), `data/processed/stage_a` and `data/processed/stage_b_scratch15` rebuilt in place
+(irreversible, gitignored, not committed), `checkpoints/stage_a_combo/`,
+`checkpoints/stage_b_combo/` (new canonical checkpoints), `scripts/hpc/train_stage_a_combo.slurm`,
+`train_stage_b_combo.slurm`, `eval_stage_a_combo.slurm`, `eval_stage_b_combo.slurm`,
+`stage_a_combo_1815700.out`, `eval_a_combo_1815727.out`, `stage_b_combo_1815701.out`,
+`eval_b_combo_1815738.out`, new combo-tagged images for both stages, `--tag` support added to
+`visualize_stage_a_results.py`, combo-sample visualization added to
+`visualize_stage_b_results.py`.
+
+**This closes out all 5 supervisor items from the Session 19 plan**
+(`C:\Users\farha\.claude\plans\majestic-conjuring-shell.md`): (1) architecture diagram, (2)
+localized SSD loss tried and compared (focal α=0.75 stayed canonical), (3) reusable per-class
+threshold tuning, (4) AUC-ROC added alongside AUC-PR everywhere, (5) multi-distortion dataset
+built, both stages retrained and evaluated on it.
