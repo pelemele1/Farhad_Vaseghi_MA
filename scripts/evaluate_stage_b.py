@@ -18,10 +18,11 @@ import torch
 from torch.utils.data import DataLoader
 
 from src.data.stage_b_dataset import StageBDataset
+from src.eval.gate import apply_gate, collect_gate_probs
 from src.eval.metrics import collect_predictions, compute_metrics
 from src.eval.thresholds import tune_per_class_thresholds
 from src.models.backbone import FrozenYOLOBackbone
-from src.models.distortion_head import StageBDistortionHead
+from src.models.distortion_head import ImpairedGateHead, StageBDistortionHead
 
 
 def flatten_tiles(labels, probs):
@@ -32,6 +33,17 @@ def flatten_tiles(labels, probs):
     labels_flat = labels.transpose(0, 2, 3, 1).reshape(-1, c)
     probs_flat = probs.transpose(0, 2, 3, 1).reshape(-1, c)
     return labels_flat, probs_flat
+
+
+def _print_metrics_table(rows, n_images, n_tiles, split, threshold_desc, label=None):
+    heading = f"Evaluated {n_images} images ({n_tiles} tiles) from split={split!r}, threshold={threshold_desc}"
+    if label:
+        heading = f"[{label}] {heading}"
+    print(heading)
+    print(f"{'class':<10}{'threshold':>10}{'precision':>10}{'recall':>10}{'f1':>10}{'AP':>10}{'ROC-AUC':>10}{'support':>10}")
+    for row in rows:
+        print(f"{row['class']:<10}{row['threshold']:>10.3f}{row['precision']:>10.3f}{row['recall']:>10.3f}"
+              f"{row['f1']:>10.3f}{row['ap']:>10.3f}{row['roc_auc']:>10.3f}{row['support']:>10}")
 
 
 def main():
@@ -47,6 +59,17 @@ def main():
         "--tune-thresholds", action="store_true",
         help="Tune a per-class best-F1 threshold on the val split, then evaluate --split with those "
         "instead of the single --threshold value for every class (see src/eval/thresholds.py).",
+    )
+    parser.add_argument(
+        "--gate-checkpoint", default=None,
+        help="Optional checkpoints/impaired_gate/impaired_gate_head.pt -- if given, ALSO prints a "
+        "second, gated evaluation table where Stage B's tile predictions are zeroed for any image "
+        "the gate calls 'not impaired' (see src/eval/gate.py). The ungated table above is always "
+        "printed too, so both are directly comparable.",
+    )
+    parser.add_argument(
+        "--gate-threshold", type=float, default=0.5,
+        help="P(impaired) cutoff for --gate-checkpoint: below this, an image's Stage B predictions are zeroed.",
     )
     args = parser.parse_args()
 
@@ -84,11 +107,21 @@ def main():
 
     n_tiles = labels_flat.shape[0]
     threshold_desc = "tuned per-class" if args.tune_thresholds else args.threshold
-    print(f"Evaluated {len(dataset)} images ({n_tiles} tiles) from split={args.split!r}, threshold={threshold_desc}")
-    print(f"{'class':<10}{'threshold':>10}{'precision':>10}{'recall':>10}{'f1':>10}{'AP':>10}{'ROC-AUC':>10}{'support':>10}")
-    for row in rows:
-        print(f"{row['class']:<10}{row['threshold']:>10.3f}{row['precision']:>10.3f}{row['recall']:>10.3f}"
-              f"{row['f1']:>10.3f}{row['ap']:>10.3f}{row['roc_auc']:>10.3f}{row['support']:>10}")
+    _print_metrics_table(rows, len(dataset), n_tiles, args.split, threshold_desc,
+                          label="ungated" if args.gate_checkpoint else None)
+
+    if args.gate_checkpoint:
+        gate_ckpt = torch.load(args.gate_checkpoint, map_location=device, weights_only=False)
+        gate_head = ImpairedGateHead(in_channels=backbone.out_channels).to(device)
+        gate_head.load_state_dict(gate_ckpt["head_state_dict"])
+        gate_head.eval()
+        gate_probs = collect_gate_probs(backbone, gate_head, loader, device)
+        gated_probs = apply_gate(probs, gate_probs, threshold=args.gate_threshold)
+
+        gated_labels_flat, gated_probs_flat = flatten_tiles(labels, gated_probs)
+        gated_rows = compute_metrics(gated_labels_flat, gated_probs_flat, class_names, threshold=threshold)
+        print()
+        _print_metrics_table(gated_rows, len(dataset), n_tiles, args.split, threshold_desc, label="gated")
 
 
 if __name__ == "__main__":

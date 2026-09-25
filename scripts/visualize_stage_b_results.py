@@ -43,6 +43,7 @@ from scripts.visualize_stage_a_results import (
     select_diverse_sample_indices,
 )
 from src.data.stage_b_dataset import StageBDataset
+from src.eval.gate import apply_gate, collect_gate_probs
 from src.eval.metrics import collect_predictions, compute_metrics
 from src.models.backbone import FrozenYOLOBackbone
 from src.models.distortion_head import ImpairedGateHead, StageBDistortionHead
@@ -250,23 +251,6 @@ def _load_image_for_row(dataset, row):
     return image
 
 
-@torch.no_grad()
-def _collect_gate_probs(backbone, gate_head, loader, device):
-    """Runs the impaired-gate head (ImpairedGateHead) over the same
-    shuffle=False loader used for Stage B's own predictions, returning
-    {dataset_index: P(impaired)} keyed by position in iteration order --
-    valid because every caller here builds `loader` with shuffle=False."""
-    probs = {}
-    idx = 0
-    for images, _ in loader:
-        images = images.to(device)
-        batch_probs = torch.softmax(gate_head(backbone(images)), dim=1)[:, 1].cpu().numpy()
-        for value in batch_probs:
-            probs[idx] = float(value)
-            idx += 1
-    return probs
-
-
 def plot_stage_b_five_column_report(
     dataset, report_rows, probs, labels, class_names,
     labels_flat, probs_flat, out_dir, tag="", rows_per_page=6, gate_probs=None,
@@ -289,9 +273,13 @@ def plot_stage_b_five_column_report(
     migrated to this style.
 
     `gate_probs` (optional dict[idx -> P(impaired)] from ImpairedGateHead,
-    see _collect_gate_probs) annotates each row's "distorted" column title.
-    Stage B's own tile predictions are always drawn regardless -- the gate
-    is a reporting annotation only, never a computation-skipping gate.
+    see src.eval.gate.collect_gate_probs) annotates each row's "distorted"
+    column title with the gate's own verdict. Since Session 20 Round 2, the
+    gate is a REAL inference-time filter, not just an annotation: `main()`
+    applies `src.eval.gate.apply_gate` to `probs` before this function is
+    ever called, so a row the gate calls "not impaired" already shows an
+    all-zero prediction grid here -- the title annotation explains *why*,
+    it doesn't independently suppress anything itself.
 
     Paginated at `rows_per_page` rows per file:
     out_dir/stage_b_full_report{tag}_page{N}.jpg (N starting at 1, always at
@@ -397,9 +385,14 @@ def main():
     parser.add_argument("--rows-per-page", type=int, default=6, help="Rows per page in the 5-column report figure")
     parser.add_argument(
         "--gate-checkpoint", default=None,
-        help="Optional checkpoints/impaired_gate/impaired_gate_head.pt -- if given, annotates each "
-        "5-column report row with the impaired-gate head's prediction for that image (Session 20). "
-        "The report renders fine without this flag.",
+        help="Optional checkpoints/impaired_gate/impaired_gate_head.pt -- if given, ACTUALLY GATES every "
+        "figure/metric below: Stage B's tile predictions are zeroed for any image the gate calls "
+        "'not impaired' (Session 20, Round 2 -- see src/eval/gate.py). The report renders fine, ungated, "
+        "without this flag.",
+    )
+    parser.add_argument(
+        "--gate-threshold", type=float, default=0.5,
+        help="P(impaired) cutoff for --gate-checkpoint: below this, an image's Stage B predictions are zeroed.",
     )
     args = parser.parse_args()
 
@@ -415,6 +408,17 @@ def main():
     dataset = StageBDataset(args.data, split=args.split)
     loader = DataLoader(dataset, batch_size=32, shuffle=False)
     probs, labels = collect_predictions(backbone, head, loader, device)
+
+    gate_probs = None
+    if args.gate_checkpoint:
+        gate_ckpt = torch.load(args.gate_checkpoint, map_location=device, weights_only=False)
+        gate_head = ImpairedGateHead(in_channels=backbone.out_channels).to(device)
+        gate_head.load_state_dict(gate_ckpt["head_state_dict"])
+        gate_head.eval()
+        gate_probs = collect_gate_probs(backbone, gate_head, loader, device)
+        # Real inference-time gate (Session 20, Round 2): every figure and
+        # metric below sees the GATED probs, not the raw Stage B output.
+        probs = apply_gate(probs, gate_probs, threshold=args.gate_threshold)
 
     labels_flat, probs_flat = flatten_tiles(labels, probs)
     metric_rows = compute_metrics(labels_flat, probs_flat, class_names, threshold=args.threshold)
@@ -440,14 +444,6 @@ def main():
         combo_path = out_dir / f"stage_b_combo_sample{args.tag}.jpg"
         plot_combo_sample(dataset, combo_idx, combo_classes, probs, labels, class_names, args.threshold, combo_path)
         print(f"wrote {combo_path}")
-
-    gate_probs = None
-    if args.gate_checkpoint:
-        gate_ckpt = torch.load(args.gate_checkpoint, map_location=device, weights_only=False)
-        gate_head = ImpairedGateHead(in_channels=backbone.out_channels).to(device)
-        gate_head.load_state_dict(gate_ckpt["head_state_dict"])
-        gate_head.eval()
-        gate_probs = _collect_gate_probs(backbone, gate_head, loader, device)
 
     report_rows = select_five_column_rows(dataset, probs, class_names, per_class=args.per_kind, seed=args.seed)
     report_paths = plot_stage_b_five_column_report(
