@@ -11,7 +11,7 @@ from scripts.visualize_stage_b_results import (
     class_index_for_sample,
     find_combo_sample_index,
     max_prob_per_image,
-    plot_stage_b_seven_column_report,
+    plot_stage_b_eight_column_report,
     select_report_rows,
 )
 from src.data.stage_b_dataset import StageBDataset
@@ -144,7 +144,7 @@ def test_compute_per_class_pr_curves_returns_recall_precision_ap():
     assert len(recall) == len(precision)
 
 
-def test_plot_stage_b_seven_column_report_writes_expected_pages(tmp_path):
+def test_plot_stage_b_eight_column_report_writes_expected_pages(tmp_path):
     # Matplotlib smoke test (no model/weights needed -- probs are random) --
     # confirms the figure runs end to end and paginates correctly, not that
     # the pixels are correct.
@@ -172,7 +172,7 @@ def test_plot_stage_b_seven_column_report_writes_expected_pages(tmp_path):
 
     out_dir = tmp_path / "out"
     out_dir.mkdir()
-    paths = plot_stage_b_seven_column_report(
+    paths = plot_stage_b_eight_column_report(
         dataset, report_rows, probs, labels, class_names,
         labels_flat, probs_flat, out_dir, rows_per_page=2,
     )
@@ -183,10 +183,11 @@ def test_plot_stage_b_seven_column_report_writes_expected_pages(tmp_path):
         assert p.stat().st_size > 0
 
 
-def test_plot_stage_b_seven_column_report_shows_all_classes_probability(tmp_path):
-    # Confirms the figure actually renders 7 columns (3 classes' probability
-    # tiles, not just the dominant one) -- checks the axes grid shape
-    # directly rather than pixel content.
+def test_plot_stage_b_eight_column_report_shows_all_classes_probability(tmp_path):
+    # Confirms the figure actually renders 8 columns (3 classes' raw
+    # probability tiles plus a dedicated gated column, not just the
+    # dominant one) -- checks the axes grid shape directly rather than
+    # pixel content.
     source_dir = tmp_path / "source"
     source_dir.mkdir()
     rng = np.random.default_rng(0)
@@ -214,12 +215,64 @@ def test_plot_stage_b_seven_column_report_shows_all_classes_probability(tmp_path
 
     import matplotlib.pyplot as plt
     with mock.patch.object(plt, "subplots", wraps=plt.subplots) as spy:
-        plot_stage_b_seven_column_report(
+        plot_stage_b_eight_column_report(
             dataset, report_rows, probs, labels, class_names,
             labels_flat, probs_flat, out_dir, rows_per_page=6,
         )
     n_rows, n_cols = spy.call_args[0][:2]
-    assert (n_rows, n_cols) == (1, 7)  # 1 row, 7 columns: orig/distorted/GT/3xprob/PR
+    assert (n_rows, n_cols) == (1, 8)  # 1 row, 8 columns: orig/distorted/GT/3xprob/PR/gated
+
+
+def test_plot_stage_b_eight_column_report_column_8_reflects_gating(tmp_path):
+    # Column 8 should show the GATED grid (all-zero for a gated-out image)
+    # when gated_tile_probs is given, distinct from column 4-6's raw view.
+    source_dir = tmp_path / "source"
+    source_dir.mkdir()
+    rng = np.random.default_rng(0)
+    for i in range(2):
+        img = rng.integers(0, 255, size=(96, 128, 3), dtype=np.uint8)
+        cv.imwrite(str(source_dir / f"{i:08d}.jpg"), img)
+
+    data_dir = tmp_path / "stage_b"
+    build_stage_b_dataset(
+        source_dir, data_dir, variants_per_image=4, seed=0,
+        ratios=(0.5, 0.25, 0.25), img_size=64,
+    )
+
+    dataset = StageBDataset(data_dir, split="train")
+    class_names = dataset.class_names
+    labels = dataset.tile_labels.astype(np.float32)
+    raw_probs = np.ones_like(labels) * 0.7  # nonzero everywhere
+    gated_tile_probs = np.zeros_like(labels)  # this image was gated out
+
+    report_rows = [(0, "dirt", 0)]
+    labels_flat, probs_flat = flatten_tiles(labels, raw_probs)
+
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+
+    import matplotlib.pyplot as plt
+    captured = {}
+    original_imshow = plt.Axes.imshow
+
+    def _spy_imshow(self, data, *args, **kwargs):
+        captured.setdefault("calls", []).append(np.array(data))
+        return original_imshow(self, data, *args, **kwargs)
+
+    with mock.patch.object(plt.Axes, "imshow", _spy_imshow):
+        plot_stage_b_eight_column_report(
+            dataset, report_rows, raw_probs, labels, class_names,
+            labels_flat, probs_flat, out_dir, rows_per_page=6,
+            gate_probs={0: 0.1}, gated_tile_probs=gated_tile_probs,
+        )
+
+    # imshow call order per row: 0=clean image, 1=distorted image, 2=GT,
+    # 3=dirt raw (dominant), 4=water raw, 5=scratch raw, [PR curve uses
+    # .plot(), not .imshow()], 6=gated column -- the last call.
+    last_grid = captured["calls"][-1]
+    assert np.all(last_grid == 0.0)
+    dominant_raw_grid = captured["calls"][3]
+    assert np.all(dominant_raw_grid == 0.7)
 
 
 def test_max_prob_per_image_reduces_over_the_tile_grid():

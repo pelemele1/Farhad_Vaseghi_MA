@@ -235,7 +235,7 @@ def build_report_rows(dataset, indices, probs, class_names):
 
 def select_report_rows(dataset, probs, class_names, per_class=3, seed=0):
     """Picks which (sample, class) rows populate the per-sample report
-    figure (plot_stage_b_seven_column_report): a diverse set covering every
+    figure (plot_stage_b_eight_column_report): a diverse set covering every
     label kind (reusing select_diverse_sample_indices), each keyed to a
     class via build_report_rows."""
     indices = select_diverse_sample_indices(dataset.rows, class_names, per_kind=per_class, seed=seed)
@@ -266,50 +266,62 @@ def _load_image_for_row(dataset, row):
     return image
 
 
-def plot_stage_b_seven_column_report(
+def plot_stage_b_eight_column_report(
     dataset, report_rows, probs, labels, class_names,
-    labels_flat, probs_flat, out_dir, tag="", rows_per_page=6, gate_probs=None,
+    labels_flat, probs_flat, out_dir, tag="", rows_per_page=6,
+    gate_probs=None, gated_tile_probs=None,
 ):
-    """Stage B results figure (supervisor item 1, extended per follow-up
-    feedback): one row per (idx, kind, class_idx) entry in `report_rows`.
+    """Stage B results figure (supervisor item 1, extended per two
+    follow-ups): one row per (idx, kind, class_idx) entry in `report_rows`.
     Originally 5 columns with a single "predicted probability" column for
-    just the row's dominant/active class; the supervisor asked to see all 3
-    classes' tile-wise probability side by side instead of only the
-    dominant one, which is +2 columns -- 7 total:
+    just the row's dominant/active class; extended to show all 3 classes'
+    tile-wise probability side by side (+2 columns), then again to add a
+    dedicated gated/final-decision column (+1) -- 8 total:
       1. Original (clean) image for that sample's source image.
       2. Distorted image -- the actual dataset[idx] model input.
       3. Ground truth tile grid for class_idx (the row's dominant/active
-         class only -- unchanged, the supervisor's ask was specifically
-         about the probability column, not GT), with a 0-1 colorbar.
-      4-6. Predicted tile probability, RAW (not thresholded), one column
-         per class in `class_names` order (not just class_idx) -- same 0-1
-         colorbar style. The dominant class's column is marked with a
-         "(dominant)" title suffix so it's identifiable among the three.
+         class only -- the supervisor's asks were specifically about the
+         probability columns, not GT), with a 0-1 colorbar.
+      4-6. Predicted tile probability, RAW (not thresholded, never gated),
+         one column per class in `class_names` order (not just class_idx)
+         -- same 0-1 colorbar style. The dominant class's column is marked
+         with a "(dominant)" title suffix so it's identifiable among the
+         three.
       7. The dominant class's precision-recall curve (AUC-PR), computed
          once over the whole flattened test split and reused for every row
          of the same class -- it is not a per-sample quantity.
+      8. The dominant class's GATED tile probability, i.e. what columns
+         4-6's dominant-class panel looks like AFTER
+         `src.eval.gate.apply_gate` -- all-zero if the gate called this
+         image "not impaired". Lets a reader directly compare the raw
+         prediction (columns 4-6) against the final, post-gate result.
+         Falls back to the same raw grid (labeled "no gate applied") when
+         `gated_tile_probs` isn't given.
 
-    Columns 3-6 deliberately use plain imshow(cmap=..., vmin=0, vmax=1) +
-    colorbar -- NOT plot_tile_grid_overlay's alpha-blended composite-over-
-    image style, which can't be legended by a single 0-1 colorbar. See that
-    function's own docstring/caption for why it's left unchanged instead of
-    migrated to this style.
+    Columns 3-6 and 8 deliberately use plain imshow(cmap=..., vmin=0,
+    vmax=1) + colorbar -- NOT plot_tile_grid_overlay's alpha-blended
+    composite-over-image style, which can't be legended by a single 0-1
+    colorbar. See that function's own docstring/caption for why it's left
+    unchanged instead of migrated to this style.
 
     `gate_probs` (optional dict[idx -> P(impaired)] from ImpairedGateHead,
     see src.eval.gate.collect_gate_probs) annotates each row's "distorted"
-    column title with the gate's own verdict. Since Session 20 Round 2, the
-    gate is a REAL inference-time filter, not just an annotation: `main()`
-    applies `src.eval.gate.apply_gate` to `probs` before this function is
-    ever called, so a row the gate calls "not impaired" already shows
-    all-zero prediction grids here -- the title annotation explains *why*,
-    it doesn't independently suppress anything itself.
+    column title with the gate's own verdict. `probs` (used for columns
+    4-6 and the PR curve) should always be the RAW (ungated) predictions --
+    a gated row previously showed all-zero tiles there, which hid whether
+    the gate was right to suppress it or just killed a real detection.
+    `gated_tile_probs` (optional, the full (N,C,H,W) array after
+    `apply_gate`) supplies column 8's post-gate view instead; `main()`
+    still applies `apply_gate` for the *other* outputs this script writes
+    (metrics table, ROC/PR curves file, overlay grid, severity plot) using
+    the same gated array.
 
     Paginated at `rows_per_page` rows per file:
     out_dir/stage_b_full_report{tag}_page{N}.jpg (N starting at 1, always at
     least one page even for an empty report_rows). Returns the list of
     written paths."""
     n_classes = len(class_names)
-    n_cols = 3 + n_classes + 1  # original, distorted, GT, one prob column per class, PR curve
+    n_cols = 3 + n_classes + 2  # original, distorted, GT, one prob column per class, PR curve, gated
     curves = _compute_per_class_pr_curves(labels_flat, probs_flat, class_names)
     clean_lookup = _clean_image_lookup(dataset, class_names)
 
@@ -387,6 +399,19 @@ def plot_stage_b_seven_column_report(
                 axes[r, pr_col].set_ylabel("precision", fontsize=8)
                 axes[r, pr_col].set_title(f"{class_name} PR (AP={ap:.3f})", fontsize=9)
 
+            gated_col = 3 + n_classes + 1
+            if gated_tile_probs is not None:
+                gated_grid = gated_tile_probs[idx, class_idx].astype(np.float32)
+                gated_title = f"gated probability ({class_name})"
+            else:
+                gated_grid = probs[idx, class_idx].astype(np.float32)
+                gated_title = f"gated probability ({class_name})\n(no gate applied)"
+            im_gated = axes[r, gated_col].imshow(gated_grid, cmap="viridis", vmin=0, vmax=1, interpolation="nearest")
+            axes[r, gated_col].set_title(gated_title, fontsize=9)
+            axes[r, gated_col].set_xticks([])
+            axes[r, gated_col].set_yticks([])
+            fig.colorbar(im_gated, ax=axes[r, gated_col], fraction=0.046)
+
         for r in range(len(page_rows), n_rows):
             for c in range(n_cols):
                 axes[r, c].axis("off")
@@ -413,7 +438,7 @@ def main():
     parser.add_argument("--out-dir", default="docs/images")
     parser.add_argument("--log-file", default=None, help="Saved training stdout log (e.g. stage_b_<jobid>.out) -- if given, also plots the train/val loss curve")
     parser.add_argument("--tag", default="", help="Suffix (e.g. '_focal') appended to every output filename, so multiple loss variants don't overwrite each other's images")
-    parser.add_argument("--rows-per-page", type=int, default=6, help="Rows per page in the 7-column report figure")
+    parser.add_argument("--rows-per-page", type=int, default=6, help="Rows per page in the 8-column report figure")
     parser.add_argument(
         "--gate-checkpoint", default=None,
         help="Optional checkpoints/impaired_gate/impaired_gate_head.pt -- if given, ACTUALLY GATES every "
@@ -438,7 +463,8 @@ def main():
 
     dataset = StageBDataset(args.data, split=args.split)
     loader = DataLoader(dataset, batch_size=32, shuffle=False)
-    probs, labels = collect_predictions(backbone, head, loader, device)
+    raw_probs, labels = collect_predictions(backbone, head, loader, device)
+    probs = raw_probs
 
     gate_probs = None
     if args.gate_checkpoint:
@@ -447,11 +473,19 @@ def main():
         gate_head.load_state_dict(gate_ckpt["head_state_dict"])
         gate_head.eval()
         gate_probs = collect_gate_probs(backbone, gate_head, loader, device)
-        # Real inference-time gate (Session 20, Round 2): every figure and
-        # metric below sees the GATED probs, not the raw Stage B output.
-        probs = apply_gate(probs, gate_probs, threshold=args.gate_threshold)
+        # Real inference-time gate (Session 20, Round 2): the metrics table,
+        # ROC/PR curves file, overlay grid, and severity plot below all see
+        # the GATED probs -- `apply_gate` returns a new array, so `raw_probs`
+        # still holds the ungated predictions afterward. The 8-column report
+        # (Round 3 follow-ups) deliberately uses `raw_probs` for columns 4-6
+        # and passes this gated array separately for column 8 -- see its own
+        # docstring for why.
+        probs = apply_gate(raw_probs, gate_probs, threshold=args.gate_threshold)
 
     labels_flat, probs_flat = flatten_tiles(labels, probs)
+    # gating never touches `labels`, only `probs` -- so flattened labels are
+    # identical either way; only the raw probs differ from the gated ones.
+    _, raw_probs_flat = flatten_tiles(labels, raw_probs)
     metric_rows = compute_metrics(labels_flat, probs_flat, class_names, threshold=args.threshold)
 
     out_dir = Path(args.out_dir)
@@ -481,11 +515,19 @@ def main():
         plot_combo_sample(dataset, combo_idx, combo_classes, probs, labels, class_names, args.threshold, combo_path)
         print(f"wrote {combo_path}")
 
-    report_rows = select_report_rows(dataset, probs, class_names, per_class=args.per_kind, seed=args.seed)
-    report_paths = plot_stage_b_seven_column_report(
-        dataset, report_rows, probs, labels, class_names,
-        labels_flat, probs_flat, out_dir, tag=args.tag,
+    # Round 3 follow-up: the report's columns 4-6 (and PR curve) always show
+    # the RAW (ungated) per-tile predictions, even when --gate-checkpoint is
+    # given -- so a reader can visually judge whether a gate "not impaired"
+    # verdict actually suppressed a real detection or correctly caught a
+    # clean image. Column 8 shows the gated/final result for direct
+    # comparison. Every other output this script writes above still uses
+    # the gated `probs`.
+    report_rows = select_report_rows(dataset, raw_probs, class_names, per_class=args.per_kind, seed=args.seed)
+    report_paths = plot_stage_b_eight_column_report(
+        dataset, report_rows, raw_probs, labels, class_names,
+        labels_flat, raw_probs_flat, out_dir, tag=args.tag,
         rows_per_page=args.rows_per_page, gate_probs=gate_probs,
+        gated_tile_probs=probs if gate_probs is not None else None,
     )
     for p in report_paths:
         print(f"wrote {p}")
