@@ -25,10 +25,18 @@ def main():
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--img-size", type=int, default=512,
                          help="Must be a multiple of 32 (P5 stride) -- sets the tile grid size (img-size // 32)")
+    parser.add_argument("--dirt-threshold", type=float, default=None,
+                         help="Override the dirt tile-coverage threshold (default "
+                         f"{DEFAULT_TILE_THRESHOLDS['dirt']}, see scripts/diagnose_tile_thresholds.py "
+                         "--effect dirt).")
+    parser.add_argument("--water-threshold", type=float, default=None,
+                         help="Override the water tile-coverage threshold (default "
+                         f"{DEFAULT_TILE_THRESHOLDS['water']}, see scripts/diagnose_tile_thresholds.py "
+                         "--effect water).")
     parser.add_argument("--scratch-threshold", type=float, default=None,
                          help="Override the scratch tile-coverage threshold (default "
-                         f"{DEFAULT_TILE_THRESHOLDS['scratch']}, see scripts/diagnose_scratch_threshold.py). "
-                         "dirt/water thresholds are left at their default.")
+                         f"{DEFAULT_TILE_THRESHOLDS['scratch']}, see scripts/diagnose_tile_thresholds.py "
+                         "--effect scratch).")
     parser.add_argument("--include-combos", action="store_true",
                          help="Also generate multi-distortion variants (the 3 pairs + the full triple, "
                          "see COMBO_KINDS in src/soiling/dataset_builder.py) alongside the original "
@@ -36,9 +44,12 @@ def main():
     args = parser.parse_args()
 
     thresholds = None
-    if args.scratch_threshold is not None:
+    overrides = {"dirt": args.dirt_threshold, "water": args.water_threshold, "scratch": args.scratch_threshold}
+    if any(v is not None for v in overrides.values()):
         thresholds = dict(DEFAULT_TILE_THRESHOLDS)
-        thresholds["scratch"] = args.scratch_threshold
+        for name, value in overrides.items():
+            if value is not None:
+                thresholds[name] = value
 
     rows, tile_labels = build_stage_b_dataset(
         args.source, args.out,

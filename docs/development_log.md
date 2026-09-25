@@ -1484,3 +1484,123 @@ completely unmeasured.
 4. **Backbone unfreezing** (architecture.md's documented "Option 2") -- higher effort, save for
    after 1-3 have been tried, since it's the biggest architectural change and hardest to isolate
    if tried alongside everything else.
+
+## Session 20 — Supervisor feedback (2nd round): impaired-gate head, general tile channel, 5-column report figure
+
+Second round of supervisor feedback, again planned before implementation
+(`C:\Users\farha\.claude\plans\majestic-conjuring-shell.md`). Three items:
+(1) Stage B's results figure needed a genuine 5-column-per-sample layout
+(original / distorted / GT tile-wise / prediction probability tile-wise /
+AUC-PR), with a 0-1 colorbar on every tile-grid probability panel; (2) a
+Cross-Entropy loss should be introduced; (3) the pipeline should first
+decide "is this image impaired at all" (binary), with the union of the
+per-class tile maps reconstructing that same structure.
+
+### Phase 1 — On-the-fly label derivation
+
+`ImpairedGateDataset` (`src/data/stage_a_dataset.py`) derives a binary
+"impaired" label as OR(dirt, water, scratch) from `StageADataset`'s existing
+rows -- no `metadata.csv` schema change. `src/eval/general_channel.py`
+(new) derives the tile-wise "any distortion" channel from the 3 trained
+per-class channels via a noisy-OR combine (`1 - prod(1-p_c)`), plus a
+`general_channel_consistency` diagnostic. Neither needed a dataset rebuild.
+
+### Phase 2 — `ImpairedGateHead` + CrossEntropyLoss
+
+New `ImpairedGateHead` (`src/models/distortion_head.py`): GAP + 2xFC -> 2
+logits (`not_impaired`/`impaired`), kept as its own class rather than reusing
+`StageADistortionHead` so its different loss family (CE/softmax vs. every
+other head's sigmoid/BCE) is visible at the type level. New
+`compute_impaired_class_weight` + `build_impaired_gate_loss` in
+`src/models/losses.py` (`nn.CrossEntropyLoss(weight=...)`).
+
+Two design calls, made explicit for the record:
+- **The general tile channel is derived, not separately trained** -- the
+  supervisor's "union... to reach the initial tile-wise structure" phrasing
+  reads as a reconstruction/consistency check, not a request for new
+  supervision; a 4th trained channel would just re-learn a deterministic
+  function of 3 already-trained channels.
+- **The gate started as reporting-only** (annotates the report, never
+  suppresses Stage B's own predictions) -- deliberately, to avoid coupling
+  the two heads' error rates. (Reversed later this session -- see "Round 2"
+  below, once the user saw the concrete failure mode this caused.)
+
+### Phase 3 -- Training/eval scripts
+
+`scripts/train_impaired_gate.py` (mirrors `train_stage_a.py`, reuses its
+`run_epoch`) and `scripts/evaluate_impaired_gate.py` (needs a softmax- not
+sigmoid-based `collect_gate_predictions`, then feeds straight into the
+existing `compute_metrics`/`tune_per_class_thresholds` unchanged).
+`scripts/hpc/train_impaired_gate.slurm` added.
+
+### Phase 4 -- 5-column report figure
+
+`scripts/visualize_stage_b_results.py::plot_stage_b_five_column_report`:
+one row per sample, columns = clean image / distorted image / GT tile grid
+(`imshow(cmap="viridis", vmin=0, vmax=1)` + colorbar) / predicted
+probability tile grid (same style) / that class's PR curve (computed once
+over the whole flattened test split, reused across every row of that class
+-- AUC-PR isn't a per-sample quantity). Paginated at `--rows-per-page`.
+`plot_tile_grid_overlay` (the older alpha-blended overlay figure) left
+unchanged -- its composite-blend style can't be legended by a single 0-1
+colorbar -- with a caption pointing to the new figure instead.
+
+### Phase 5 -- HPC training
+
+Job `1821693` (`checkpoints/impaired_gate/impaired_gate_head.pt`), trained
+on the existing `data/processed/stage_a` (no rebuild), 20 epochs,
+`class_weight=[8.0, 1.14]`. Converged cleanly: `train_loss` 0.303 -> 0.136,
+`val_loss` 0.236 -> ~0.15-0.18 (noisy but stable, no divergence). Elapsed
+23:52.
+
+## Round 2 (same session) -- tile-threshold recalibration + real inference-time gate
+
+Reviewing the new 5-column figure's first real output surfaced two follow-ups:
+
+1. **Stage B's GT tile grids weren't precise for dirt/water.** Scratch's
+   tile-coverage threshold was empirically diagnosed and fixed in Session
+   18/19 (`scripts/diagnose_scratch_threshold.py`, since renamed/generalized
+   -- see Phase 7 below); dirt/water were still at their original,
+   never-measured `DEFAULT_TILE_THRESHOLDS` values (0.15 each).
+2. **Clean images still predicted non-trivial distortion probability** --
+   visible directly in the new figure's clean-kind rows. User asked for
+   both a real inference-time gate (reversing Phase 2's reporting-only
+   decision) and a fix to Stage B's own calibration.
+
+### Phase 7 -- Diagnostics
+
+`scripts/diagnose_scratch_threshold.py` generalized and renamed to
+`scripts/diagnose_tile_thresholds.py --effect {dirt,water,scratch}` (same
+methodology, now parameterized over `add_dirt`/`add_water`/`add_scratch`
+instead of hardcoding scratch).
+
+Unlike scratch (a thin line, with a sharp natural boundary in its coverage
+distribution), dirt and water are broad-area texture blends with no sharp
+cutoff -- a judgment call rather than a discovered boundary:
+
+| effect | mean tiles touched (of 256) | median coverage of touched tiles | positive rate @ threshold=0.15 (current default) |
+|---|---|---|---|
+| dirt | 236.9 | 0.205 | 51.4% |
+| water | 230.3 | 0.271 | 64.3% |
+
+Over half the tiles either mask merely *grazes* still counted fully
+positive at the untouched 0.15 default. New thresholds chosen to target
+each effect's own median touched-tile coverage (tile must be substantially,
+not just marginally, affected): **dirt 0.15 -> 0.20, water 0.15 -> 0.25**.
+
+New `scripts/diagnose_clean_false_positives.py`: for every genuinely clean
+(undistorted) test-split image, does the model's max tile probability for
+each class cross the decision threshold? Baseline, current canonical
+`checkpoints/stage_b_combo` on `data/processed/stage_b_scratch15`, tuned
+per-class thresholds:
+
+| class | tuned threshold | clean-image FP rate |
+|---|---|---|
+| dirt | 0.523 | 32.0% |
+| water | 0.569 | 23.0% |
+| scratch | 0.539 | 26.0% |
+
+Out of 100 genuinely clean test images, the model still fires positive on
+23-32% of them per class, even after per-class threshold tuning -- this is
+the quantified baseline Phase 8 (threshold recalibration retrain) and
+Phase 9 (real gate) are both measured against.
