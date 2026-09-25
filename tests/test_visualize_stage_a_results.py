@@ -124,6 +124,21 @@ def test_group_probs_by_severity_omits_absent_levels():
     assert set(grouped.keys()) == {"high"}
 
 
+def test_group_probs_by_severity_falls_back_for_rows_predating_the_column():
+    # A dataset built before severity columns existed at all (real case:
+    # the current data/processed/stage_b_scratch15 on disk, mid-rebuild as
+    # of Session 20 Round 3) has no "dirt_severity" key whatsoever -- must
+    # not crash, and should infer "high"/"none" from the plain 0/1 column.
+    rows = [{"dirt": "1"}, {"dirt": "0"}, {"dirt": 1}, {"dirt": 0}]
+    probs = [0.9, 0.1, 0.8, 0.2]
+
+    grouped = group_probs_by_severity(rows, probs, "dirt")
+
+    assert set(grouped.keys()) == {"high", "none"}
+    assert grouped["high"] == [0.9, 0.8]
+    assert grouped["none"] == [0.1, 0.2]
+
+
 def test_plot_probability_by_severity_writes_a_file(tmp_path):
     rng = np.random.default_rng(0)
     rows = [{"dirt_severity": lvl, "water_severity": "none"} for lvl in

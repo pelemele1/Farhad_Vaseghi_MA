@@ -195,13 +195,15 @@ def plot_combo_sample(dataset, idx, active_classes, probs, labels, class_names, 
     plt.close(fig)
 
 
-# --- 5-column Stage B report figure (Session 20, supervisor item 1) ------
+# --- Stage B per-sample report figure (Session 20, supervisor item 1; --
+# --- originally 5 columns, extended to 7 per a later follow-up to show   --
+# --- all 3 classes' probability tiles instead of just the dominant one) --
 
 
 def _compute_per_class_pr_curves(labels_flat, probs_flat, class_names):
     """One (recall, precision, ap) tuple per class, computed once over the
     WHOLE flattened test-split tile arrays -- AUC-PR is not a per-sample
-    quantity, so every row of a given class in the 5-column report reuses
+    quantity, so every row of a given class in the per-sample report reuses
     this same cached curve instead of recomputing it per row. A class's
     entry is None if its curve is undefined (support 0 or all-positive),
     same guard as plot_roc_pr_curves."""
@@ -231,11 +233,11 @@ def build_report_rows(dataset, indices, probs, class_names):
     return rows
 
 
-def select_five_column_rows(dataset, probs, class_names, per_class=3, seed=0):
-    """Picks which (sample, class) rows populate the 5-column report figure:
-    a diverse set covering every label kind (reusing
-    select_diverse_sample_indices), each keyed to a class via
-    build_report_rows."""
+def select_report_rows(dataset, probs, class_names, per_class=3, seed=0):
+    """Picks which (sample, class) rows populate the per-sample report
+    figure (plot_stage_b_seven_column_report): a diverse set covering every
+    label kind (reusing select_diverse_sample_indices), each keyed to a
+    class via build_report_rows."""
     indices = select_diverse_sample_indices(dataset.rows, class_names, per_kind=per_class, seed=seed)
     return build_report_rows(dataset, indices, probs, class_names)
 
@@ -264,22 +266,30 @@ def _load_image_for_row(dataset, row):
     return image
 
 
-def plot_stage_b_five_column_report(
+def plot_stage_b_seven_column_report(
     dataset, report_rows, probs, labels, class_names,
     labels_flat, probs_flat, out_dir, tag="", rows_per_page=6, gate_probs=None,
 ):
-    """New Stage B results figure (supervisor item 1): one row per
-    (idx, kind, class_idx) entry in `report_rows`, 5 columns:
+    """Stage B results figure (supervisor item 1, extended per follow-up
+    feedback): one row per (idx, kind, class_idx) entry in `report_rows`.
+    Originally 5 columns with a single "predicted probability" column for
+    just the row's dominant/active class; the supervisor asked to see all 3
+    classes' tile-wise probability side by side instead of only the
+    dominant one, which is +2 columns -- 7 total:
       1. Original (clean) image for that sample's source image.
       2. Distorted image -- the actual dataset[idx] model input.
-      3. Ground truth tile grid for class_idx, with a 0-1 colorbar.
-      4. Predicted tile probability for class_idx, RAW (not thresholded),
-         with the same 0-1 colorbar.
-      5. That class's precision-recall curve (AUC-PR), computed once over
-         the whole flattened test split and reused for every row of the
-         same class -- it is not a per-sample quantity.
+      3. Ground truth tile grid for class_idx (the row's dominant/active
+         class only -- unchanged, the supervisor's ask was specifically
+         about the probability column, not GT), with a 0-1 colorbar.
+      4-6. Predicted tile probability, RAW (not thresholded), one column
+         per class in `class_names` order (not just class_idx) -- same 0-1
+         colorbar style. The dominant class's column is marked with a
+         "(dominant)" title suffix so it's identifiable among the three.
+      7. The dominant class's precision-recall curve (AUC-PR), computed
+         once over the whole flattened test split and reused for every row
+         of the same class -- it is not a per-sample quantity.
 
-    Columns 3/4 deliberately use plain imshow(cmap=..., vmin=0, vmax=1) +
+    Columns 3-6 deliberately use plain imshow(cmap=..., vmin=0, vmax=1) +
     colorbar -- NOT plot_tile_grid_overlay's alpha-blended composite-over-
     image style, which can't be legended by a single 0-1 colorbar. See that
     function's own docstring/caption for why it's left unchanged instead of
@@ -290,14 +300,16 @@ def plot_stage_b_five_column_report(
     column title with the gate's own verdict. Since Session 20 Round 2, the
     gate is a REAL inference-time filter, not just an annotation: `main()`
     applies `src.eval.gate.apply_gate` to `probs` before this function is
-    ever called, so a row the gate calls "not impaired" already shows an
-    all-zero prediction grid here -- the title annotation explains *why*,
+    ever called, so a row the gate calls "not impaired" already shows
+    all-zero prediction grids here -- the title annotation explains *why*,
     it doesn't independently suppress anything itself.
 
     Paginated at `rows_per_page` rows per file:
     out_dir/stage_b_full_report{tag}_page{N}.jpg (N starting at 1, always at
     least one page even for an empty report_rows). Returns the list of
     written paths."""
+    n_classes = len(class_names)
+    n_cols = 3 + n_classes + 1  # original, distorted, GT, one prob column per class, PR curve
     curves = _compute_per_class_pr_curves(labels_flat, probs_flat, class_names)
     clean_lookup = _clean_image_lookup(dataset, class_names)
 
@@ -309,7 +321,7 @@ def plot_stage_b_five_column_report(
     out_paths = []
     for page_num, page_rows in enumerate(pages, start=1):
         n_rows = max(len(page_rows), 1)
-        fig, axes = plt.subplots(n_rows, 5, figsize=(4.4 * 5, 4.2 * n_rows), squeeze=False)
+        fig, axes = plt.subplots(n_rows, n_cols, figsize=(4.4 * n_cols, 4.2 * n_rows), squeeze=False)
 
         for r, (idx, kind, class_idx) in enumerate(page_rows):
             row = dataset.rows[idx]
@@ -346,31 +358,37 @@ def plot_stage_b_five_column_report(
             axes[r, 2].set_yticks([])
             fig.colorbar(im_gt, ax=axes[r, 2], fraction=0.046)
 
-            pred_grid = probs[idx, class_idx].astype(np.float32)
-            im_pred = axes[r, 3].imshow(pred_grid, cmap="viridis", vmin=0, vmax=1, interpolation="nearest")
-            axes[r, 3].set_title(f"predicted probability ({class_name})", fontsize=9)
-            axes[r, 3].set_xticks([])
-            axes[r, 3].set_yticks([])
-            fig.colorbar(im_pred, ax=axes[r, 3], fraction=0.046)
+            for j, other_name in enumerate(class_names):
+                col = 3 + j
+                pred_grid = probs[idx, j].astype(np.float32)
+                im_pred = axes[r, col].imshow(pred_grid, cmap="viridis", vmin=0, vmax=1, interpolation="nearest")
+                title = f"predicted probability ({other_name})"
+                if j == class_idx:
+                    title += "\n(dominant)"
+                axes[r, col].set_title(title, fontsize=9)
+                axes[r, col].set_xticks([])
+                axes[r, col].set_yticks([])
+                fig.colorbar(im_pred, ax=axes[r, col], fraction=0.046)
 
+            pr_col = 3 + n_classes
             curve = curves.get(class_name)
             if curve is None:
-                axes[r, 4].text(
+                axes[r, pr_col].text(
                     0.5, 0.5, "PR curve undefined\n(no positives in split)",
                     ha="center", va="center", fontsize=9,
                 )
-                axes[r, 4].axis("off")
+                axes[r, pr_col].axis("off")
             else:
                 recall, precision, ap = curve
-                axes[r, 4].plot(recall, precision)
-                axes[r, 4].set_xlim(0, 1)
-                axes[r, 4].set_ylim(0, 1.02)
-                axes[r, 4].set_xlabel("recall", fontsize=8)
-                axes[r, 4].set_ylabel("precision", fontsize=8)
-                axes[r, 4].set_title(f"{class_name} PR (AP={ap:.3f})", fontsize=9)
+                axes[r, pr_col].plot(recall, precision)
+                axes[r, pr_col].set_xlim(0, 1)
+                axes[r, pr_col].set_ylim(0, 1.02)
+                axes[r, pr_col].set_xlabel("recall", fontsize=8)
+                axes[r, pr_col].set_ylabel("precision", fontsize=8)
+                axes[r, pr_col].set_title(f"{class_name} PR (AP={ap:.3f})", fontsize=9)
 
         for r in range(len(page_rows), n_rows):
-            for c in range(5):
+            for c in range(n_cols):
                 axes[r, c].axis("off")
 
         fig.tight_layout()
@@ -395,7 +413,7 @@ def main():
     parser.add_argument("--out-dir", default="docs/images")
     parser.add_argument("--log-file", default=None, help="Saved training stdout log (e.g. stage_b_<jobid>.out) -- if given, also plots the train/val loss curve")
     parser.add_argument("--tag", default="", help="Suffix (e.g. '_focal') appended to every output filename, so multiple loss variants don't overwrite each other's images")
-    parser.add_argument("--rows-per-page", type=int, default=6, help="Rows per page in the 5-column report figure")
+    parser.add_argument("--rows-per-page", type=int, default=6, help="Rows per page in the 7-column report figure")
     parser.add_argument(
         "--gate-checkpoint", default=None,
         help="Optional checkpoints/impaired_gate/impaired_gate_head.pt -- if given, ACTUALLY GATES every "
@@ -463,8 +481,8 @@ def main():
         plot_combo_sample(dataset, combo_idx, combo_classes, probs, labels, class_names, args.threshold, combo_path)
         print(f"wrote {combo_path}")
 
-    report_rows = select_five_column_rows(dataset, probs, class_names, per_class=args.per_kind, seed=args.seed)
-    report_paths = plot_stage_b_five_column_report(
+    report_rows = select_report_rows(dataset, probs, class_names, per_class=args.per_kind, seed=args.seed)
+    report_paths = plot_stage_b_seven_column_report(
         dataset, report_rows, probs, labels, class_names,
         labels_flat, probs_flat, out_dir, tag=args.tag,
         rows_per_page=args.rows_per_page, gate_probs=gate_probs,

@@ -1,3 +1,5 @@
+from unittest import mock
+
 import cv2 as cv
 import numpy as np
 
@@ -9,8 +11,8 @@ from scripts.visualize_stage_b_results import (
     class_index_for_sample,
     find_combo_sample_index,
     max_prob_per_image,
-    plot_stage_b_five_column_report,
-    select_five_column_rows,
+    plot_stage_b_seven_column_report,
+    select_report_rows,
 )
 from src.data.stage_b_dataset import StageBDataset
 from src.soiling.dataset_builder import build_stage_b_dataset
@@ -74,12 +76,12 @@ def test_find_combo_sample_index_returns_none_when_no_combos_present():
     assert active == []
 
 
-# --- 5-column report figure helpers (Session 20) --------------------------
+# --- Per-sample report figure helpers (Session 20) ------------------------
 
 
 class _FakeDataset:
     """Minimal stand-in for StageBDataset -- build_report_rows/
-    select_five_column_rows only ever touch `.rows`, matching how
+    select_report_rows only ever touch `.rows`, matching how
     class_index_for_sample and select_diverse_sample_indices are already
     unit-tested against plain row lists elsewhere in this project."""
 
@@ -101,7 +103,7 @@ def test_build_report_rows_matches_class_index_for_sample():
     assert report_rows == [(0, "dirt", 0), (1, "water", 1)]
 
 
-def test_select_five_column_rows_covers_every_kind():
+def test_select_report_rows_covers_every_kind():
     rows = [
         {"dirt": "1", "water": "0", "scratch": "0"},
         {"dirt": "0", "water": "1", "scratch": "0"},
@@ -112,7 +114,7 @@ def test_select_five_column_rows_covers_every_kind():
     class_names = ("dirt", "water", "scratch")
     probs = np.zeros((4, 3, 2, 2), dtype=np.float32)
 
-    report_rows = select_five_column_rows(dataset, probs, class_names, per_class=1, seed=0)
+    report_rows = select_report_rows(dataset, probs, class_names, per_class=1, seed=0)
 
     kinds = {kind for _, kind, _ in report_rows}
     assert kinds == {"dirt", "water", "scratch", "clean"}
@@ -142,7 +144,7 @@ def test_compute_per_class_pr_curves_returns_recall_precision_ap():
     assert len(recall) == len(precision)
 
 
-def test_plot_stage_b_five_column_report_writes_expected_pages(tmp_path):
+def test_plot_stage_b_seven_column_report_writes_expected_pages(tmp_path):
     # Matplotlib smoke test (no model/weights needed -- probs are random) --
     # confirms the figure runs end to end and paginates correctly, not that
     # the pixels are correct.
@@ -170,7 +172,7 @@ def test_plot_stage_b_five_column_report_writes_expected_pages(tmp_path):
 
     out_dir = tmp_path / "out"
     out_dir.mkdir()
-    paths = plot_stage_b_five_column_report(
+    paths = plot_stage_b_seven_column_report(
         dataset, report_rows, probs, labels, class_names,
         labels_flat, probs_flat, out_dir, rows_per_page=2,
     )
@@ -179,6 +181,45 @@ def test_plot_stage_b_five_column_report_writes_expected_pages(tmp_path):
     for p in paths:
         assert p.exists()
         assert p.stat().st_size > 0
+
+
+def test_plot_stage_b_seven_column_report_shows_all_classes_probability(tmp_path):
+    # Confirms the figure actually renders 7 columns (3 classes' probability
+    # tiles, not just the dominant one) -- checks the axes grid shape
+    # directly rather than pixel content.
+    source_dir = tmp_path / "source"
+    source_dir.mkdir()
+    rng = np.random.default_rng(0)
+    for i in range(2):
+        img = rng.integers(0, 255, size=(96, 128, 3), dtype=np.uint8)
+        cv.imwrite(str(source_dir / f"{i:08d}.jpg"), img)
+
+    data_dir = tmp_path / "stage_b"
+    build_stage_b_dataset(
+        source_dir, data_dir, variants_per_image=4, seed=0,
+        ratios=(0.5, 0.25, 0.25), img_size=64,
+    )
+
+    dataset = StageBDataset(data_dir, split="train")
+    class_names = dataset.class_names
+    assert len(class_names) == 3
+    labels = dataset.tile_labels.astype(np.float32)
+    probs = rng.random(labels.shape).astype(np.float32)
+
+    report_rows = [(0, "dirt", 0)]
+    labels_flat, probs_flat = flatten_tiles(labels, probs)
+
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+
+    import matplotlib.pyplot as plt
+    with mock.patch.object(plt, "subplots", wraps=plt.subplots) as spy:
+        plot_stage_b_seven_column_report(
+            dataset, report_rows, probs, labels, class_names,
+            labels_flat, probs_flat, out_dir, rows_per_page=6,
+        )
+    n_rows, n_cols = spy.call_args[0][:2]
+    assert (n_rows, n_cols) == (1, 7)  # 1 row, 7 columns: orig/distorted/GT/3xprob/PR
 
 
 def test_max_prob_per_image_reduces_over_the_tile_grid():

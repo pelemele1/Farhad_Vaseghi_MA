@@ -170,15 +170,32 @@ def plot_roc_pr_curves(labels, probs, class_names, out_path, title="Stage A"):
 SEVERITY_LEVELS_WITH_NONE = ("none", "low", "medium", "high")
 
 
+def _row_severity(row, class_name):
+    """row[f"{class_name}_severity"] if present; falls back to inferring it
+    from row[class_name] (active -> "high", inactive -> "none") for a
+    dataset built before severity columns existed at all -- every active
+    class was implicitly full-strength back then, matching what
+    include_severity=False writes today. Missing the column entirely (old
+    dataset) is different from it being present with value "none"/"high"
+    (current dataset), but the inferred fallback reconstructs the same
+    meaning either way."""
+    key = f"{class_name}_severity"
+    if key in row:
+        return row[key]
+    active = str(row.get(class_name, "0")) in ("1", "1.0", "True")
+    return "high" if active else "none"
+
+
 def group_probs_by_severity(rows, class_probs, class_name):
-    """rows: metadata dicts (one per sample), each carrying
-    f"{class_name}_severity". class_probs: (n_samples,) array -- that one
+    """rows: metadata dicts (one per sample), ideally carrying
+    f"{class_name}_severity" (see `_row_severity` for the fallback when a
+    row predates that column). class_probs: (n_samples,) array -- that one
     class's predicted probability per sample. Returns
     dict[severity_level, list[float]], only for levels actually present in
     this split (in SEVERITY_LEVELS_WITH_NONE order) -- pulled out of
     plot_probability_by_severity so the grouping logic is unit-testable
     without matplotlib."""
-    severities = [r[f"{class_name}_severity"] for r in rows]
+    severities = [_row_severity(r, class_name) for r in rows]
     grouped = {}
     for level in SEVERITY_LEVELS_WITH_NONE:
         vals = [float(p) for p, s in zip(class_probs, severities) if s == level]
