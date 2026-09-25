@@ -1,0 +1,87 @@
+### Starting TaskPrologue of job 1822266 on tg097 at Fri Sep 25 10:05:31 PM CEST 2026
+Running on cores 64-95 with governor ondemand
+Fri Sep 25 22:05:31 2026       
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 610.57.04              KMD Version: 610.57.04     CUDA UMD Version: 13.3     |
++-----------------------------------------+------------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  NVIDIA A100-SXM4-40GB          On  |   00000000:81:00.0 Off |                    0 |
+| N/A   34C    P0             53W /  400W |       0MiB /  40960MiB |      0%      Default |
+|                                         |                        |             Disabled |
++-----------------------------------------+------------------------+----------------------+
+
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
+|        ID   ID                                                               Usage      |
+|=========================================================================================|
+|  No running processes found                                                             |
++-----------------------------------------------------------------------------------------+
+### Finished TaskPrologue
+
+/home/woody/iwnt/iwnt196h/software/private/conda/envs/stage_a/lib/python3.11/site-packages/pythonperlin/__init__.py:4: UserWarning: pkg_resources is deprecated as an API. See https://setuptools.pypa.io/en/latest/pkg_resources.html. The pkg_resources package is slated for removal as early as 2025-11-30. Refrain from using this package or pin to Setuptools<81.
+  from pkg_resources import get_distribution
+/home/woody/iwnt/iwnt196h/Farhad_Vaseghi_MA/third_party/physical_lens_soiling/add_droplet_distort.py:137: FutureWarning: `estimate` is deprecated since version 0.26 and will be removed in version 2.2. Please use `PiecewiseAffineTransform.from_estimate` class constructor instead.
+  affin.estimate(to_points,from_points)
+/home/woody/iwnt/iwnt196h/Farhad_Vaseghi_MA/third_party/physical_lens_soiling/add_droplet_distort.py:137: FutureWarning: `estimate` is deprecated since version 0.26 and will be removed in version 2.2. Please use `PiecewiseAffineTransform.from_estimate` class constructor instead.
+  affin.estimate(to_points,from_points)
+/home/woody/iwnt/iwnt196h/Farhad_Vaseghi_MA/third_party/physical_lens_soiling/add_droplet_distort.py:223: FutureWarning: `estimate` is deprecated since version 0.26 and will be removed in version 2.2. Please use `PiecewiseAffineTransform.from_estimate` class constructor instead.
+  affin.estimate(from_points,to_points)
+/home/woody/iwnt/iwnt196h/software/private/conda/envs/stage_a/lib/python3.11/site-packages/pythonperlin/perlin.py:49: RuntimeWarning: divide by zero encountered in divide
+  grads = grads / np.linalg.norm(grads, axis=0)
+/home/woody/iwnt/iwnt196h/software/private/conda/envs/stage_a/lib/python3.11/site-packages/numpy/_core/fromnumeric.py:83: RuntimeWarning: invalid value encountered in reduce
+  return ufunc.reduce(obj, axis, dtype, out, **passkwargs)
+/home/woody/iwnt/iwnt196h/Farhad_Vaseghi_MA/third_party/physical_lens_soiling/generate_texture_paper.py:23: RuntimeWarning: invalid value encountered in cast
+  def to8b(x): return (255*np.clip(x, 0, 1)).astype(np.uint8)
+/home/woody/iwnt/iwnt196h/Farhad_Vaseghi_MA/third_party/physical_lens_soiling/add_mud.py:111: RuntimeWarning: invalid value encountered in divide
+  blur_mask = (blur_mask  - blur_mask.min() )/ (blur_mask.max() - blur_mask.min() )
+/home/woody/iwnt/iwnt196h/Farhad_Vaseghi_MA/third_party/physical_lens_soiling/add_mud.py:117: RuntimeWarning: invalid value encountered in divide
+  dir_mask = np.minimum(1,(  (dir_mask  - dir_mask.min() )/ (dir_mask.max() - dir_mask.min() ) + 0.2 ) )
+/home/woody/iwnt/iwnt196h/Farhad_Vaseghi_MA/third_party/physical_lens_soiling/add_mud.py:143: RuntimeWarning: invalid value encountered in cast
+  image_out = image_out.astype(np.uint8)
+/home/woody/iwnt/iwnt196h/software/private/conda/envs/stage_a/lib/python3.11/site-packages/pythonperlin/perlin.py:199: RuntimeWarning: invalid value encountered in multiply
+  new_noise.append(d * fade)
+/home/woody/iwnt/iwnt196h/Farhad_Vaseghi_MA/third_party/physical_lens_soiling/add_mud.py:39: RuntimeWarning: invalid value encountered in divide
+  dir_texture = (dir_texture  - dir_texture.min() )/ (dir_texture.max() - dir_texture.min() )
+/home/woody/iwnt/iwnt196h/Farhad_Vaseghi_MA/third_party/physical_lens_soiling/add_mud.py:59: RuntimeWarning: invalid value encountered in cast
+  image_out = image_out.astype(np.uint8)
+/home/woody/iwnt/iwnt196h/software/private/conda/envs/stage_a/lib/python3.11/site-packages/pythonperlin/perlin.py:188: RuntimeWarning: invalid value encountered in multiply
+  d = np.sum(v * r, axis=1)
+/home/woody/iwnt/iwnt196h/Farhad_Vaseghi_MA/third_party/physical_lens_soiling/add_mud.py:67: RuntimeWarning: invalid value encountered in divide
+  dir_texture = (dir_texture  - dir_texture.min() )/ (dir_texture.max() - dir_texture.min() )
+/home/woody/iwnt/iwnt196h/Farhad_Vaseghi_MA/third_party/physical_lens_soiling/add_mud.py:102: RuntimeWarning: invalid value encountered in cast
+  image_out = image_out.astype(np.uint8)
+Wrote 14000 images to data/processed/stage_a/images
+Metadata: data/processed/stage_a/metadata.csv
+Split sizes: {'train': 11200, 'test': 1400, 'val': 1400}
+  dirt: 6000/14000 positive (42.9%)
+    severity: {'high': 2043, 'low': 1975, 'medium': 1982}
+  water: 6000/14000 positive (42.9%)
+    severity: {'low': 2011, 'high': 2000, 'medium': 1989}
+  scratch: 6000/14000 positive (42.9%)
+    severity: {'low': 2006, 'high': 1997, 'medium': 1997}
+=== JOB_STATISTICS ===
+=== current date     : Sat Sep 26 12:08:48 AM CEST 2026
+= Job-ID             : 1822266 on tinygpu
+= Job-Name           : build_a_severity
+= Job-Command        : /home/woody/iwnt/iwnt196h/Farhad_Vaseghi_MA/scripts/hpc/build_stage_a_severity.slurm
+= Initial workdir    : /home/woody/iwnt/iwnt196h/Farhad_Vaseghi_MA
+= Queue/Partition    : a100
+= Slurm account      : iwnt with QOS=normal
+= Requested resources:  for 03:00:00
+= Elapsed runtime    : 02:03:22
+= Total RAM usage    : 1.3 GiB of requested  GiB (%)   
+= Node list          : tg097
+= Subm/Elig/Start/End: 2026-09-25T22:05:26 / 2026-09-25T22:05:26 / 2026-09-25T22:05:26 / 2026-09-26T00:08:48
+======================
+=== Quota infos ======
+    Path                 Used     SoftQ    HardQ    Gracetime  Filec    FileQ    FiHaQ    FileGrace    
+    /home/woody             9.4G  1000.0G  1500.0G        N/A      91K   5,000K   7,500K        N/A    
+    /home/hpc               6.0G   104.9G   209.7G        N/A   1,449      500K   1,000K        N/A    
+    /home/vault             0.0K  1048.6G  2097.2G        N/A       1      200K     400K        N/A    
+======================
+=== GPU utilization ==
+gpu_name, gpu_bus_id, pid, gpu_utilization [%], mem_utilization [%], max_memory_usage [MiB], time [ms]
