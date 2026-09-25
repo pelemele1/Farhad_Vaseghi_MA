@@ -29,10 +29,11 @@ from torch.utils.data import DataLoader
 
 from scripts.evaluate_stage_b import flatten_tiles
 from src.data.stage_b_dataset import StageBDataset
+from src.eval.gate import apply_gate, collect_gate_probs
 from src.eval.metrics import collect_predictions
 from src.eval.thresholds import tune_per_class_thresholds
 from src.models.backbone import FrozenYOLOBackbone
-from src.models.distortion_head import StageBDistortionHead
+from src.models.distortion_head import ImpairedGateHead, StageBDistortionHead
 
 
 def clean_row_mask(rows, class_names):
@@ -75,6 +76,15 @@ def main():
         help="Tune a per-class best-F1 threshold on the val split (same as evaluate_stage_b.py), "
         "then use those instead of --threshold when deciding clean-image false positives.",
     )
+    parser.add_argument(
+        "--gate-checkpoint", default=None,
+        help="Optional checkpoints/impaired_gate/impaired_gate_head.pt -- if given, ALSO prints "
+        "a second, gated FP-rate table (see src/eval/gate.py) for a direct before/after comparison.",
+    )
+    parser.add_argument(
+        "--gate-threshold", type=float, default=0.5,
+        help="P(impaired) cutoff for --gate-checkpoint: below this, an image's Stage B predictions are zeroed.",
+    )
     args = parser.parse_args()
 
     device = torch.device(args.device)
@@ -98,16 +108,34 @@ def main():
     loader = DataLoader(dataset, batch_size=args.batch_size, shuffle=False)
     probs, labels = collect_predictions(backbone, head, loader, device)
 
-    rates = clean_false_positive_rates(probs, labels, dataset.rows, class_names, threshold)
-
     threshold_desc = "tuned per-class" if args.tune_thresholds else args.threshold
-    n_clean = next(iter(rates.values()))[1]
-    print(f"Evaluated {n_clean} clean images from split={args.split!r}, threshold={threshold_desc}")
-    print(f"{'class':<10}{'threshold':>10}{'FP rate':>12}")
-    for name in class_names:
-        fp_rate, _ = rates[name]
-        t = threshold[name] if isinstance(threshold, dict) else threshold
-        print(f"{name:<10}{t:>10.3f}{fp_rate:>12.3%}")
+
+    def _print_rates(rates, label=None):
+        n_clean = next(iter(rates.values()))[1]
+        heading = f"Evaluated {n_clean} clean images from split={args.split!r}, threshold={threshold_desc}"
+        if label:
+            heading = f"[{label}] {heading}"
+        print(heading)
+        print(f"{'class':<10}{'threshold':>10}{'FP rate':>12}")
+        for name in class_names:
+            fp_rate, _ = rates[name]
+            t = threshold[name] if isinstance(threshold, dict) else threshold
+            print(f"{name:<10}{t:>10.3f}{fp_rate:>12.3%}")
+
+    rates = clean_false_positive_rates(probs, labels, dataset.rows, class_names, threshold)
+    _print_rates(rates, label="ungated" if args.gate_checkpoint else None)
+
+    if args.gate_checkpoint:
+        gate_ckpt = torch.load(args.gate_checkpoint, map_location=device, weights_only=False)
+        gate_head = ImpairedGateHead(in_channels=backbone.out_channels).to(device)
+        gate_head.load_state_dict(gate_ckpt["head_state_dict"])
+        gate_head.eval()
+        gate_probs = collect_gate_probs(backbone, gate_head, loader, device)
+        gated_probs = apply_gate(probs, gate_probs, threshold=args.gate_threshold)
+
+        gated_rates = clean_false_positive_rates(gated_probs, labels, dataset.rows, class_names, threshold)
+        print()
+        _print_rates(gated_rates, label="gated")
 
 
 if __name__ == "__main__":

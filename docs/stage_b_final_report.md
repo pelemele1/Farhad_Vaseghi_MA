@@ -14,6 +14,19 @@ deleted — only the *dataset* was replaced in place (irreversible, `data/` is g
 older checkpoints can no longer be re-evaluated against their original datasets locally, but
 their numbers are recorded in this report from before the rebuild. **Date:** 2026-09-18.
 
+**Session 20, Round 2 (2026-09-25):** dirt/water's tile-coverage thresholds were recalibrated
+(§4 "Post-decision follow-ups" option 7) and the model retrained on the rebuilt dataset — **the
+current canonical checkpoint is `checkpoints/stage_b_recal/stage_b_head.pt`**, adopted despite a
+mixed per-tile result (water F1 −0.046, dirt/scratch flat) because it reflects a more
+correctly-calibrated ground truth, same "adopted anyway" precedent as the combo rebuild above.
+The impaired-gate head (new this round, see
+[`stage_a_final_report.md`](stage_a_final_report.md) §7) is now used as a **real inference-time
+gate** (§4 option 8, `src/eval/gate.py`) — the combination of recalibrated thresholds + gate is
+what actually answers "predict clean easily": clean-image false-positive rate down from a
+23-32% baseline to 6-7% across all three classes, at a real, measured cost to scratch's gated
+ROC-AUC (−0.040). Also new this round: a 5-column per-sample report figure with 0-1 colorbars
+(§4a) and a derived (not trained) general/any-distortion tile channel (§4b).
+
 This is a standalone summary of Part 2, Stage B — distinct from
 [`development_log.md`](development_log.md)'s chronological session-by-session record. See
 the log (Sessions 15-18) for the full narrative; this document is the result, updated as it
@@ -131,6 +144,51 @@ differ) are in the `threshold` column of every results table in §4 below, along
 ---
 
 ## 4. Results
+
+### Canonical result (Session 20, Round 2): recalibrated-threshold retrain, gated
+
+Focal α=0.75, γ=2.0, retrained on the dirt/water-recalibrated combo dataset (§4 "Post-decision
+follow-ups" option 7) — HPC job `1821754`:
+
+![Stage B training curve, recalibrated dataset (job 1821754)](images/stage_b_training_curve_recal.jpg)
+
+Train loss: 0.0316 → 0.0248, plateaued by ~epoch 10 — flatter and faster-converging than the
+pre-recalibration combo run, consistent with a cleaner (less noisy) training signal from the
+stricter tile thresholds.
+
+![Stage B per-tile metrics, recalibrated dataset](images/stage_b_test_metrics_recal.jpg)
+
+**Per-class metrics (held-out test split, 800 images, 204800 tiles, tuned thresholds, ungated)**
+
+| class | threshold | precision | recall | F1 | AP | ROC-AUC | support | vs. stage_b_combo F1 |
+|---|---|---|---|---|---|---|---|---|
+| dirt | 0.589 | 0.745 | 0.754 | 0.749 | 0.843 | 0.932 | 48273 | 0.755→0.749 (−0.006) |
+| water | 0.583 | 0.729 | 0.813 | 0.769 | 0.838 | 0.931 | 54686 | **0.815→0.769 (−0.046)** |
+| scratch | 0.513 | 0.650 | 0.600 | 0.624 | 0.634 | 0.955 | 6362 | 0.627→0.624 (−0.003) |
+
+![Stage B ROC and precision-recall curves, recalibrated dataset](images/stage_b_roc_pr_curves_recal.jpg)
+
+**Not a win on the standard per-tile metrics — dirt/scratch flat, water down a real 4.6
+points of F1** (see §4 option 7 for the full discussion: mechanically, water's positive-tile
+support dropped 71210→54686 under the stricter 0.25 threshold, giving the model both less
+signal to train on and a smaller, harder population to be measured against). **This checkpoint
+is adopted as canonical anyway**, for two reasons that matter more than the per-tile score:
+(1) supervisor item 1 explicitly asked for more precise ground-truth tile grids, which this
+delivers regardless of the downstream metric shift, and (2) the real payoff isn't in this
+table at all — it's the clean-image false-positive rate, addressed together with the real
+inference-time gate below (§4 option 8), where the combination of this retrain + the gate cuts
+every class's clean-image FP rate to 6-7% (from a 23-32% baseline).
+
+![Stage B sample predictions, recalibrated dataset](images/stage_b_sample_predictions_recal.jpg)
+![Stage B combo sample, recalibrated dataset](images/stage_b_combo_sample_recal.jpg)
+
+`checkpoints/stage_b_recal/stage_b_head.pt` is now the canonical Stage B checkpoint, used
+together with `checkpoints/impaired_gate/impaired_gate_head.pt` as a real inference-time gate
+(§4 option 8) — see there for the 5-column report figure showing the gate in action on real
+clean/distorted test images.
+
+<details>
+<summary>Session 19+ result (combo dataset, pre-recalibration, superseded — kept for reference)</summary>
 
 ### Canonical result (Session 19+): combo dataset retrain
 
@@ -277,6 +335,8 @@ measurably better than every earlier attempt (§4, option 3 above).
 
 </details>
 
+</details>
+
 ### Post-decision follow-ups (Session 18-19, tried in order)
 
 Three further improvement attempts against the α=0.75 winner:
@@ -372,6 +432,140 @@ Three further improvement attempts against the α=0.75 winner:
    harder multi-label combo task than something a loss-reweighting knob can undo. Uniform
    α=0.75 (`checkpoints/stage_b_combo/`) stays canonical;
    `checkpoints/stage_b_combo_perclass_alpha/` kept on disk for the record.
+7. **Dirt/water tile-threshold recalibration** (Session 20, Round 2, supervisor item 1 —
+   "more precise ground-truth tile grids") — scratch's coverage threshold was already
+   diagnosed and fixed (option 3 above); dirt/water were still at their original, never-
+   measured `DEFAULT_TILE_THRESHOLDS` default (0.15 each). Generalized
+   `scripts/diagnose_scratch_threshold.py` into `scripts/diagnose_tile_thresholds.py --effect
+   {dirt,water,scratch}` and ran it for dirt/water. Unlike scratch (a thin line with a sharp
+   natural coverage boundary), dirt/water are broad-area texture blends with no sharp cutoff —
+   a judgment call, not a discovered boundary:
+
+   | effect | mean tiles touched (of 256) | median coverage of touched tiles | positive rate @ 0.15 (old default) |
+   |---|---|---|---|
+   | dirt | 236.9 | 0.205 | 51.4% |
+   | water | 230.3 | 0.271 | 64.3% |
+
+   Over half the tiles either mask merely *grazes* still counted fully positive at 0.15 — new
+   thresholds chosen to target each effect's own median touched-tile coverage (a tile must be
+   substantially, not just marginally, affected): **dirt 0.15→0.20, water 0.15→0.25** (scratch
+   unchanged at 0.015). Rebuilt `data/processed/stage_b_scratch15` in place with all 3
+   thresholds (`scripts/build_stage_b_dataset.py --dirt-threshold 0.20 --water-threshold 0.25
+   --scratch-threshold 0.015`) — confirmed landing as predicted: dirt tile-positive rate
+   51.4%→23.7%, water 64.3%→27.0%. Retrained the same canonical config (focal, α=0.75, γ=2.0,
+   40 epochs) on the rebuilt dataset for a clean single-variable comparison — HPC job
+   `1821754`, `checkpoints/stage_b_recal`.
+
+   HPC job `1821754` finished in ~10 minutes on an a100 (vs. ~4 minutes locally-projected-to-
+   6-hours for the dataset *rebuild* itself, which is why the rebuild — not the retrain — was
+   moved to HPC; see `docs/development_log.md`). Evaluated with `--tune-thresholds`
+   (per-class thresholds re-tuned on the rebuilt val split, same convention as every other
+   result in this report):
+
+   | class | metric | stage_b_combo (old thresholds, tuned) | stage_b_recal (new thresholds, tuned) | Δ |
+   |---|---|---|---|---|
+   | dirt | P/R/F1/AP/ROC-AUC | .749/.762/**.755**/.849/.926 | .745/.754/**.749**/.843/.932 | F1 −0.006 |
+   | water | P/R/F1/AP/ROC-AUC | .760/.878/**.815**/.880/.935 | .729/.813/**.769**/.838/.931 | F1 −0.046 |
+   | scratch | P/R/F1/AP/ROC-AUC | .659/.598/**.627**/.634/.956 | .650/.600/**.624**/.634/.955 | F1 −0.003 |
+
+   **Not a clean win on the standard per-tile metrics** — dirt/scratch are flat within noise,
+   but water's F1 drops a real 4.6 points (AP −0.042). Some of this is mechanical: water's
+   support dropped from 71210 to 54686 tiles (the stricter 0.25 threshold means fewer tiles
+   qualify as positive at all, in both train and test), giving the model less positive signal
+   and the metric itself a smaller, harder population to average over. This is the same
+   tension already flagged when scratch's threshold was first tuned (option 3) and when combos
+   were added (option 5): a "more correct" ground-truth definition doesn't automatically also
+   raise the model's score against it, since the model has to learn the *new*, more demanding
+   definition, not just get evaluated more leniently.
+
+   **The "side effect" above (water's clean-FP rate dropping to 3% purely from re-tuning the
+   threshold) does not survive retraining, and this matters.** That number came from
+   evaluating the *old*, unretrained `stage_b_combo` checkpoint against the new threshold — a
+   fresh model trained end-to-end on the stricter water definition doesn't inherit it: on
+   `stage_b_recal`, water's ungated clean-FP rate is back up at 24% (see option 8's table
+   below), essentially matching the original 23% baseline. The threshold-recalibration retrain
+   is a real, if modest, improvement on the standard localization metrics for dirt/scratch and
+   a real cost for water — but **it is not, on its own, a reliable fix for clean-image false
+   positives once the model is actually retrained on it.** The gate below is what does that
+   job reliably.
+
+   **A side effect worth reporting on its own, measured before the retrain even started:**
+   re-evaluating the *unchanged* `checkpoints/stage_b_combo` checkpoint against the rebuilt
+   (recalibrated-threshold) test split, with thresholds re-tuned on the rebuilt val split,
+   already changed the clean-image false-positive rate — not because the model's raw
+   probabilities changed (same checkpoint, pixel-identical clean images regardless of
+   threshold), but because the *tuned decision threshold itself* shifted higher: the rebuilt
+   val split's ground truth requires stronger evidence to count a tile positive, so the
+   best-F1 threshold search lands at a stricter cutoff.
+
+   | class | tuned threshold, old dataset | tuned threshold, rebuilt dataset | clean-image FP rate, old dataset | clean-image FP rate, rebuilt dataset |
+   |---|---|---|---|---|
+   | dirt | 0.523 | 0.549 | 32.0% | 20.0% |
+   | water | 0.569 | 0.647 | 23.0% | 3.0% |
+   | scratch | 0.539 | 0.534 | 26.0% | 28.0% |
+
+   (Both columns use the **same, unretrained `checkpoints/stage_b_combo` checkpoint** — only
+   the dataset/tuned-threshold changed.) Dirt/water both improved here purely from more
+   demanding ground truth reshaping what "best F1 threshold" means — but as the retrain
+   paragraph above found, **this specific effect does not survive actually retraining the
+   model on the new thresholds** (see option 8's table below, where water's ungated rate is
+   back up at 24% on `stage_b_recal`). Kept in the report as an interesting, real, but
+   checkpoint-specific/non-durable observation, not a fix to rely on.
+
+8. **Real inference-time gate** (Session 20, Round 2, supervisor item 2 — "model should easily
+   predict clean") — reverses the impaired-gate head's original reporting-only design (see
+   [`stage_a_final_report.md`](stage_a_final_report.md) §7): `src/eval/gate.py::apply_gate`
+   now zeroes every tile prediction for an image the gate calls "not impaired," applied before
+   every downstream metric/figure in both `evaluate_stage_b.py --gate-checkpoint` (prints an
+   ungated *and* a gated table, so the effect is directly comparable) and
+   `visualize_stage_b_results.py --gate-checkpoint`.
+
+   Measured via `scripts/diagnose_clean_false_positives.py --gate-checkpoint` against the
+   actual final checkpoint, `checkpoints/stage_b_recal` (tuned thresholds), the number that
+   matters for this report's bottom line:
+
+   | class | Session 20 Phase 7 baseline (stage_b_combo, old dataset) | ungated, stage_b_recal | gated, stage_b_recal |
+   |---|---|---|---|
+   | dirt | 32.0% | 19.0% | **7.0%** |
+   | water | 23.0% | 24.0% | **6.0%** |
+   | scratch | 26.0% | 29.0% | **6.0%** |
+
+   **The gate, not the threshold recalibration, is what reliably drives this down.** Retraining
+   on recalibrated thresholds alone left dirt marginally better, and left water/scratch flat or
+   slightly worse — but gating cuts every class to 6-7%, roughly a 3-5x reduction from the
+   ungated `stage_b_recal` numbers and a clear win over the original Phase 7 baseline across
+   the board. This matches the standalone gate accuracy already reported
+   ([`stage_a_final_report.md`](stage_a_final_report.md) §7, F1=0.971) — a dedicated, well-
+   trained binary classifier for "impaired vs. not" is a more direct and durable fix for
+   "predict clean easily" than reshaping Stage B's own tile-level training signal.
+
+   ![Stage B 5-column report, recal checkpoint + gate, page 1](images/stage_b_full_report_recal_page1.jpg)
+
+   All 3 genuinely clean rows above (columns 1-2 pixel-identical) are correctly gated
+   "not impaired," with the prediction panel (column 4) fully suppressed — dark purple, not
+   just low-probability. The 3 real-dirt rows show normal, unsuppressed predictions, correctly
+   gated "impaired."
+
+   **Known tradeoff, by design, with a concrete cost measured:** this reintroduces the coupling
+   the reporting-only design deliberately avoided — a gate false negative now silently
+   suppresses genuine Stage B detections too. It shows up directly in the full-test-split
+   (not just clean-image) gated vs. ungated metrics on `stage_b_recal`:
+
+   | class | metric | ungated | gated | Δ |
+   |---|---|---|---|---|
+   | dirt | F1 / AP / ROC-AUC | .749/.843/.932 | .750/.845/.933 | ~flat |
+   | water | F1 / AP / ROC-AUC | .769/.838/.931 | .769/.839/.932 | ~flat |
+   | scratch | F1 / AP / ROC-AUC | .624/.634/**.955** | .620/.621/**.915** | ROC-AUC −0.040 |
+
+   Dirt/water are essentially unaffected (most test images are genuinely impaired, so the gate
+   correctly leaves them alone) — but scratch's ROC-AUC drops a real 4 points, the clearest
+   sign yet that the gate occasionally misses a genuinely-scratched image and silently zeroes
+   out an otherwise-correct scratch detection. The gate's own standalone accuracy is very high
+   (F1=0.971, AP=0.998, ROC-AUC=0.983 — see
+   [`stage_a_final_report.md`](stage_a_final_report.md) §7), so this tradeoff is judged worth
+   it given the clean-image FP win above, but it is a real, not just theoretical, cost —
+   Stage B's *reported* recall on a genuinely impaired image now depends on the gate agreeing
+   it's impaired, not on Stage B's own head alone.
 
 ### Sample tile-grid predictions
 
@@ -383,12 +577,70 @@ test-split images:
 
 ---
 
+## 4a. 5-column report figure (Session 20, supervisor item 1)
+
+The sample-prediction overlay above (green/red alpha-blended on the real photo) is a good
+qualitative check but has no way to show an actual probability *value* per tile — color is a
+blend of two channels, not a single legible scalar. A second, complementary figure was added
+specifically for quantitative per-tile reading:
+`scripts/visualize_stage_b_results.py::plot_stage_b_five_column_report`, one row per sample,
+5 columns:
+
+1. **Original** — the clean (undistorted) variant of the same source image.
+2. **Distorted** — the actual model input.
+3. **GT tiles** — the ground-truth tile grid for that sample's class, `imshow(cmap="viridis",
+   vmin=0, vmax=1)` with a colorbar (binary: dark purple = 0, yellow = 1).
+4. **Predicted probability** — the model's raw, unthresholded per-tile probability for that
+   class, same colormap and 0-1 colorbar — so a tile's exact confidence is directly readable,
+   not just "red enough to look positive."
+5. **PR curve (AUC-PR)** — that class's precision-recall curve, computed once over the whole
+   flattened test split and reused for every row of that class (AUC-PR is a whole-split
+   statistic, not a per-sample one — recomputing an identical curve per row would be
+   pointless), with the AP value annotated.
+
+Paginated at `--rows-per-page` (default 6) rows per file:
+`stage_b_full_report{tag}_page{N}.jpg`. See §4b below for how this figure looks once the
+impaired-gate head (§ Post-decision follow-ups, option 8) is wired in as `--gate-checkpoint`.
+
+## 4b. General/any-distortion tile channel (Session 20, supervisor item 3)
+
+Supervisor item 3 also asked for the pipeline to reconstruct a general "is *any* class active
+here" tile-wise structure from the union of the 3 per-class ones. Read literally ("the union
+of all the classes has to reach the initial tile-wise structure"), this is a
+**reconstruction/consistency check on the 3 already-trained channels**, not a request for new
+supervision — so `src/eval/general_channel.py` derives it rather than training a 4th output:
+
+- `general_tile_labels(tile_labels)`: logical OR across the class axis — ground truth "any
+  class active" per tile.
+- `general_tile_probs(tile_probs)`: noisy-OR combine of the 3 predicted probabilities,
+  `1 - Π(1 - p_c)` (chosen over plain `max(p_c)` since noisy-OR correctly rewards two classes
+  each being *moderately* likely at the same tile, which `max` alone under-reports).
+- `general_channel_consistency(...)`: a diagnostic, not a loss — fraction of tiles where the
+  thresholded per-class OR agrees with the thresholded noisy-OR combine.
+
+A 4th trained channel would only re-learn a deterministic function of 3 channels the model
+already predicts well — no new information, at the cost of a new retrain and a new
+pos_weight/alpha tuning problem. Kept out of scope unless the derived version turns out to
+disagree with the per-class predictions by more than noise (`general_channel_consistency`
+exists specifically to check that).
+
+---
+
 ## 5. Known limitations
 
-- **Scratch localization improved a lot but dirt/water paid a small price.** Current: scratch
-  F1 0.627/AP 0.634 (up from 0.462/0.409), dirt F1 0.755 (down from 0.803), water F1 0.815 (down
-  from 0.826) — all at tuned per-class thresholds. Still a coarse signal, not a pixel-precise
-  localizer for any class.
+- **Scratch localization improved a lot over the original dataset but dirt/water paid a small
+  price**, and the Round 2 threshold recalibration cost water a further, real chunk of F1/AP
+  (§4 option 7) — current: dirt F1 0.749, water F1 0.769, scratch F1 0.624 (all tuned
+  thresholds, `stage_b_recal`, ungated). Still a coarse signal, not a pixel-precise localizer
+  for any class.
+- **The gate fixes clean-image false positives but couples the two heads' error rates** (§4
+  option 8) — a gate false negative silently zeroes a genuinely correct Stage B detection.
+  Measured cost: scratch's gated ROC-AUC drops 0.955→0.915 on the full test split. Not a
+  hypothetical tradeoff — a real one, judged worth it given the clean-image FP win, but real.
+- **The general/any-distortion tile channel is derived, not independently verified against real
+  ambiguous cases** (§4b) — its noisy-OR combine is a reasonable modeling choice, not something
+  trained or evaluated against its own ground truth beyond the `general_channel_consistency`
+  self-check.
 - **Combos now included, but untested against real multi-distortion photos** — same caveat as
   [`stage_a_final_report.md`](stage_a_final_report.md) §5: synthetic combos are covered now,
   real photos with two distortions at once are not.
@@ -396,25 +648,38 @@ test-split images:
   [`stage_a_final_report.md`](stage_a_final_report.md) §5, unchanged here since Stage B reuses
   the same backbone and dataset-generation pipeline.
 - **Final configuration:** focal loss, α=0.75, γ=2.0, trained on the combo-inclusive,
-  scratch-threshold-1.5% dataset (`checkpoints/stage_b_combo/stage_b_head.pt`,
-  `data/processed/stage_b_scratch15`).
+  recalibrated-threshold dataset (`checkpoints/stage_b_recal/stage_b_head.pt`,
+  `data/processed/stage_b_scratch15`, dirt/water/scratch thresholds 0.20/0.25/0.015), gated at
+  inference time by `checkpoints/impaired_gate/impaired_gate_head.pt`
+  (`src/eval/gate.py::apply_gate`, threshold 0.5).
 
 ---
 
 ## 6. Reproducing this report
 
 ```bash
-# canonical (combo dataset, focal alpha=0.75)
+# canonical (Session 20 Round 2: recalibrated thresholds, focal alpha=0.75, gated at eval time)
 python scripts/build_stage_b_dataset.py --source data/raw/mio_tcd/images \
-    --out data/processed/stage_b_scratch15 --variants 8 --include-combos --scratch-threshold 0.015
-python scripts/evaluate_stage_b.py --checkpoint checkpoints/stage_b_combo/stage_b_head.pt \
-    --data data/processed/stage_b_scratch15 --split test --tune-thresholds
-python scripts/visualize_stage_b_results.py --checkpoint checkpoints/stage_b_combo/stage_b_head.pt \
-    --data data/processed/stage_b_scratch15 --split test --log-file stage_b_combo_1815701.out \
-    --tag _combo --out-dir docs/images
+    --out data/processed/stage_b_scratch15 --variants 8 --include-combos \
+    --dirt-threshold 0.20 --water-threshold 0.25 --scratch-threshold 0.015
+python scripts/evaluate_stage_b.py --checkpoint checkpoints/stage_b_recal/stage_b_head.pt \
+    --data data/processed/stage_b_scratch15 --split test --tune-thresholds \
+    --gate-checkpoint checkpoints/impaired_gate/impaired_gate_head.pt
+python scripts/diagnose_clean_false_positives.py --checkpoint checkpoints/stage_b_recal/stage_b_head.pt \
+    --data data/processed/stage_b_scratch15 --split test --tune-thresholds \
+    --gate-checkpoint checkpoints/impaired_gate/impaired_gate_head.pt
+python scripts/visualize_stage_b_results.py --checkpoint checkpoints/stage_b_recal/stage_b_head.pt \
+    --data data/processed/stage_b_scratch15 --split test --log-file stage_b_recal_1821754.out \
+    --gate-checkpoint checkpoints/impaired_gate/impaired_gate_head.pt --tag _recal --out-dir docs/images
+
+# threshold diagnostics that motivated the recalibration above
+python scripts/diagnose_tile_thresholds.py --effect dirt --n 30
+python scripts/diagnose_tile_thresholds.py --effect water --n 30
 
 # earlier loss/dataset comparisons (superseded, kept for reference -- their datasets no longer
-# exist locally since data/processed/stage_b_scratch15 was replaced in place by the rebuild above)
+# exist locally since data/processed/stage_b_scratch15 was replaced in place by both rebuilds)
+python scripts/evaluate_stage_b.py --checkpoint checkpoints/stage_b_combo/stage_b_head.pt \
+    --data data/processed/stage_b_scratch15 --split test --tune-thresholds   # pre-recalibration dataset originally
 python scripts/evaluate_stage_b.py --checkpoint checkpoints/stage_b_ssd/stage_b_head.pt \
     --data data/processed/stage_b_scratch15 --split test   # pre-combo dataset originally
 python scripts/evaluate_stage_b.py --checkpoint checkpoints/stage_b_alpha75/stage_b_head.pt \
@@ -425,13 +690,18 @@ python scripts/threshold_sweep_stage_b.py --checkpoint checkpoints/stage_b/stage
 
 All checkpoints (`stage_b_head_bce_baseline.pt`, `stage_b_head_focal.pt`,
 `stage_b_alpha75/stage_b_head.pt`, `stage_b_scratch15/stage_b_head.pt`,
-`stage_b_ssd/stage_b_head.pt`, `stage_b_combo/stage_b_head.pt`) and the raw job logs
+`stage_b_ssd/stage_b_head.pt`, `stage_b_combo/stage_b_head.pt`,
+`stage_b_recal/stage_b_head.pt`, `impaired_gate/impaired_gate_head.pt`) and the raw job logs
 (`stage_b_1799124.out`, `stage_b_1799134_focal.out`, `stage_b_s15_1802973.out`,
 `eval_s15_1802985.out`, `stage_b_ssd_1815542.out`, `eval_ssd_1815558.out`,
-`stage_b_combo_1815701.out`, `eval_b_combo_1815738.out`) exist locally and (job logs and
+`stage_b_combo_1815701.out`, `eval_b_combo_1815738.out`, `build_b_recal_1821713.out`,
+`stage_b_recal_1821754.out`, `impaired_gate_1821693.out`) exist locally and (job logs and
 checkpoints, not the now-replaced dataset) on the FAU HPC `$WORK`. `data/processed/stage_b`
 (the original 3%-threshold, single-distortion dataset) is the only dataset still unchanged from
 Session 16 — every other Stage B dataset generation since has written to
-`data/processed/stage_b_scratch15`, rebuilt twice in place (scratch threshold, then combos). The
-pre-rebuild α=0.75 checkpoint additionally exists on Google Drive (see `development_log.md`
-Session 18) since it was originally trained there.
+`data/processed/stage_b_scratch15`, rebuilt three times in place (scratch threshold, then
+combos, then dirt/water recalibration). The pre-rebuild α=0.75 checkpoint additionally exists
+on Google Drive (see `development_log.md` Session 18) since it was originally trained there.
+The dirt/water-recalibration rebuild (§4 option 7) was run on HPC
+(`scripts/hpc/build_stage_b_recal.slurm`) rather than locally — the water-droplet effect's
+skimage warp made the local build impractically slow (~850/8000 images in 40 minutes).

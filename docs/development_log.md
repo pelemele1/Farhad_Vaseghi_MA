@@ -1604,3 +1604,86 @@ Out of 100 genuinely clean test images, the model still fires positive on
 23-32% of them per class, even after per-class threshold tuning -- this is
 the quantified baseline Phase 8 (threshold recalibration retrain) and
 Phase 9 (real gate) are both measured against.
+
+### Phase 8 -- Rebuild + retrain
+
+Rebuilt `data/processed/stage_b_scratch15` in place with dirt=0.20,
+water=0.25 (scratch unchanged at 0.015). Local build proved impractically
+slow -- the water-droplet effect's skimage `PiecewiseAffineTransform.estimate`
+warp dominated runtime, only ~850/8000 images done after 40 minutes locally
+(extrapolated ~6h total). Moved the build itself to HPC
+(`scripts/hpc/build_stage_b_recal.slurm`, job `1821713`, CPU-bound but
+TinyGPU requires `--gres=gpu:1` on every job regardless) -- finished all
+8000 images in 1h30m. Confirmed thresholds landed as intended: dirt
+tile-positive rate 51.4%->23.7%, water 64.3%->27.0%.
+
+Retrained the canonical focal (α=0.75, γ=2.0, 40 epochs) config on the
+rebuilt dataset for a clean single-variable comparison. User asked to
+start the job "as soon as possible" while all `rtx3080` nodes were fully
+allocated (SLURM's own backfill estimate: 6h45m wait) -- submitted
+duplicate jobs to `v100` and `a100` too (TinyGPU needs an explicit
+`--gres=gpu:<type>:1` once the partition isn't the default rtx3080) and
+cancelled the two that lost the race once the `a100` job started running
+almost immediately (job `1821754`, node tg091). Finished in ~10 minutes.
+
+**Result: not a clean win on the standard per-tile metrics.** vs.
+`stage_b_combo` (tuned thresholds): dirt F1 0.755->0.749, water F1
+0.815->**0.769** (a real drop, support fell 71210->54686 under the
+stricter threshold), scratch F1 0.627->0.624 (flat). Adopted as canonical
+anyway -- supervisor item 1 explicitly asked for more precise ground
+truth, which this delivers regardless of the downstream metric shift, and
+(more importantly) this retrain isn't the primary fix for item 2 -- see
+Phase 9.
+
+**A notable, non-durable side effect found along the way:** re-evaluating
+the *unretrained* `stage_b_combo` checkpoint against the rebuilt dataset
+(tuned thresholds re-computed on the rebuilt val split) dropped water's
+clean-image FP rate from 23% to 3%, purely because the tuned decision
+threshold itself shifted higher (stricter val-split ground truth -> higher
+best-F1 cutoff) -- no retraining involved. This did **not** carry over to
+the actual retrained `stage_b_recal` checkpoint (its own ungated water
+clean-FP rate is 24%, back near baseline) -- a fresh model trained on the
+new threshold doesn't inherit the old model's now-miscalibrated-but-lucky
+threshold interaction. Recorded as a cautionary finding: an evaluation-
+time side effect measured on the wrong checkpoint can look like a fix
+that isn't one.
+
+### Phase 9 -- Real inference-time gate
+
+Reversed the Phase 2 "reporting-only" gate design after the 5-column
+figure's first real output showed clean images still predicting non-
+trivial distortion probability (user: "the model predicted specific
+distortion" on images with no distortion). New `src/eval/gate.py`
+(`collect_gate_probs`, moved from the visualize script; `apply_gate`,
+zeroes an image's whole tile-prediction grid when the gate calls it "not
+impaired"). Wired into both `evaluate_stage_b.py` (`--gate-checkpoint`,
+prints ungated + gated tables) and `visualize_stage_b_results.py` (now
+actually gates `probs`, not just annotates titles).
+
+**Clean-image FP rate, `stage_b_recal`, tuned thresholds, before vs. after
+each fix:**
+
+| class | Phase 7 baseline (stage_b_combo) | ungated (stage_b_recal) | gated (stage_b_recal) |
+|---|---|---|---|
+| dirt | 32.0% | 19.0% | **7.0%** |
+| water | 23.0% | 24.0% | **6.0%** |
+| scratch | 26.0% | 29.0% | **6.0%** |
+
+The gate is what actually does the job -- threshold recalibration alone
+left water/scratch flat or worse, but gating cuts every class to 6-7%
+regardless. Measured cost of the coupling this reintroduces: on the full
+test split, gated dirt/water are ~flat vs. ungated, but scratch's gated
+ROC-AUC drops 0.955->0.915 -- a real, not hypothetical, price for the
+false-positive win (gate false negatives occasionally suppress a genuine
+scratch detection).
+
+Visually confirmed in the regenerated 5-column report
+(`docs/images/stage_b_full_report_recal_page1.jpg`): all 3 clean-kind rows
+now show a fully suppressed (dark purple, not just low-probability)
+prediction panel, correctly gated "not impaired."
+
+Both final reports (`stage_a_final_report.md` §7 new,
+`stage_b_final_report.md` §4/§4a/§4b/§5/§6 updated) and this entry written
+up same-session. `checkpoints/stage_b_recal/stage_b_head.pt` +
+`checkpoints/impaired_gate/impaired_gate_head.pt` are the new canonical
+pair; `checkpoints/stage_b_combo/` kept for comparison.

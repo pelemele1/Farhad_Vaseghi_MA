@@ -4,7 +4,12 @@
 also include multi-distortion (combo) variants and the model retrained on it — **the current
 canonical result is the combo-dataset retrain** (`data/processed/stage_a`,
 `checkpoints/stage_a_combo/stage_a_head.pt`). The original single-distortion-only result is kept
-below as a historical reference (§4). **Date:** 2026-09-18.
+below as a historical reference (§4). **Session 20:** a new, separate image-level binary
+"impaired/not impaired" gate head was added on top of this (§7) — trained on the same combo
+dataset, evaluates very well standalone, and (as of Session 20 Round 2) is used as a real
+inference-time filter on Stage B's own tile predictions — see
+[`stage_b_final_report.md`](stage_b_final_report.md). **Date:** 2026-09-18, gate head added
+2026-09-25.
 
 This is a standalone summary of Part 2, Stage A — distinct from
 [`development_log.md`](development_log.md)'s chronological session-by-session record. See
@@ -294,3 +299,65 @@ python scripts/evaluate_stage_a.py --checkpoint checkpoints/stage_a/stage_a_head
 the raw stdout of the actual TinyGPU training jobs; `eval_a_combo_1815727.out` is the combo
 checkpoint's evaluation job output. All exist locally and (job logs only, not the now-replaced
 dataset) on the FAU HPC `$WORK` — see `docs/hpc_stage_a.md` for cluster paths.
+
+---
+
+## 7. Impaired/not-impaired gate (Session 20)
+
+Supervisor feedback item 3: the pipeline should first be able to say **whether an image is
+impaired at all**, as a genuine binary decision, separate from *which* class(es) are present.
+This is distinct from Stage A's own 3-class head above (which already implies "impaired" as
+"any of the 3 probabilities is high") — the gate is a dedicated 2-class classifier, trained
+with its own loss, whose only job is that one yes/no call.
+
+### Architecture
+
+`ImpairedGateHead` (`src/models/distortion_head.py`): same GAP + 2×FC shape as
+`StageADistortionHead` above, but 2 output logits (`not_impaired`, `impaired`) instead of 3,
+and kept as its own class specifically so its different loss family is visible at the type
+level — everywhere else in this project uses sigmoid/BCE-family losses on independent
+per-class outputs; this head's 2 logits are mutually exclusive, so it uses **softmax +
+`nn.CrossEntropyLoss`** instead (supervisor item 2's Cross-Entropy request). Label
+(`impaired = 1` if any of dirt/water/scratch is 1, else 0) is derived on the fly from the
+existing 3-class labels (`src/data/stage_a_dataset.py::ImpairedGateDataset`) — no dataset
+rebuild or new `metadata.csv` column needed.
+
+### Training
+
+Trained on the same combo dataset as Stage A's canonical result (`data/processed/stage_a`,
+8000 images), same 20-epoch/lr-1e-3 recipe. HPC job `1821693`: train_loss 0.303 → 0.136,
+val_loss converged to ~0.15-0.18 (noisy but stable), 23:52 elapsed.
+`checkpoints/impaired_gate/impaired_gate_head.pt`.
+
+### Results (held-out test split, 800 images, 700 impaired / 100 clean)
+
+| class | threshold | precision | recall | F1 | AP | ROC-AUC | support |
+|---|---|---|---|---|---|---|---|
+| impaired | 0.289 (tuned) | 0.975 | 0.966 | 0.971 | 0.998 | 0.983 | 700 |
+
+A near-solved binary problem on synthetic data — every metric above 0.96. This is expected:
+distinguishing "any distortion at all" from "clean" is a much coarser signal than telling
+dirt/water/scratch apart, and Stage A's own per-class results (§4) already show the underlying
+3-class problem is close to solved too.
+
+### Use as a real inference-time gate (Session 20, Round 2)
+
+Originally this head was wired as reporting-only (annotates Stage B's results figure, never
+touches its predictions) — a deliberate choice to avoid coupling the two heads' error rates.
+That decision was reversed after reviewing the new 5-column Stage B figure (see
+[`stage_b_final_report.md`](stage_b_final_report.md)): clean images were still visibly
+predicting non-trivial distortion probability. The gate is now used as a real filter —
+`src/eval/gate.py::apply_gate` zeroes Stage B's tile predictions for any image this head calls
+"not impaired" — with the tradeoff spelled out there (a gate false negative now silently
+suppresses genuine Stage B detections too).
+
+### Reproduction
+
+```bash
+python scripts/train_impaired_gate.py --data data/processed/stage_a --epochs 20 --device cuda \
+    --out checkpoints/impaired_gate
+python scripts/evaluate_impaired_gate.py --checkpoint checkpoints/impaired_gate/impaired_gate_head.pt \
+    --data data/processed/stage_a --split test --tune-thresholds
+```
+
+`impaired_gate_1821693.out` is the raw stdout of the actual TinyGPU training job.
