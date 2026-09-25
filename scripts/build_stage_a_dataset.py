@@ -22,18 +22,24 @@ def main():
     parser.add_argument("--out", default="data/processed/stage_a", help="Output directory")
     parser.add_argument("--variants", type=int, default=4,
                          help="Variants per source image (cycles clean/dirt/water/scratch, balanced; "
-                         "use 8 with --include-combos for exact balance across all 8 kinds)")
+                         "use 8 with --include-combos, 10 with --include-severity, or 14 with both "
+                         "for exact balance across the full kind pool)")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--include-combos", action="store_true",
                          help="Also generate multi-distortion variants (the 3 pairs + the full triple, "
                          "see COMBO_KINDS in src/soiling/dataset_builder.py) alongside the original "
                          "clean/single-effect kinds -- 8 kinds total. Default: off, original behavior.")
+    parser.add_argument("--include-severity", action="store_true",
+                         help="Split each single-effect kind into 3 balanced severity levels "
+                         "(low/medium/high, see SEVERITY_VARIANT_KINDS in "
+                         "src/soiling/dataset_builder.py) -- 10 kinds total (or 14 combined with "
+                         "--include-combos). Default: off, every active class is full-strength.")
     args = parser.parse_args()
 
     rows = build_stage_a_dataset(
         args.source, args.out,
         variants_per_image=args.variants, seed=args.seed,
-        include_combos=args.include_combos,
+        include_combos=args.include_combos, include_severity=args.include_severity,
     )
 
     by_split = Counter(r["split"] for r in rows)
@@ -43,6 +49,9 @@ def main():
     for name in ("dirt", "water", "scratch"):
         positives = sum(r[name] for r in rows)
         print(f"  {name}: {positives}/{len(rows)} positive ({positives / len(rows):.1%})")
+        if args.include_severity:
+            by_level = Counter(r[f"{name}_severity"] for r in rows if r[name] == 1)
+            print(f"    severity: {dict(by_level)}")
 
 
 if __name__ == "__main__":

@@ -18,6 +18,7 @@ from torch.utils.data import DataLoader
 
 from src.data.stage_a_dataset import StageADataset
 from src.eval.metrics import collect_predictions, compute_metrics  # noqa: F401 (re-exported for tests/callers)
+from src.eval.severity import compute_metrics_by_severity
 from src.eval.thresholds import tune_per_class_thresholds
 from src.models.backbone import FrozenYOLOBackbone
 from src.models.distortion_head import StageADistortionHead
@@ -37,6 +38,11 @@ def main():
         "--tune-thresholds", action="store_true",
         help="Tune a per-class best-F1 threshold on the val split, then evaluate --split with those "
         "instead of the single --threshold value for every class (see src/eval/thresholds.py).",
+    )
+    parser.add_argument(
+        "--by-severity", action="store_true",
+        help="Also print a per-class, per-severity-level (low/medium/high) metrics breakdown "
+        "(requires a dataset built with --include-severity; see src/eval/severity.py).",
     )
     args = parser.parse_args()
 
@@ -72,6 +78,15 @@ def main():
     for row in rows:
         print(f"{row['class']:<10}{row['threshold']:>10.3f}{row['precision']:>10.3f}{row['recall']:>10.3f}"
               f"{row['f1']:>10.3f}{row['ap']:>10.3f}{row['roc_auc']:>10.3f}{row['support']:>10}")
+
+    if args.by_severity:
+        by_class = compute_metrics_by_severity(dataset.rows, labels, probs, class_names, threshold)
+        print("\nPer-severity breakdown:")
+        print(f"{'class':<10}{'severity':<10}{'threshold':>10}{'precision':>10}{'recall':>10}{'f1':>10}{'AP':>10}{'ROC-AUC':>10}{'support':>10}")
+        for name in class_names:
+            for level, row in by_class[name].items():
+                print(f"{name:<10}{level:<10}{row['threshold']:>10.3f}{row['precision']:>10.3f}{row['recall']:>10.3f}"
+                      f"{row['f1']:>10.3f}{row['ap']:>10.3f}{row['roc_auc']:>10.3f}{row['support']:>10}")
 
 
 if __name__ == "__main__":

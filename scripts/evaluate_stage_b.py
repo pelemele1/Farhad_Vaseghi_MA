@@ -20,6 +20,7 @@ from torch.utils.data import DataLoader
 from src.data.stage_b_dataset import StageBDataset
 from src.eval.gate import apply_gate, collect_gate_probs
 from src.eval.metrics import collect_predictions, compute_metrics
+from src.eval.severity import broadcast_rows_to_tiles, compute_metrics_by_severity
 from src.eval.thresholds import tune_per_class_thresholds
 from src.models.backbone import FrozenYOLOBackbone
 from src.models.distortion_head import ImpairedGateHead, StageBDistortionHead
@@ -70,6 +71,12 @@ def main():
     parser.add_argument(
         "--gate-threshold", type=float, default=0.5,
         help="P(impaired) cutoff for --gate-checkpoint: below this, an image's Stage B predictions are zeroed.",
+    )
+    parser.add_argument(
+        "--by-severity", action="store_true",
+        help="Also print a per-class, per-severity-level (low/medium/high) tile-metrics breakdown "
+        "(requires a dataset built with --include-severity; see src/eval/severity.py). Always uses "
+        "the ungated predictions, even if --gate-checkpoint is also given.",
     )
     args = parser.parse_args()
 
@@ -122,6 +129,16 @@ def main():
         gated_rows = compute_metrics(gated_labels_flat, gated_probs_flat, class_names, threshold=threshold)
         print()
         _print_metrics_table(gated_rows, len(dataset), n_tiles, args.split, threshold_desc, label="gated")
+
+    if args.by_severity:
+        broadcast_rows = broadcast_rows_to_tiles(dataset.rows, dataset.meta["grid_h"], dataset.meta["grid_w"])
+        by_class = compute_metrics_by_severity(broadcast_rows, labels_flat, probs_flat, class_names, threshold)
+        print("\nPer-severity breakdown (ungated, per tile):")
+        print(f"{'class':<10}{'severity':<10}{'threshold':>10}{'precision':>10}{'recall':>10}{'f1':>10}{'AP':>10}{'ROC-AUC':>10}{'support':>10}")
+        for name in class_names:
+            for level, row in by_class[name].items():
+                print(f"{name:<10}{level:<10}{row['threshold']:>10.3f}{row['precision']:>10.3f}{row['recall']:>10.3f}"
+                      f"{row['f1']:>10.3f}{row['ap']:>10.3f}{row['roc_auc']:>10.3f}{row['support']:>10}")
 
 
 if __name__ == "__main__":

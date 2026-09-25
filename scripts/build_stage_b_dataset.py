@@ -41,6 +41,11 @@ def main():
                          help="Also generate multi-distortion variants (the 3 pairs + the full triple, "
                          "see COMBO_KINDS in src/soiling/dataset_builder.py) alongside the original "
                          "clean/single-effect kinds -- 8 kinds total. Default: off, original behavior.")
+    parser.add_argument("--include-severity", action="store_true",
+                         help="Split each single-effect kind into 3 balanced severity levels "
+                         "(low/medium/high, see SEVERITY_VARIANT_KINDS in "
+                         "src/soiling/dataset_builder.py) -- 10 kinds total (or 14 combined with "
+                         "--include-combos). Default: off, every active class is full-strength.")
     args = parser.parse_args()
 
     thresholds = None
@@ -54,7 +59,7 @@ def main():
     rows, tile_labels = build_stage_b_dataset(
         args.source, args.out,
         variants_per_image=args.variants, seed=args.seed, img_size=args.img_size,
-        thresholds=thresholds, include_combos=args.include_combos,
+        thresholds=thresholds, include_combos=args.include_combos, include_severity=args.include_severity,
     )
 
     used_thresholds = thresholds if thresholds is not None else DEFAULT_TILE_THRESHOLDS
@@ -69,6 +74,9 @@ def main():
         print(f"  {name}: {positives}/{len(rows)} images positive ({positives / len(rows):.1%})"
               f" | threshold={used_thresholds[name]}"
               f" | tile-positive rate={tile_labels[:, i].mean():.1%}")
+        if args.include_severity:
+            by_level = Counter(r[f"{name}_severity"] for r in rows if r[name] == 1)
+            print(f"    severity: {dict(by_level)}")
 
 
 if __name__ == "__main__":
