@@ -5,7 +5,7 @@ import numpy as np
 import pytest
 import torch
 
-from src.data.stage_a_dataset import StageADataset
+from src.data.stage_a_dataset import ImpairedGateDataset, StageADataset
 from src.soiling.dataset_builder import EFFECT_NAMES
 
 
@@ -65,3 +65,26 @@ def test_missing_split_raises(tmp_path):
     _write_fake_dataset(tmp_path, [("a", "train", 0, 0, 0)])
     with pytest.raises(ValueError):
         StageADataset(tmp_path, split="test")
+
+
+def test_impaired_gate_dataset_derives_label_as_or_of_effects(tmp_path):
+    _write_fake_dataset(tmp_path, [
+        ("a", "train", 0, 0, 0),
+        ("b", "train", 1, 0, 0),
+        ("c", "train", 0, 1, 1),
+    ])
+    dataset = ImpairedGateDataset(tmp_path, split="train", img_size=32)
+    _, clean_label = dataset[0]
+    _, single_label = dataset[1]
+    _, combo_label = dataset[2]
+    assert clean_label.item() == 0
+    assert single_label.item() == 1
+    assert combo_label.item() == 1
+
+
+def test_impaired_gate_dataset_label_dtype_is_long(tmp_path):
+    _write_fake_dataset(tmp_path, [("a", "train", 1, 0, 0)])
+    dataset = ImpairedGateDataset(tmp_path, split="train", img_size=32)
+    _, label = dataset[0]
+    assert label.dtype == torch.long
+    assert label.shape == ()

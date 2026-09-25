@@ -39,3 +39,18 @@ class StageADataset(Dataset):
         tensor = torch.from_numpy(image).permute(2, 0, 1).float() / 255.0
         labels = torch.tensor([float(row[name]) for name in EFFECT_NAMES])
         return tensor, labels
+
+
+class ImpairedGateDataset(StageADataset):
+    """Same images/preprocessing as StageADataset, but returns a single
+    binary "is this image impaired at all" label instead of the 3-class
+    multi-hot label, derived on the fly as the OR of dirt/water/scratch --
+    no new metadata.csv column or dataset rebuild needed. Label dtype is
+    int64 (nn.CrossEntropyLoss's required target dtype), unlike
+    StageADataset's float multi-hot labels.
+    """
+
+    def __getitem__(self, idx):
+        tensor, multi_label = super().__getitem__(idx)
+        impaired = torch.tensor(int(multi_label.sum().item() > 0), dtype=torch.long)
+        return tensor, impaired
