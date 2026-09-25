@@ -31,6 +31,7 @@ import cv2 as cv
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
+from sklearn.metrics import average_precision_score, precision_recall_curve
 from torch.utils.data import DataLoader
 
 from scripts.evaluate_stage_b import flatten_tiles
@@ -44,7 +45,7 @@ from scripts.visualize_stage_a_results import (
 from src.data.stage_b_dataset import StageBDataset
 from src.eval.metrics import collect_predictions, compute_metrics
 from src.models.backbone import FrozenYOLOBackbone
-from src.models.distortion_head import StageBDistortionHead
+from src.models.distortion_head import ImpairedGateHead, StageBDistortionHead
 
 
 def class_index_for_sample(row, class_names, probs_chw=None):
@@ -111,7 +112,16 @@ def plot_tile_grid_overlay(dataset, indices, probs, labels, class_names, thresho
     for ax in axes[n:]:
         ax.axis("off")
 
-    fig.tight_layout()
+    # Composite-overlay style (color = blend of GT + prediction) can't be
+    # legended with a single 0-1 colorbar -- point readers to the new
+    # per-tile-probability figure instead of adding one here (Session 20).
+    fig.text(
+        0.5, 0.01,
+        "Overlay color = blend of GT (green) and prediction (red); "
+        "see stage_b_full_report*.jpg for per-tile probability values with a 0-1 colorbar.",
+        ha="center", fontsize=8, color="gray",
+    )
+    fig.tight_layout(rect=[0, 0.03, 1, 1])
     fig.savefig(out_path, dpi=110)
     plt.close(fig)
 
@@ -171,6 +181,206 @@ def plot_combo_sample(dataset, idx, active_classes, probs, labels, class_names, 
     plt.close(fig)
 
 
+# --- 5-column Stage B report figure (Session 20, supervisor item 1) ------
+
+
+def _compute_per_class_pr_curves(labels_flat, probs_flat, class_names):
+    """One (recall, precision, ap) tuple per class, computed once over the
+    WHOLE flattened test-split tile arrays -- AUC-PR is not a per-sample
+    quantity, so every row of a given class in the 5-column report reuses
+    this same cached curve instead of recomputing it per row. A class's
+    entry is None if its curve is undefined (support 0 or all-positive),
+    same guard as plot_roc_pr_curves."""
+    curves = {}
+    for i, name in enumerate(class_names):
+        y_true, y_prob = labels_flat[:, i], probs_flat[:, i]
+        support = int(y_true.sum())
+        if support == 0 or support == len(y_true):
+            curves[name] = None
+            continue
+        precision, recall, _ = precision_recall_curve(y_true, y_prob)
+        ap = average_precision_score(y_true, y_prob)
+        curves[name] = (recall, precision, ap)
+    return curves
+
+
+def build_report_rows(dataset, indices, probs, class_names):
+    """Maps each sample index to (idx, kind, class_idx) via the existing
+    class_index_for_sample -- the same class-selection logic
+    plot_tile_grid_overlay already uses, reused here so both figures agree
+    on which class each sample is "about"."""
+    rows = []
+    for idx in indices:
+        row = dataset.rows[idx]
+        kind, class_idx = class_index_for_sample(row, class_names, probs[idx])
+        rows.append((idx, kind, class_idx))
+    return rows
+
+
+def select_five_column_rows(dataset, probs, class_names, per_class=3, seed=0):
+    """Picks which (sample, class) rows populate the 5-column report figure:
+    a diverse set covering every label kind (reusing
+    select_diverse_sample_indices), each keyed to a class via
+    build_report_rows."""
+    indices = select_diverse_sample_indices(dataset.rows, class_names, per_kind=per_class, seed=seed)
+    return build_report_rows(dataset, indices, probs, class_names)
+
+
+def _clean_image_lookup(dataset, class_names):
+    """source_id -> its clean-variant row (every class inactive) within the
+    same split as `dataset` -- guaranteed present per build_stage_b_dataset's
+    balanced construction (exactly one clean variant per source image, same
+    split as its distorted variants). Returns {} gracefully if none exist
+    (e.g. a hand-built test fixture with no clean row)."""
+    return {
+        row["source_id"]: row
+        for row in dataset.rows
+        if not any(int(row[c]) for c in class_names)
+    }
+
+
+def _load_image_for_row(dataset, row):
+    """Loads+preprocesses one metadata row's image the same way
+    StageBDataset.__getitem__ does (BGR->RGB, resize to dataset.img_size),
+    returning a uint8 HWC array directly -- used for the clean-reference
+    image, which may not be at a known dataset[] index."""
+    image = cv.imread(str(dataset.data_dir / row["path"]))
+    image = cv.cvtColor(image, cv.COLOR_BGR2RGB)
+    image = cv.resize(image, (dataset.img_size, dataset.img_size))
+    return image
+
+
+@torch.no_grad()
+def _collect_gate_probs(backbone, gate_head, loader, device):
+    """Runs the impaired-gate head (ImpairedGateHead) over the same
+    shuffle=False loader used for Stage B's own predictions, returning
+    {dataset_index: P(impaired)} keyed by position in iteration order --
+    valid because every caller here builds `loader` with shuffle=False."""
+    probs = {}
+    idx = 0
+    for images, _ in loader:
+        images = images.to(device)
+        batch_probs = torch.softmax(gate_head(backbone(images)), dim=1)[:, 1].cpu().numpy()
+        for value in batch_probs:
+            probs[idx] = float(value)
+            idx += 1
+    return probs
+
+
+def plot_stage_b_five_column_report(
+    dataset, report_rows, probs, labels, class_names,
+    labels_flat, probs_flat, out_dir, tag="", rows_per_page=6, gate_probs=None,
+):
+    """New Stage B results figure (supervisor item 1): one row per
+    (idx, kind, class_idx) entry in `report_rows`, 5 columns:
+      1. Original (clean) image for that sample's source image.
+      2. Distorted image -- the actual dataset[idx] model input.
+      3. Ground truth tile grid for class_idx, with a 0-1 colorbar.
+      4. Predicted tile probability for class_idx, RAW (not thresholded),
+         with the same 0-1 colorbar.
+      5. That class's precision-recall curve (AUC-PR), computed once over
+         the whole flattened test split and reused for every row of the
+         same class -- it is not a per-sample quantity.
+
+    Columns 3/4 deliberately use plain imshow(cmap=..., vmin=0, vmax=1) +
+    colorbar -- NOT plot_tile_grid_overlay's alpha-blended composite-over-
+    image style, which can't be legended by a single 0-1 colorbar. See that
+    function's own docstring/caption for why it's left unchanged instead of
+    migrated to this style.
+
+    `gate_probs` (optional dict[idx -> P(impaired)] from ImpairedGateHead,
+    see _collect_gate_probs) annotates each row's "distorted" column title.
+    Stage B's own tile predictions are always drawn regardless -- the gate
+    is a reporting annotation only, never a computation-skipping gate.
+
+    Paginated at `rows_per_page` rows per file:
+    out_dir/stage_b_full_report{tag}_page{N}.jpg (N starting at 1, always at
+    least one page even for an empty report_rows). Returns the list of
+    written paths."""
+    curves = _compute_per_class_pr_curves(labels_flat, probs_flat, class_names)
+    clean_lookup = _clean_image_lookup(dataset, class_names)
+
+    out_dir = Path(out_dir)
+    pages = [report_rows[i:i + rows_per_page] for i in range(0, len(report_rows), rows_per_page)]
+    if not pages:
+        pages = [[]]
+
+    out_paths = []
+    for page_num, page_rows in enumerate(pages, start=1):
+        n_rows = max(len(page_rows), 1)
+        fig, axes = plt.subplots(n_rows, 5, figsize=(4.4 * 5, 4.2 * n_rows), squeeze=False)
+
+        for r, (idx, kind, class_idx) in enumerate(page_rows):
+            row = dataset.rows[idx]
+            class_name = class_names[class_idx]
+
+            image_tensor, _ = dataset[idx]
+            distorted = (image_tensor.permute(1, 2, 0).numpy() * 255).astype(np.uint8)
+
+            clean_row = clean_lookup.get(row["source_id"])
+            if clean_row is not None:
+                clean = _load_image_for_row(dataset, clean_row)
+                clean_title = "original"
+            else:
+                clean = distorted
+                clean_title = "original (no clean ref. in split)"
+
+            axes[r, 0].imshow(clean)
+            axes[r, 0].set_title(clean_title, fontsize=9)
+            axes[r, 0].axis("off")
+
+            distorted_title = f"distorted ({kind})"
+            if gate_probs is not None and idx in gate_probs:
+                p = gate_probs[idx]
+                verdict = "impaired" if p >= 0.5 else "not impaired"
+                distorted_title += f"\n[gate: {verdict} p={p:.2f}]"
+            axes[r, 1].imshow(distorted)
+            axes[r, 1].set_title(distorted_title, fontsize=9)
+            axes[r, 1].axis("off")
+
+            gt_grid = labels[idx, class_idx].astype(np.float32)
+            im_gt = axes[r, 2].imshow(gt_grid, cmap="viridis", vmin=0, vmax=1, interpolation="nearest")
+            axes[r, 2].set_title(f"GT tiles ({class_name})", fontsize=9)
+            axes[r, 2].set_xticks([])
+            axes[r, 2].set_yticks([])
+            fig.colorbar(im_gt, ax=axes[r, 2], fraction=0.046)
+
+            pred_grid = probs[idx, class_idx].astype(np.float32)
+            im_pred = axes[r, 3].imshow(pred_grid, cmap="viridis", vmin=0, vmax=1, interpolation="nearest")
+            axes[r, 3].set_title(f"predicted probability ({class_name})", fontsize=9)
+            axes[r, 3].set_xticks([])
+            axes[r, 3].set_yticks([])
+            fig.colorbar(im_pred, ax=axes[r, 3], fraction=0.046)
+
+            curve = curves.get(class_name)
+            if curve is None:
+                axes[r, 4].text(
+                    0.5, 0.5, "PR curve undefined\n(no positives in split)",
+                    ha="center", va="center", fontsize=9,
+                )
+                axes[r, 4].axis("off")
+            else:
+                recall, precision, ap = curve
+                axes[r, 4].plot(recall, precision)
+                axes[r, 4].set_xlim(0, 1)
+                axes[r, 4].set_ylim(0, 1.02)
+                axes[r, 4].set_xlabel("recall", fontsize=8)
+                axes[r, 4].set_ylabel("precision", fontsize=8)
+                axes[r, 4].set_title(f"{class_name} PR (AP={ap:.3f})", fontsize=9)
+
+        for r in range(len(page_rows), n_rows):
+            for c in range(5):
+                axes[r, c].axis("off")
+
+        fig.tight_layout()
+        out_path = out_dir / f"stage_b_full_report{tag}_page{page_num}.jpg"
+        fig.savefig(out_path, dpi=110)
+        plt.close(fig)
+        out_paths.append(out_path)
+
+    return out_paths
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--checkpoint", default="checkpoints/stage_b/stage_b_head.pt")
@@ -184,6 +394,13 @@ def main():
     parser.add_argument("--out-dir", default="docs/images")
     parser.add_argument("--log-file", default=None, help="Saved training stdout log (e.g. stage_b_<jobid>.out) -- if given, also plots the train/val loss curve")
     parser.add_argument("--tag", default="", help="Suffix (e.g. '_focal') appended to every output filename, so multiple loss variants don't overwrite each other's images")
+    parser.add_argument("--rows-per-page", type=int, default=6, help="Rows per page in the 5-column report figure")
+    parser.add_argument(
+        "--gate-checkpoint", default=None,
+        help="Optional checkpoints/impaired_gate/impaired_gate_head.pt -- if given, annotates each "
+        "5-column report row with the impaired-gate head's prediction for that image (Session 20). "
+        "The report renders fine without this flag.",
+    )
     args = parser.parse_args()
 
     device = torch.device(args.device)
@@ -223,6 +440,23 @@ def main():
         combo_path = out_dir / f"stage_b_combo_sample{args.tag}.jpg"
         plot_combo_sample(dataset, combo_idx, combo_classes, probs, labels, class_names, args.threshold, combo_path)
         print(f"wrote {combo_path}")
+
+    gate_probs = None
+    if args.gate_checkpoint:
+        gate_ckpt = torch.load(args.gate_checkpoint, map_location=device, weights_only=False)
+        gate_head = ImpairedGateHead(in_channels=backbone.out_channels).to(device)
+        gate_head.load_state_dict(gate_ckpt["head_state_dict"])
+        gate_head.eval()
+        gate_probs = _collect_gate_probs(backbone, gate_head, loader, device)
+
+    report_rows = select_five_column_rows(dataset, probs, class_names, per_class=args.per_kind, seed=args.seed)
+    report_paths = plot_stage_b_five_column_report(
+        dataset, report_rows, probs, labels, class_names,
+        labels_flat, probs_flat, out_dir, tag=args.tag,
+        rows_per_page=args.rows_per_page, gate_probs=gate_probs,
+    )
+    for p in report_paths:
+        print(f"wrote {p}")
 
     if args.log_file:
         records = parse_training_log(Path(args.log_file).read_text())

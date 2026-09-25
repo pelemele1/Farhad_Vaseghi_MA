@@ -1,6 +1,18 @@
+import cv2 as cv
 import numpy as np
 
-from scripts.visualize_stage_b_results import class_index_for_sample, find_combo_sample_index
+from scripts.evaluate_stage_b import flatten_tiles
+from scripts.visualize_stage_a_results import select_diverse_sample_indices
+from scripts.visualize_stage_b_results import (
+    _compute_per_class_pr_curves,
+    build_report_rows,
+    class_index_for_sample,
+    find_combo_sample_index,
+    plot_stage_b_five_column_report,
+    select_five_column_rows,
+)
+from src.data.stage_b_dataset import StageBDataset
+from src.soiling.dataset_builder import build_stage_b_dataset
 
 
 def test_class_index_for_sample_active_class():
@@ -59,3 +71,110 @@ def test_find_combo_sample_index_returns_none_when_no_combos_present():
     idx, active = find_combo_sample_index(rows, ("dirt", "water", "scratch"))
     assert idx is None
     assert active == []
+
+
+# --- 5-column report figure helpers (Session 20) --------------------------
+
+
+class _FakeDataset:
+    """Minimal stand-in for StageBDataset -- build_report_rows/
+    select_five_column_rows only ever touch `.rows`, matching how
+    class_index_for_sample and select_diverse_sample_indices are already
+    unit-tested against plain row lists elsewhere in this project."""
+
+    def __init__(self, rows):
+        self.rows = rows
+
+
+def test_build_report_rows_matches_class_index_for_sample():
+    rows = [
+        {"dirt": "1", "water": "0", "scratch": "0"},
+        {"dirt": "0", "water": "1", "scratch": "0"},
+    ]
+    dataset = _FakeDataset(rows)
+    class_names = ("dirt", "water", "scratch")
+    probs = np.zeros((2, 3, 2, 2), dtype=np.float32)
+
+    report_rows = build_report_rows(dataset, [0, 1], probs, class_names)
+
+    assert report_rows == [(0, "dirt", 0), (1, "water", 1)]
+
+
+def test_select_five_column_rows_covers_every_kind():
+    rows = [
+        {"dirt": "1", "water": "0", "scratch": "0"},
+        {"dirt": "0", "water": "1", "scratch": "0"},
+        {"dirt": "0", "water": "0", "scratch": "1"},
+        {"dirt": "0", "water": "0", "scratch": "0"},
+    ]
+    dataset = _FakeDataset(rows)
+    class_names = ("dirt", "water", "scratch")
+    probs = np.zeros((4, 3, 2, 2), dtype=np.float32)
+
+    report_rows = select_five_column_rows(dataset, probs, class_names, per_class=1, seed=0)
+
+    kinds = {kind for _, kind, _ in report_rows}
+    assert kinds == {"dirt", "water", "scratch", "clean"}
+
+
+def test_compute_per_class_pr_curves_skips_degenerate_class():
+    # class 1 (index 1) is all-negative -- no positives, curve undefined.
+    labels_flat = np.array([[1, 0], [0, 0], [1, 0], [0, 0]])
+    probs_flat = np.array([[0.8, 0.1], [0.2, 0.3], [0.7, 0.4], [0.1, 0.2]])
+
+    curves = _compute_per_class_pr_curves(labels_flat, probs_flat, ("a", "b"))
+
+    assert curves["a"] is not None
+    assert curves["b"] is None
+
+
+def test_compute_per_class_pr_curves_returns_recall_precision_ap():
+    # perfect separation: class 0 positives (index 1,2) both score higher
+    # than the negatives -- AP should be 1.0.
+    labels_flat = np.array([[1], [0], [1], [0]])
+    probs_flat = np.array([[0.9], [0.1], [0.8], [0.2]])
+
+    curves = _compute_per_class_pr_curves(labels_flat, probs_flat, ("a",))
+
+    recall, precision, ap = curves["a"]
+    assert ap == 1.0
+    assert len(recall) == len(precision)
+
+
+def test_plot_stage_b_five_column_report_writes_expected_pages(tmp_path):
+    # Matplotlib smoke test (no model/weights needed -- probs are random) --
+    # confirms the figure runs end to end and paginates correctly, not that
+    # the pixels are correct.
+    source_dir = tmp_path / "source"
+    source_dir.mkdir()
+    rng = np.random.default_rng(0)
+    for i in range(4):
+        img = rng.integers(0, 255, size=(96, 128, 3), dtype=np.uint8)
+        cv.imwrite(str(source_dir / f"{i:08d}.jpg"), img)
+
+    data_dir = tmp_path / "stage_b"
+    build_stage_b_dataset(
+        source_dir, data_dir, variants_per_image=4, seed=0,
+        ratios=(0.25, 0.25, 0.5), img_size=64,
+    )
+
+    dataset = StageBDataset(data_dir, split="test")
+    class_names = dataset.class_names
+    labels = dataset.tile_labels.astype(np.float32)
+    probs = rng.random(labels.shape).astype(np.float32)
+
+    indices = select_diverse_sample_indices(dataset.rows, class_names, per_kind=1, seed=0)
+    report_rows = build_report_rows(dataset, indices, probs, class_names)
+    labels_flat, probs_flat = flatten_tiles(labels, probs)
+
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    paths = plot_stage_b_five_column_report(
+        dataset, report_rows, probs, labels, class_names,
+        labels_flat, probs_flat, out_dir, rows_per_page=2,
+    )
+
+    assert len(paths) == -(-len(report_rows) // 2)  # ceil(n / rows_per_page)
+    for p in paths:
+        assert p.exists()
+        assert p.stat().st_size > 0
