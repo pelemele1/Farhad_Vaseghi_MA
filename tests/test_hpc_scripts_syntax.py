@@ -12,6 +12,7 @@ pytestmark = pytest.mark.skipif(_BASH is None, reason="requires a bash executabl
     "scripts/hpc/setup_env.sh",
     "scripts/hpc/train_stage_a.slurm",
     "scripts/hpc/train_stage_b.slurm",
+    "scripts/hpc/train_impaired_gate.slurm",
 ])
 def test_hpc_script_has_valid_bash_syntax(script):
     result = subprocess.run([_BASH, "-n", script], capture_output=True, text=True, timeout=30)
