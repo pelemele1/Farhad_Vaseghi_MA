@@ -53,3 +53,32 @@ class StageBDistortionHead(nn.Module):
 
     def forward(self, features):
         return self.conv(features)
+
+
+class ImpairedGateHead(nn.Module):
+    """Image-level binary "is this image impaired at all" gate (Session 20).
+    Same GAP + 2xFC architecture as StageADistortionHead, but a distinct
+    class: its 2 logits are mutually exclusive (index 0 = not_impaired,
+    index 1 = impaired), trained with nn.CrossEntropyLoss/softmax -- NOT
+    sigmoid/BCE like every other head in this file. Kept as its own class
+    (rather than reusing StageADistortionHead with class_names=
+    ("not_impaired", "impaired")) so that different loss family is visible
+    at the type level to a reader skimming this module.
+
+    Returns raw 2-logit output, shape (B, 2). Call
+    `torch.softmax(head(features), dim=1)` for class probabilities, or
+    `.argmax(dim=1)` for the hard decision."""
+
+    def __init__(self, in_channels, hidden_dim=64):
+        super().__init__()
+        self.class_names = ("not_impaired", "impaired")
+        self.pool = nn.AdaptiveAvgPool2d(1)
+        self.fc = nn.Sequential(
+            nn.Linear(in_channels, hidden_dim),
+            nn.ReLU(inplace=True),
+            nn.Linear(hidden_dim, 2),
+        )
+
+    def forward(self, features):
+        pooled = self.pool(features).flatten(1)
+        return self.fc(pooled)

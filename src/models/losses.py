@@ -38,6 +38,38 @@ def build_stage_a_loss(pos_weight=None):
     return nn.BCEWithLogitsLoss(pos_weight=pos_weight)
 
 
+def compute_impaired_class_weight(metadata_csv, split=None):
+    """class_weight[0] (not_impaired), class_weight[1] (impaired) for
+    nn.CrossEntropyLoss's `weight` arg -- inverse-frequency, analogous to
+    `compute_pos_weight` but for a 2-class softmax head. "impaired" = any of
+    dirt/water/scratch is 1, derived from metadata.csv's existing columns,
+    no new column needed.
+
+    Note the formula differs from `compute_pos_weight`'s
+    `(total-count)/count` ratio: `nn.CrossEntropyLoss(weight=...)` expects a
+    per-class weight, not a positive-class ratio, so this uses the standard
+    inverse-frequency `total/count` instead -- do not read this as a
+    copy-paste of `compute_pos_weight`."""
+    counts = {0: 0, 1: 0}
+    total = 0
+    with open(metadata_csv, newline="") as f:
+        for row in csv.DictReader(f):
+            if split is not None and row["split"] != split:
+                continue
+            total += 1
+            impaired = int(any(int(row[name]) for name in EFFECT_NAMES))
+            counts[impaired] += 1
+
+    return torch.tensor(
+        [total / max(counts[0], 1), total / max(counts[1], 1)],
+        dtype=torch.float32,
+    )
+
+
+def build_impaired_gate_loss(class_weight=None):
+    return nn.CrossEntropyLoss(weight=class_weight)
+
+
 def compute_tile_pos_weight(tile_labels_npy, metadata_csv, split=None):
     """Stage B counterpart to `compute_pos_weight`: pos_weight[c] =
     (#negative tiles for class c) / (#positive tiles for class c), counted

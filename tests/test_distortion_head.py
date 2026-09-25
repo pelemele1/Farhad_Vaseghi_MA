@@ -1,7 +1,11 @@
 import torch
 import torch.nn as nn
 
-from src.models.distortion_head import StageADistortionHead, StageBDistortionHead
+from src.models.distortion_head import (
+    ImpairedGateHead,
+    StageADistortionHead,
+    StageBDistortionHead,
+)
 
 
 def test_forward_output_shape_matches_class_count():
@@ -33,6 +37,39 @@ def test_single_optimizer_step_decreases_loss():
     features = torch.randn(6, 8, 3, 3)
     labels = torch.randint(0, 2, (6, 3)).float()
     loss_fn = nn.BCEWithLogitsLoss()
+    opt = torch.optim.SGD(head.parameters(), lr=0.1)
+
+    loss_before = loss_fn(head(features), labels)
+    opt.zero_grad()
+    loss_before.backward()
+    opt.step()
+    loss_after = loss_fn(head(features), labels)
+
+    assert torch.isfinite(loss_before)
+    assert loss_after.item() < loss_before.item()
+
+
+# --- Impaired gate head (image-level binary) -----------------------------
+
+
+def test_impaired_gate_head_forward_output_shape():
+    head = ImpairedGateHead(in_channels=512)
+    features = torch.randn(4, 512, 4, 4)
+    out = head(features)
+    assert out.shape == (4, 2)
+
+
+def test_impaired_gate_head_class_names():
+    head = ImpairedGateHead(in_channels=8)
+    assert head.class_names == ("not_impaired", "impaired")
+
+
+def test_impaired_gate_head_single_optimizer_step_decreases_loss():
+    torch.manual_seed(0)
+    head = ImpairedGateHead(in_channels=8)
+    features = torch.randn(6, 8, 3, 3)
+    labels = torch.randint(0, 2, (6,), dtype=torch.long)
+    loss_fn = nn.CrossEntropyLoss()
     opt = torch.optim.SGD(head.parameters(), lr=0.1)
 
     loss_before = loss_fn(head(features), labels)

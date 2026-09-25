@@ -8,10 +8,12 @@ import torch.nn.functional as F
 from src.models.losses import (
     FocalLossWithLogits,
     LocalizedSSDLoss,
+    build_impaired_gate_loss,
     build_stage_a_loss,
     build_stage_b_focal_loss,
     build_stage_b_loss,
     build_stage_b_ssd_loss,
+    compute_impaired_class_weight,
     compute_pos_weight,
     compute_tile_pos_weight,
 )
@@ -61,6 +63,49 @@ def test_build_stage_a_loss_is_finite_and_uses_pos_weight():
     loss_fn = build_stage_a_loss(pos_weight)
     logits = torch.randn(5, 3)
     labels = torch.randint(0, 2, (5, 3)).float()
+    loss = loss_fn(logits, labels)
+    assert torch.isfinite(loss)
+
+
+# --- Impaired gate head loss (Session 20, image-level binary CE) --------
+
+
+def test_compute_impaired_class_weight_matches_hand_calculation(tmp_path):
+    rows = [
+        {"path": "a", "source_id": "s0", "variant_id": 0, "split": "train", "dirt": 1, "water": 0, "scratch": 0},
+        {"path": "b", "source_id": "s0", "variant_id": 1, "split": "train", "dirt": 0, "water": 0, "scratch": 0},
+        {"path": "c", "source_id": "s0", "variant_id": 2, "split": "train", "dirt": 0, "water": 1, "scratch": 0},
+        {"path": "d", "source_id": "s0", "variant_id": 3, "split": "train", "dirt": 0, "water": 0, "scratch": 0},
+    ]
+    csv_path = tmp_path / "metadata.csv"
+    _write_metadata(csv_path, rows)
+
+    weight = compute_impaired_class_weight(csv_path)
+    # 4 rows total, 2 impaired (a, c), 2 not_impaired (b, d)
+    # weight[0] = 4/2 = 2.0, weight[1] = 4/2 = 2.0
+    assert torch.allclose(weight, torch.tensor([2.0, 2.0]))
+
+
+def test_compute_impaired_class_weight_respects_split_filter(tmp_path):
+    rows = [
+        {"path": "a", "source_id": "s0", "variant_id": 0, "split": "train", "dirt": 1, "water": 0, "scratch": 0},
+        {"path": "b", "source_id": "s1", "variant_id": 0, "split": "val", "dirt": 0, "water": 0, "scratch": 0},
+        {"path": "c", "source_id": "s1", "variant_id": 1, "split": "val", "dirt": 0, "water": 0, "scratch": 0},
+    ]
+    csv_path = tmp_path / "metadata.csv"
+    _write_metadata(csv_path, rows)
+
+    weight = compute_impaired_class_weight(csv_path, split="val")
+    # only "val" rows counted: 2 rows, both not_impaired
+    # weight[0] = 2/2 = 1.0, weight[1] = 2/max(0,1) = 2.0
+    assert torch.allclose(weight, torch.tensor([1.0, 2.0]))
+
+
+def test_build_impaired_gate_loss_is_finite():
+    class_weight = torch.tensor([1.0, 3.0])
+    loss_fn = build_impaired_gate_loss(class_weight)
+    logits = torch.randn(5, 2)
+    labels = torch.randint(0, 2, (5,), dtype=torch.long)
     loss = loss_fn(logits, labels)
     assert torch.isfinite(loss)
 
