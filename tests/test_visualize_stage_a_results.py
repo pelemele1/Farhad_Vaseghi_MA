@@ -1,8 +1,10 @@
 import numpy as np
 
 from scripts.visualize_stage_a_results import (
+    group_probs_by_severity,
     kind_from_scores,
     parse_training_log,
+    plot_probability_by_severity,
     plot_roc_pr_curves,
     select_diverse_sample_indices,
 )
@@ -94,3 +96,43 @@ def test_plot_roc_pr_curves_skips_degenerate_class_without_crashing(tmp_path):
     plot_roc_pr_curves(labels, probs, ("a", "b"), out_path)
 
     assert out_path.exists()
+
+
+def test_group_probs_by_severity_groups_and_orders_by_level():
+    rows = [
+        {"dirt_severity": "high"},
+        {"dirt_severity": "none"},
+        {"dirt_severity": "low"},
+        {"dirt_severity": "none"},
+    ]
+    probs = [0.9, 0.1, 0.5, 0.2]
+
+    grouped = group_probs_by_severity(rows, probs, "dirt")
+
+    assert list(grouped.keys()) == ["none", "low", "high"]  # in SEVERITY_LEVELS_WITH_NONE order
+    assert grouped["none"] == [0.1, 0.2]
+    assert grouped["low"] == [0.5]
+    assert grouped["high"] == [0.9]
+
+
+def test_group_probs_by_severity_omits_absent_levels():
+    rows = [{"dirt_severity": "high"}, {"dirt_severity": "high"}]
+    probs = [0.8, 0.9]
+
+    grouped = group_probs_by_severity(rows, probs, "dirt")
+
+    assert set(grouped.keys()) == {"high"}
+
+
+def test_plot_probability_by_severity_writes_a_file(tmp_path):
+    rng = np.random.default_rng(0)
+    rows = [{"dirt_severity": lvl, "water_severity": "none"} for lvl in
+            (["none"] * 5 + ["low"] * 5 + ["medium"] * 5 + ["high"] * 5)]
+    probs = np.zeros((20, 2))
+    probs[:, 0] = rng.random(20)
+    out_path = tmp_path / "severity.jpg"
+
+    plot_probability_by_severity(rows, probs, ("dirt", "water"), out_path)
+
+    assert out_path.exists()
+    assert out_path.stat().st_size > 0

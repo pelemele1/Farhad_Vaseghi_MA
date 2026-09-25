@@ -38,6 +38,7 @@ from scripts.evaluate_stage_b import flatten_tiles
 from scripts.visualize_stage_a_results import (
     parse_training_log,
     plot_metrics_bar_chart,
+    plot_probability_by_severity,
     plot_roc_pr_curves,
     plot_training_curve,
     select_diverse_sample_indices,
@@ -47,6 +48,18 @@ from src.eval.gate import apply_gate, collect_gate_probs
 from src.eval.metrics import collect_predictions, compute_metrics
 from src.models.backbone import FrozenYOLOBackbone
 from src.models.distortion_head import ImpairedGateHead, StageBDistortionHead
+
+
+def max_prob_per_image(probs):
+    """(N, C, H, W) per-tile probability array -> (N, C): each image's max
+    predicted probability per class, over the whole tile grid. Used to feed
+    Stage B's per-tile predictions into
+    visualize_stage_a_results.py::plot_probability_by_severity, which
+    expects one probability per image per class (severity is an
+    image-level property, not a per-tile one) -- same "max over the grid"
+    aggregation scripts/diagnose_clean_false_positives.py already uses for
+    its clean-image false-positive check."""
+    return probs.max(axis=(2, 3))
 
 
 def class_index_for_sample(row, class_names, probs_chw=None):
@@ -433,6 +446,11 @@ def main():
     curves_path = out_dir / f"stage_b_roc_pr_curves{args.tag}.jpg"
     plot_roc_pr_curves(labels_flat, probs_flat, class_names, curves_path, title=f"Stage B{args.tag}")
     print(f"wrote {curves_path}")
+
+    severity_path = out_dir / f"stage_b_probability_by_severity{args.tag}.jpg"
+    plot_probability_by_severity(dataset.rows, max_prob_per_image(probs), class_names, severity_path,
+                                  title=f"Stage B{args.tag} (max prob per image)")
+    print(f"wrote {severity_path}")
 
     sample_indices = select_diverse_sample_indices(dataset.rows, class_names, per_kind=args.per_kind, seed=args.seed)
     grid_path = out_dir / f"stage_b_sample_predictions{args.tag}.jpg"

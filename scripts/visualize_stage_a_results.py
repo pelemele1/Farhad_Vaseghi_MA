@@ -167,6 +167,67 @@ def plot_roc_pr_curves(labels, probs, class_names, out_path, title="Stage A"):
     plt.close(fig)
 
 
+SEVERITY_LEVELS_WITH_NONE = ("none", "low", "medium", "high")
+
+
+def group_probs_by_severity(rows, class_probs, class_name):
+    """rows: metadata dicts (one per sample), each carrying
+    f"{class_name}_severity". class_probs: (n_samples,) array -- that one
+    class's predicted probability per sample. Returns
+    dict[severity_level, list[float]], only for levels actually present in
+    this split (in SEVERITY_LEVELS_WITH_NONE order) -- pulled out of
+    plot_probability_by_severity so the grouping logic is unit-testable
+    without matplotlib."""
+    severities = [r[f"{class_name}_severity"] for r in rows]
+    grouped = {}
+    for level in SEVERITY_LEVELS_WITH_NONE:
+        vals = [float(p) for p, s in zip(class_probs, severities) if s == level]
+        if vals:
+            grouped[level] = vals
+    return grouped
+
+
+def plot_probability_by_severity(rows, probs, class_names, out_path,
+                                  title="Predicted probability by distortion severity"):
+    """Supervisor request (Session 20, Round 3): one violin+box plot per
+    class, x-axis = that class's ground-truth severity level
+    ("none"/"low"/"medium"/"high"), y-axis = the model's predicted
+    probability for that class. Shows whether predicted confidence tracks
+    severity even though the model was never trained to predict severity
+    explicitly -- just presence/absence. `probs`: (n_samples, n_classes)
+    array, same shape compute_metrics expects (Stage B passes each image's
+    MAX per-tile probability -- see
+    visualize_stage_b_results.py::plot_probability_by_severity_stage_b --
+    since severity is an image-level property, not a per-tile one)."""
+    n = len(class_names)
+    fig, axes = plt.subplots(1, n, figsize=(4.5 * n, 5), squeeze=False)
+    axes = axes[0]
+
+    for ax, name in zip(axes, class_names):
+        class_idx = class_names.index(name)
+        grouped = group_probs_by_severity(rows, probs[:, class_idx], name)
+        levels = list(grouped.keys())
+        data = [grouped[level] for level in levels]
+        positions = list(range(1, len(data) + 1))
+
+        parts = ax.violinplot(data, positions=positions, showmedians=False, showextrema=False)
+        for body in parts["bodies"]:
+            body.set_alpha(0.5)
+        ax.boxplot(data, positions=positions, widths=0.15, showfliers=False)
+
+        ax.set_xticks(positions)
+        ax.set_xticklabels(levels)
+        ax.set_xlabel("ground-truth severity")
+        ax.set_ylabel(f"predicted P({name})")
+        ax.set_ylim(-0.02, 1.02)
+        ax.set_title(name)
+
+    fig.suptitle(title)
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=110)
+    plt.close(fig)
+
+
 def plot_prediction_grid(dataset, indices, probs, labels, class_names, threshold, out_path, cols=4):
     n = len(indices)
     rows_n = int(np.ceil(n / cols))
@@ -244,6 +305,10 @@ def main():
     grid_path = out_dir / f"stage_a_sample_predictions{args.tag}.jpg"
     plot_prediction_grid(dataset, sample_indices, probs, labels, class_names, args.threshold, grid_path)
     print(f"wrote {grid_path}")
+
+    severity_path = out_dir / f"stage_a_probability_by_severity{args.tag}.jpg"
+    plot_probability_by_severity(dataset.rows, probs, class_names, severity_path, title=f"Stage A{args.tag}")
+    print(f"wrote {severity_path}")
 
     if args.log_file:
         records = parse_training_log(Path(args.log_file).read_text())

@@ -8,6 +8,7 @@ from scripts.visualize_stage_b_results import (
     build_report_rows,
     class_index_for_sample,
     find_combo_sample_index,
+    max_prob_per_image,
     plot_stage_b_five_column_report,
     select_five_column_rows,
 )
@@ -178,3 +179,16 @@ def test_plot_stage_b_five_column_report_writes_expected_pages(tmp_path):
     for p in paths:
         assert p.exists()
         assert p.stat().st_size > 0
+
+
+def test_max_prob_per_image_reduces_over_the_tile_grid():
+    probs = np.zeros((2, 3, 2, 2), dtype=np.float32)
+    probs[0, 0] = [[0.1, 0.9], [0.2, 0.3]]  # image 0, class 0 -> max 0.9
+    probs[1, 2] = [[0.4, 0.4], [0.4, 0.5]]  # image 1, class 2 -> max 0.5
+
+    result = max_prob_per_image(probs)
+
+    assert result.shape == (2, 3)
+    assert result[0, 0] == 0.9
+    assert result[1, 2] == 0.5
+    assert result[0, 1] == 0.0  # untouched channel stays 0
