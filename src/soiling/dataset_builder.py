@@ -32,7 +32,7 @@ from pathlib import Path
 import cv2 as cv
 import numpy as np
 
-from src.soiling.effects import add_dirt, add_scratch, add_water
+from src.soiling.effects import SEVERITY_LEVELS, add_dirt, add_scratch, add_water, apply_severity
 from src.soiling.tile_labels import rasterize_tile_label
 
 EFFECT_NAMES = ("dirt", "water", "scratch")
@@ -48,7 +48,29 @@ VARIANT_KINDS = ("clean",) + EFFECT_NAMES
 # dataset builder until now (see docs/development_log.md Session 19).
 COMBO_KINDS = ("dirt+water", "dirt+scratch", "water+scratch", "dirt+water+scratch")
 ALL_VARIANT_KINDS = VARIANT_KINDS + COMBO_KINDS
+# Balanced severity variant kinds (Session 20, Round 3, supervisor request):
+# "effect:level" kind strings, one per (effect, severity) pair -- e.g.
+# "dirt:low". Additive, same convention as COMBO_KINDS -- VARIANT_KINDS is
+# still untouched. A kind's severity is parsed out of the string by
+# _combo_from_kind; combo kinds (COMBO_KINDS) carry no literal level, so
+# their active effects' severity is chosen pseudo-randomly instead (see
+# apply_effect_combo) -- only single-effect kinds get the exact-balance
+# guarantee assign_variant_kinds' cycling already provides.
+SEVERITY_VARIANT_KINDS = tuple(
+    f"{effect}:{level}" for effect in EFFECT_NAMES for level in SEVERITY_LEVELS
+)
+VARIANT_KINDS_WITH_SEVERITY = ("clean",) + SEVERITY_VARIANT_KINDS
+ALL_VARIANT_KINDS_WITH_SEVERITY = VARIANT_KINDS_WITH_SEVERITY + COMBO_KINDS
 _MAX_SEED = 2**31 - 1
+
+# metadata.csv columns, shared by build_stage_a_dataset/build_stage_b_dataset.
+# The f"{name}_severity" columns are written unconditionally (not gated
+# behind include_severity) so the schema never forks -- with
+# include_severity=False every active class simply always gets "high".
+METADATA_FIELDNAMES = [
+    "path", "source_id", "variant_id", "split",
+    *EFFECT_NAMES, *[f"{name}_severity" for name in EFFECT_NAMES],
+]
 
 # Stage B (architecture.md §2) per-class tile-coverage thresholds. dirt/water
 # are filled regions, so a mid-size threshold is fine; scratch is a thin
@@ -83,44 +105,94 @@ def assign_variant_kinds(variant_count, seed, kinds=None):
     return pattern
 
 
-def apply_effect_combo(image, combo, seeds):
+def apply_effect_combo(image, combo, seeds, severities=None):
     """combo: (dirt: bool, water: bool, scratch: bool). seeds: dict of
-    per-effect seeds. Returns (distorted_image, labels dict)."""
+    per-effect seeds. severities: dict[effect, severity] for active effects
+    (Session 20 Round 3) -- defaults an active effect with no entry to
+    "high" (today's unparametrized full-strength behavior), so existing
+    callers that never pass severities are unaffected. Each active effect's
+    severity blend is applied relative to the image state just *before*
+    that effect, so one effect's severity doesn't dilute another's when
+    several are combined. Returns (distorted_image, labels dict) -- labels
+    now also carries f"{name}_severity" per class ("none" when inactive)."""
+    severities = severities or {}
     out = image
     labels = {}
     for name, included in zip(EFFECT_NAMES, combo):
         labels[name] = int(included)
         if not included:
+            labels[f"{name}_severity"] = "none"
             continue
+        severity = severities.get(name, "high")
+        labels[f"{name}_severity"] = severity
+        before = out
         if name == "dirt":
-            out, _ = add_dirt(out, seed=seeds["dirt"])
+            effect_out, mask = add_dirt(before, seed=seeds["dirt"])
         elif name == "water":
-            out, _ = add_water(out, seed=seeds["water"])
+            effect_out, mask = add_water(before, seed=seeds["water"])
         elif name == "scratch":
-            out, _ = add_scratch(out, seed=seeds["scratch"])
+            effect_out, mask = add_scratch(before, seed=seeds["scratch"])
+        out, _ = apply_severity(before, effect_out, mask, severity)
     return out, labels
 
 
 def _combo_from_kind(kind):
-    """Parses a kind string -- "clean", a single effect name ("dirt"), or a
-    "+"-joined combo ("dirt+water", "dirt+water+scratch") -- into a
-    multi-hot (dirt, water, scratch) bool tuple. Handles both VARIANT_KINDS
-    and COMBO_KINDS uniformly."""
-    active = set() if kind == "clean" else set(kind.split("+"))
-    return tuple(name in active for name in EFFECT_NAMES)
+    """Parses a kind string -- "clean", a single effect name ("dirt"), an
+    "effect:level" severity variant ("dirt:low"), or a "+"-joined combo of
+    any of those ("dirt+water", "dirt:low+water:medium") -- into a
+    multi-hot (dirt, water, scratch) bool tuple and a dict[effect, severity]
+    for every active effect. A bare single-token kind with no ":level"
+    (e.g. plain VARIANT_KINDS' "dirt") defaults straight to "high" --
+    today's original unparametrized behavior, unchanged. Only a "+"-joined
+    (multi-token) kind's un-annotated tokens get `None` instead (e.g. a
+    plain COMBO_KINDS string like "dirt+water") -- callers resolve that
+    `None` to a pseudo-random level (see `_resolve_severities`), since combo
+    kinds don't carry a literal one for each effect. Handles VARIANT_KINDS,
+    VARIANT_KINDS_WITH_SEVERITY, and COMBO_KINDS uniformly."""
+    if kind == "clean":
+        return tuple(False for _ in EFFECT_NAMES), {}
+    tokens = kind.split("+")
+    is_combo = len(tokens) > 1
+    severities = {}
+    for token in tokens:
+        if ":" in token:
+            name, level = token.split(":")
+        else:
+            name, level = token, (None if is_combo else "high")
+        severities[name] = level
+    combo = tuple(name in severities for name in EFFECT_NAMES)
+    return combo, severities
+
+
+def _resolve_severities(kind, base_seed, source_id, variant_idx):
+    """`_combo_from_kind`'s (combo, severities) pair, but with every `None`
+    severity (an active effect in a combo kind with no literal level)
+    resolved to a level via `derive_seed` -- deterministic and reproducible,
+    but not balanced across the dataset, unlike single-effect severity
+    kinds which always carry an explicit level already."""
+    combo, severities = _combo_from_kind(kind)
+    resolved = {}
+    for name, level in severities.items():
+        if level is not None:
+            resolved[name] = level
+        else:
+            seed = derive_seed(base_seed, source_id, variant_idx, name, "severity")
+            resolved[name] = SEVERITY_LEVELS[seed % len(SEVERITY_LEVELS)]
+    return combo, resolved
 
 
 def build_variant(image, source_id, variant_idx, kind, base_seed):
-    """Deterministic single variant: `kind` (one of ALL_VARIANT_KINDS) picks
-    which effect(s) are applied, if any; each active effect's own randomness
-    is derived from (base_seed, source_id, variant_idx, effect_name) --
+    """Deterministic single variant: `kind` (one of ALL_VARIANT_KINDS or
+    ALL_VARIANT_KINDS_WITH_SEVERITY) picks which effect(s) are applied, if
+    any, and at what severity; each active effect's own randomness is
+    derived from (base_seed, source_id, variant_idx, effect_name) --
     independent per effect even when several are combined on one image."""
-    combo = _combo_from_kind(kind)
+    combo, severities = _resolve_severities(kind, base_seed, source_id, variant_idx)
     seeds = {
         name: derive_seed(base_seed, source_id, variant_idx, name)
         for name in EFFECT_NAMES
     }
-    return apply_effect_combo(image, combo, seeds)
+    return apply_effect_combo(image, combo, seeds, severities)
 
 
 def assign_splits(source_ids, seed, ratios=(0.8, 0.1, 0.1)):
@@ -146,20 +218,30 @@ def assign_splits(source_ids, seed, ratios=(0.8, 0.1, 0.1)):
 
 
 def build_stage_a_dataset(source_dir, out_dir, variants_per_image=4, seed=0,
-                           ratios=(0.8, 0.1, 0.1), include_combos=False):
+                           ratios=(0.8, 0.1, 0.1), include_combos=False,
+                           include_severity=False):
     """For every image in `source_dir`, generate `variants_per_image`
     distorted variants and write them + a metadata.csv under `out_dir`.
     `include_combos=False` (default): today's original behavior, unchanged
     -- 4 kinds (clean + one of each single effect). `include_combos=True`:
     8 kinds (adds the 3 pairs + the full triple, see COMBO_KINDS) --
     `variants_per_image=8` gives exact balance, same principle as the
-    default 4-kind case. Returns the list of metadata row dicts written."""
+    default 4-kind case. `include_severity=False` (default): every active
+    effect is full-strength ("high"), unchanged. `include_severity=True`
+    (Session 20 Round 3): each single-effect kind splits into 3
+    (`"dirt:low"`/`"dirt:medium"`/`"dirt:high"`, etc., see
+    SEVERITY_VARIANT_KINDS) for an exact 1/3-1/3-1/3 balance per class --
+    combo kinds (if also included) still get a severity per active effect,
+    just not balanced (see `_resolve_severities`). Combining both:
+    `variants_per_image=14` gives exact balance again (10 single/severity +
+    4 combo kinds). Returns the list of metadata row dicts written."""
     source_dir = Path(source_dir)
     out_dir = Path(out_dir)
     images_out = out_dir / "images"
     images_out.mkdir(parents=True, exist_ok=True)
 
-    kinds_pool = ALL_VARIANT_KINDS if include_combos else VARIANT_KINDS
+    single_kinds = VARIANT_KINDS_WITH_SEVERITY if include_severity else VARIANT_KINDS
+    kinds_pool = single_kinds + (COMBO_KINDS if include_combos else ())
 
     source_paths = sorted(source_dir.glob("*.jpg"))
     source_ids = [p.stem for p in source_paths]
@@ -188,59 +270,68 @@ def build_stage_a_dataset(source_dir, out_dir, variants_per_image=4, seed=0,
 
     metadata_path = out_dir / "metadata.csv"
     with open(metadata_path, "w", newline="") as f:
-        fieldnames = ["path", "source_id", "variant_id", "split", *EFFECT_NAMES]
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer = csv.DictWriter(f, fieldnames=METADATA_FIELDNAMES)
         writer.writeheader()
         writer.writerows(rows)
 
     return rows
 
 
-def apply_effect_combo_with_masks(image, combo, seeds):
+def apply_effect_combo_with_masks(image, combo, seeds, severities=None):
     """Like `apply_effect_combo`, but also returns each class's own
-    full-resolution `[0, 1]` mask (all-zero for a class not in `combo`) --
-    needed by Stage B to rasterize tile labels from the *exact* mask that
-    produced this image, not a separately-regenerated one (see module
-    docstring / docs/development_log.md Session 6: add_dirt/add_water aren't
+    full-resolution `[0, 1]` mask (all-zero for a class not in `combo`,
+    severity-scaled for an active one -- see `apply_severity`) -- needed by
+    Stage B to rasterize tile labels from the *exact* mask that produced
+    this image, not a separately-regenerated one (see module docstring /
+    docs/development_log.md Session 6: add_dirt/add_water aren't
     pixel-reproducible across separate calls, only label-reproducible)."""
+    severities = severities or {}
     out = image
     labels = {}
     masks = {}
     for name, included in zip(EFFECT_NAMES, combo):
         labels[name] = int(included)
         if not included:
+            labels[f"{name}_severity"] = "none"
             masks[name] = np.zeros(image.shape[:2], dtype=np.float32)
             continue
+        severity = severities.get(name, "high")
+        labels[f"{name}_severity"] = severity
+        before = out
         if name == "dirt":
-            out, mask = add_dirt(out, seed=seeds["dirt"])
+            effect_out, mask = add_dirt(before, seed=seeds["dirt"])
         elif name == "water":
-            out, mask = add_water(out, seed=seeds["water"])
+            effect_out, mask = add_water(before, seed=seeds["water"])
         elif name == "scratch":
-            out, mask = add_scratch(out, seed=seeds["scratch"])
-        masks[name] = mask
+            effect_out, mask = add_scratch(before, seed=seeds["scratch"])
+        out, scaled_mask = apply_severity(before, effect_out, mask, severity)
+        masks[name] = scaled_mask
     return out, labels, masks
 
 
 def build_variant_with_mask(image, source_id, variant_idx, kind, base_seed):
     """Stage B counterpart to `build_variant`: same deterministic variant
-    (single-effect or combo), but also returns the per-class masks."""
-    combo = _combo_from_kind(kind)
+    (single-effect, severity, or combo kind), but also returns the
+    per-class masks."""
+    combo, severities = _resolve_severities(kind, base_seed, source_id, variant_idx)
     seeds = {
         name: derive_seed(base_seed, source_id, variant_idx, name)
         for name in EFFECT_NAMES
     }
-    return apply_effect_combo_with_masks(image, combo, seeds)
+    return apply_effect_combo_with_masks(image, combo, seeds, severities)
 
 
 def build_stage_b_dataset(source_dir, out_dir, variants_per_image=4, seed=0,
                            ratios=(0.8, 0.1, 0.1), img_size=512,
-                           thresholds=None, include_combos=False):
+                           thresholds=None, include_combos=False,
+                           include_severity=False):
     """Stage B dataset (architecture.md §2): same balanced variants as
     `build_stage_a_dataset` (reuses the same kind-assignment and split
     logic, so results are directly comparable, including the same
-    `include_combos` flag -- see its docstring), plus a per-tile label grid
-    rasterized from each variant's own mask in the same call that produced
-    its image -- see module-level note on why this can't be a post-hoc step.
+    `include_combos`/`include_severity` flags -- see that docstring), plus
+    a per-tile label grid rasterized from each variant's own
+    severity-scaled mask in the same call that produced its image -- see
+    module-level note on why this can't be a post-hoc step.
 
     Tile grid size = img_size // 32, matching the frozen backbone's P5
     stride (architecture.md: "the feature map is treated as a grid") --
@@ -257,7 +348,8 @@ def build_stage_b_dataset(source_dir, out_dir, variants_per_image=4, seed=0,
         raise ValueError(f"img_size must be a multiple of 32 (P5 stride), got {img_size}")
     grid_size = img_size // 32
     thresholds = dict(DEFAULT_TILE_THRESHOLDS if thresholds is None else thresholds)
-    kinds_pool = ALL_VARIANT_KINDS if include_combos else VARIANT_KINDS
+    single_kinds = VARIANT_KINDS_WITH_SEVERITY if include_severity else VARIANT_KINDS
+    kinds_pool = single_kinds + (COMBO_KINDS if include_combos else ())
 
     source_dir = Path(source_dir)
     out_dir = Path(out_dir)
@@ -299,8 +391,7 @@ def build_stage_b_dataset(source_dir, out_dir, variants_per_image=4, seed=0,
 
     metadata_path = out_dir / "metadata.csv"
     with open(metadata_path, "w", newline="") as f:
-        fieldnames = ["path", "source_id", "variant_id", "split", *EFFECT_NAMES]
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer = csv.DictWriter(f, fieldnames=METADATA_FIELDNAMES)
         writer.writeheader()
         writer.writerows(rows)
 

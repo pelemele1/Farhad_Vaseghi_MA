@@ -204,6 +204,28 @@ def add_dirt(image, seed=None):
     return out, _normalize_mask(mask)
 
 
+SEVERITY_LEVELS = ("low", "medium", "high")
+SEVERITY_ALPHA = {"low": 0.3, "medium": 0.6, "high": 1.0}
+
+
+def apply_severity(image, out, mask, severity):
+    """Blends a full-strength effect output (`out`, `mask`, as returned by
+    add_dirt/add_water/add_scratch) back toward the original clean `image`
+    by `SEVERITY_ALPHA[severity]`, scaling `mask` by the same factor.
+    Scaling the mask too (not just the image) is deliberate: a low-severity
+    patch should legitimately cover fewer/lighter Stage B tiles, not just
+    look fainter while reporting the same ground-truth coverage. `severity
+    == "high"` (alpha=1.0) returns `out`/`mask` unchanged -- identical to
+    today's unparametrized full-strength effect."""
+    alpha = SEVERITY_ALPHA[severity]
+    if alpha >= 1.0:
+        return out, mask
+    image_f = image.astype(np.float32)
+    out_f = out.astype(np.float32)
+    blended = image_f + alpha * (out_f - image_f)
+    return np.clip(blended, 0, 255).astype(np.uint8), mask * alpha
+
+
 def add_water(image, seed=None, mechanism=None):
     """Ported from physical_lens_soiling. `water` has two physically
     different mechanisms in the source repo, picked at random unless

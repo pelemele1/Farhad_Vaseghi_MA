@@ -1,6 +1,7 @@
 import numpy as np
+import pytest
 
-from src.soiling.effects import add_scratch, generate_scratch_mask
+from src.soiling.effects import SEVERITY_ALPHA, add_scratch, apply_severity, generate_scratch_mask
 
 
 def _sample_image(h=128, w=192):
@@ -52,3 +53,36 @@ def test_zero_scratches_gives_an_empty_mask():
     # generate_scratch_mask directly instead.
     mask = generate_scratch_mask((128, 192), n_scratches=(0, 0), seed=5)
     assert mask.max() == 0.0
+
+
+# --- apply_severity (Session 20 Round 3) ---------------------------------
+
+
+def test_apply_severity_high_returns_input_unchanged():
+    img = _sample_image()
+    out, mask = add_scratch(img, seed=3)
+    blended, scaled_mask = apply_severity(img, out, mask, "high")
+    assert np.array_equal(blended, out)
+    assert np.array_equal(scaled_mask, mask)
+
+
+def test_apply_severity_low_blends_toward_the_original_image():
+    img = _sample_image()
+    out, mask = add_scratch(img, seed=3)
+    blended, scaled_mask = apply_severity(img, out, mask, "low")
+    # low severity should land strictly between the clean image and the
+    # full-strength effect, not equal either endpoint
+    assert not np.array_equal(blended, img)
+    assert not np.array_equal(blended, out)
+    # and the reported coverage should shrink by the same factor
+    assert scaled_mask.max() == pytest.approx(mask.max() * SEVERITY_ALPHA["low"], abs=1e-5)
+
+
+def test_apply_severity_alpha_is_monotonic_low_to_high():
+    img = _sample_image()
+    out, mask = add_scratch(img, seed=3)
+    diffs = {}
+    for level in ("low", "medium", "high"):
+        blended, _ = apply_severity(img, out, mask, level)
+        diffs[level] = np.abs(blended.astype(np.float32) - img.astype(np.float32)).sum()
+    assert diffs["low"] < diffs["medium"] < diffs["high"]

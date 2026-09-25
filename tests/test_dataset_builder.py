@@ -7,9 +7,14 @@ import pytest
 
 from src.soiling.dataset_builder import (
     ALL_VARIANT_KINDS,
+    ALL_VARIANT_KINDS_WITH_SEVERITY,
     COMBO_KINDS,
     EFFECT_NAMES,
+    SEVERITY_VARIANT_KINDS,
     VARIANT_KINDS,
+    VARIANT_KINDS_WITH_SEVERITY,
+    _combo_from_kind,
+    _resolve_severities,
     apply_effect_combo,
     assign_splits,
     assign_variant_kinds,
@@ -19,6 +24,7 @@ from src.soiling.dataset_builder import (
     build_variant_with_mask,
     derive_seed,
 )
+from src.soiling.effects import SEVERITY_LEVELS
 from src.soiling.tile_labels import rasterize_tile_label
 
 
@@ -67,19 +73,85 @@ def test_assign_variant_kinds_with_combos_is_balanced_and_deterministic():
     assert sorted(kinds_16) == sorted(ALL_VARIANT_KINDS * 2)  # cycles to stay balanced past 8
 
 
+def test_assign_variant_kinds_with_severity_is_balanced_and_deterministic():
+    # Session 20 Round 3: kinds=VARIANT_KINDS_WITH_SEVERITY (10 kinds: clean
+    # + 3 effects x 3 severity levels) -- exactly one of each kind per
+    # source image gives an exact 1/3-1/3-1/3 balance per class.
+    kinds = assign_variant_kinds(10, seed=0, kinds=VARIANT_KINDS_WITH_SEVERITY)
+    assert sorted(kinds) == sorted(VARIANT_KINDS_WITH_SEVERITY)
+
+    kinds_again = assign_variant_kinds(10, seed=0, kinds=VARIANT_KINDS_WITH_SEVERITY)
+    assert kinds == kinds_again  # same seed -> same order
+
+    kinds_14 = assign_variant_kinds(14, seed=0, kinds=ALL_VARIANT_KINDS_WITH_SEVERITY)
+    assert sorted(kinds_14) == sorted(ALL_VARIANT_KINDS_WITH_SEVERITY)  # + the 4 combo kinds
+
+
+def test_combo_from_kind_bare_single_effect_defaults_to_high():
+    # A bare single-token kind (plain VARIANT_KINDS' "dirt", used when
+    # include_severity=False) must default straight to "high" -- today's
+    # original unparametrized behavior -- NOT get randomized like an
+    # un-annotated token inside a genuine "+"-joined combo does.
+    combo, severities = _combo_from_kind("dirt")
+    assert combo == (True, False, False)
+    assert severities == {"dirt": "high"}
+
+
+def test_combo_from_kind_parses_severity_variant_kinds():
+    combo, severities = _combo_from_kind("dirt:low")
+    assert combo == (True, False, False)
+    assert severities == {"dirt": "low"}
+
+    combo, severities = _combo_from_kind("dirt:low+water:medium")
+    assert combo == (True, True, False)
+    assert severities == {"dirt": "low", "water": "medium"}
+
+
+def test_combo_from_kind_plain_combo_kind_has_no_literal_severity():
+    # a plain COMBO_KINDS string ("dirt+water") carries no ":level" suffix
+    # -- severity is left unresolved (None) for the caller to pick.
+    combo, severities = _combo_from_kind("dirt+water")
+    assert combo == (True, True, False)
+    assert severities == {"dirt": None, "water": None}
+
+
+def test_resolve_severities_fills_in_none_deterministically():
+    combo, resolved = _resolve_severities("dirt+water", base_seed=0, source_id="00000001", variant_idx=0)
+    assert combo == (True, True, False)
+    assert resolved["dirt"] in SEVERITY_LEVELS
+    assert resolved["water"] in SEVERITY_LEVELS
+
+    combo_again, resolved_again = _resolve_severities("dirt+water", base_seed=0, source_id="00000001", variant_idx=0)
+    assert resolved == resolved_again  # deterministic given the same inputs
+
+
+def test_resolve_severities_respects_explicit_levels():
+    combo, resolved = _resolve_severities("dirt:low", base_seed=0, source_id="00000001", variant_idx=0)
+    assert combo == (True, False, False)
+    assert resolved == {"dirt": "low"}
+
+
 def test_apply_effect_combo_labels_match_what_was_applied():
     img = np.random.default_rng(1).integers(0, 255, size=(48, 64, 3), dtype=np.uint8)
     out, labels = apply_effect_combo(
         img, (True, False, True), {"dirt": 1, "water": 2, "scratch": 3}
     )
-    assert labels == {"dirt": 1, "water": 0, "scratch": 1}
+    # no severities passed -> every active class defaults to "high" (today's
+    # unparametrized full-strength behavior)
+    assert labels == {
+        "dirt": 1, "water": 0, "scratch": 1,
+        "dirt_severity": "high", "water_severity": "none", "scratch_severity": "high",
+    }
     assert not np.array_equal(out, img)
 
 
 def test_apply_effect_combo_all_false_leaves_image_unchanged():
     img = np.random.default_rng(2).integers(0, 255, size=(48, 64, 3), dtype=np.uint8)
     out, labels = apply_effect_combo(img, (False, False, False), {})
-    assert labels == {"dirt": 0, "water": 0, "scratch": 0}
+    assert labels == {
+        "dirt": 0, "water": 0, "scratch": 0,
+        "dirt_severity": "none", "water_severity": "none", "scratch_severity": "none",
+    }
     assert np.array_equal(out, img)
 
 
@@ -100,11 +172,20 @@ def test_build_variant_kind_selects_exactly_one_effect():
     img = np.random.default_rng(4).integers(0, 255, size=(48, 64, 3), dtype=np.uint8)
 
     out_clean, labels_clean = build_variant(img, source_id="00000001", variant_idx=0, kind="clean", base_seed=0)
-    assert labels_clean == {"dirt": 0, "water": 0, "scratch": 0}
+    assert labels_clean == {
+        "dirt": 0, "water": 0, "scratch": 0,
+        "dirt_severity": "none", "water_severity": "none", "scratch_severity": "none",
+    }
     assert np.array_equal(out_clean, img)
 
     out_water, labels_water = build_variant(img, source_id="00000001", variant_idx=0, kind="water", base_seed=0)
-    assert labels_water == {"dirt": 0, "water": 1, "scratch": 0}
+    # kind="water" (no explicit ":level") -- severity is resolved pseudo-
+    # randomly (see _resolve_severities), so only check the class-active
+    # part exactly; the severity itself just needs to be a valid level.
+    assert {k: v for k, v in labels_water.items() if k in EFFECT_NAMES} == {"dirt": 0, "water": 1, "scratch": 0}
+    assert labels_water["dirt_severity"] == "none"
+    assert labels_water["water_severity"] in SEVERITY_LEVELS
+    assert labels_water["scratch_severity"] == "none"
     assert not np.array_equal(out_water, img)
 
 
@@ -115,13 +196,18 @@ def test_build_variant_kind_selects_multiple_effects_for_combo_kind():
     img = np.random.default_rng(4).integers(0, 255, size=(48, 64, 3), dtype=np.uint8)
 
     out, labels = build_variant(img, source_id="00000001", variant_idx=0, kind="dirt+water", base_seed=0)
-    assert labels == {"dirt": 1, "water": 1, "scratch": 0}
+    assert {k: v for k, v in labels.items() if k in EFFECT_NAMES} == {"dirt": 1, "water": 1, "scratch": 0}
+    assert labels["dirt_severity"] in SEVERITY_LEVELS
+    assert labels["water_severity"] in SEVERITY_LEVELS
+    assert labels["scratch_severity"] == "none"
     assert not np.array_equal(out, img)
 
     out_triple, labels_triple = build_variant(
         img, source_id="00000001", variant_idx=0, kind="dirt+water+scratch", base_seed=0
     )
-    assert labels_triple == {"dirt": 1, "water": 1, "scratch": 1}
+    assert {k: v for k, v in labels_triple.items() if k in EFFECT_NAMES} == {"dirt": 1, "water": 1, "scratch": 1}
+    for name in EFFECT_NAMES:
+        assert labels_triple[f"{name}_severity"] in SEVERITY_LEVELS
     assert not np.array_equal(out_triple, img)
 
 
@@ -172,7 +258,8 @@ def test_build_stage_a_dataset_end_to_end(tmp_path):
         csv_rows = list(csv.DictReader(f))
     assert len(csv_rows) == len(rows)
     assert set(csv_rows[0].keys()) == {
-        "path", "source_id", "variant_id", "split", "dirt", "water", "scratch"
+        "path", "source_id", "variant_id", "split", "dirt", "water", "scratch",
+        "dirt_severity", "water_severity", "scratch_severity",
     }
 
 
@@ -241,6 +328,56 @@ def test_build_stage_a_dataset_default_still_excludes_combos(tmp_path):
         assert row["dirt"] + row["water"] + row["scratch"] <= 1
 
 
+def test_build_stage_a_dataset_with_severity_end_to_end(tmp_path):
+    # Session 20 Round 3: include_severity=True -- 10 kinds (clean + 3
+    # effects x 3 levels), variants_per_image=10 gives exact balance: for
+    # 4 source images, each single-effect severity kind gets exactly 4 rows.
+    source_dir = tmp_path / "source"
+    source_dir.mkdir()
+    _write_fake_sources(source_dir, n=4)
+
+    out_dir = tmp_path / "out"
+    rows = build_stage_a_dataset(
+        source_dir, out_dir, variants_per_image=10, seed=0, include_severity=True,
+    )
+
+    assert len(rows) == 4 * 10
+    for row in rows:
+        # still single-distortion-or-clean (include_combos not set)
+        assert row["dirt"] + row["water"] + row["scratch"] <= 1
+
+    for name in EFFECT_NAMES:
+        by_level = {level: 0 for level in SEVERITY_LEVELS}
+        for row in rows:
+            if row[name] == 1:
+                by_level[row[f"{name}_severity"]] += 1
+        assert by_level == {"low": 4, "medium": 4, "high": 4}  # exact 1/3-1/3-1/3 balance
+
+    metadata_path = out_dir / "metadata.csv"
+    with open(metadata_path, newline="") as f:
+        csv_rows = list(csv.DictReader(f))
+    assert set(csv_rows[0].keys()) == {
+        "path", "source_id", "variant_id", "split", "dirt", "water", "scratch",
+        "dirt_severity", "water_severity", "scratch_severity",
+    }
+
+
+def test_build_stage_a_dataset_severity_default_off_is_always_high(tmp_path):
+    # Regression check: omitting include_severity (or passing False) must
+    # still make every active class "high" -- unchanged from before this
+    # feature existed, just now explicit in the metadata.
+    source_dir = tmp_path / "source"
+    source_dir.mkdir()
+    _write_fake_sources(source_dir, n=3)
+
+    out_dir = tmp_path / "out"
+    rows = build_stage_a_dataset(source_dir, out_dir, variants_per_image=4, seed=0)
+    for row in rows:
+        for name in EFFECT_NAMES:
+            expected = "high" if row[name] == 1 else "none"
+            assert row[f"{name}_severity"] == expected
+
+
 def test_build_stage_a_dataset_labels_are_reproducible(tmp_path):
     # Labels (which effects were applied to which variant) are fully
     # reproducible for a given seed -- exact pixels are not, because
@@ -267,6 +404,29 @@ def test_build_stage_a_dataset_labels_are_reproducible(tmp_path):
 
 
 # --- Stage B (tile-grid) -----------------------------------------------
+
+
+def test_build_stage_b_dataset_with_severity_reduces_tile_coverage(tmp_path):
+    # Session 20 Round 3: a low-severity variant's tile-positive count
+    # should be <= its high-severity counterpart's for the same effect
+    # (mask scaled down by apply_severity -> fewer/no tiles clear the
+    # rasterization threshold).
+    source_dir = tmp_path / "source"
+    source_dir.mkdir()
+    _write_fake_sources(source_dir, n=4)
+
+    out_dir = tmp_path / "out"
+    rows, tile_labels = build_stage_b_dataset(
+        source_dir, out_dir, variants_per_image=10, seed=0, img_size=64, include_severity=True,
+    )
+
+    assert len(rows) == 4 * 10
+    for name in EFFECT_NAMES:
+        i = EFFECT_NAMES.index(name)
+        low_counts = [g[i].sum() for r, g in zip(rows, tile_labels) if r.get(f"{name}_severity") == "low"]
+        high_counts = [g[i].sum() for r, g in zip(rows, tile_labels) if r.get(f"{name}_severity") == "high"]
+        assert low_counts and high_counts
+        assert sum(low_counts) <= sum(high_counts)
 
 
 def test_build_stage_b_dataset_end_to_end(tmp_path):
@@ -387,7 +547,10 @@ def test_apply_effect_combo_with_masks_gives_zero_mask_for_inactive_classes():
     out, labels, masks = apply_effect_combo_with_masks(
         img, (False, False, True), {"scratch": 7}
     )
-    assert labels == {"dirt": 0, "water": 0, "scratch": 1}
+    assert labels == {
+        "dirt": 0, "water": 0, "scratch": 1,
+        "dirt_severity": "none", "water_severity": "none", "scratch_severity": "high",
+    }
     assert masks["dirt"].shape == img.shape[:2]
     assert masks["dirt"].sum() == 0
     assert masks["water"].sum() == 0
