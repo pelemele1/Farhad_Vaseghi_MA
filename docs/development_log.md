@@ -2101,3 +2101,116 @@ original Stage B dataset from before Session 18) was deleted to free the name, a
 `stage_b_gtfix` link removed. Earlier entries in this log and the raw job logs keep the
 names that were in use at the time: `stage_b_scratch15` / `stage_b_gtfix` there mean
 today's `stage_b`, while `stage_b` in entries before Session 18 means that older dataset.
+
+---
+
+## Session 23 — Layer study for every stage; scratch weighting
+
+**Date:** 2026-09-26/27
+
+User request: use other backbone layers wherever they improve results, in any stage — and find
+out which layers are best for each stage. For faint scratches: add an even finer layer, and
+try weighting scratch more heavily in the loss, but only keep weighting if it does not hurt the
+other classes. The user approved deviating from `architecture.md`'s literal Stage A design
+(GAP over P5) if other layers help.
+
+### Phase 1 -- Code
+
+- `STRIDE_TAPS` gains stride 2 (layer 0, 64 ch); `parse_taps` / `build_multiscale_backbone`
+  in `src/models/backbone.py`. Every stage takes `--taps` (strides, must include 32) and
+  records `taps` in its checkpoint; checkpoints without it load as before.
+- Stage A: `StageADistortionHead` accepts a list of maps (GAP each, concatenate);
+  `--taps 32` is exactly the `architecture.md` design (identical parameter shapes).
+  New shared `train_stage_a.py::build_stage_a_model` / `load_stage_a`, used by the evaluate
+  and visualize scripts.
+- Stage C: `StageCUNetHead(out_stride=...)` predicts at the finest tap's stride.
+- Gate: `src/eval/gate.py::load_gate` now builds the gate's **own** backbone from its checkpoint
+  (`build_gate`), so the gate no longer depends on which layers the Stage B/C model uses --
+  with per-stage layer choices, sharing the Stage B/C backbone would feed it the wrong maps.
+- `--class-weights` (per-class loss multipliers, normalized to mean 1) for the focal and
+  Dice+BCE losses; with no weights both losses are numerically unchanged.
+- Tests for all of the above (234 pass).
+
+### Phase 2 -- HPC logistics
+
+`scripts/hpc/layer_study.sh`: each configuration is one job (train, then evaluate on the
+**val** split -- selection happens on val, test stays untouched until the winner is fixed),
+submitted twice, on `a100` and on the `work` pool (rtx3080 + rtx2080ti; torch supports both),
+via the new `scripts/hpc/run_shell.slurm`. A local watcher cancelled each job's twin as soon as
+one copy started. The cluster was fully allocated all evening; the twin setup moved the first
+start estimate from ~11:00 next day to ~01:00, and in practice the jobs started from ~23:00.
+Logs: `study_logs/`.
+
+### Phase 3 -- Results (validation split; AP / low-severity AP, dirt / water / scratch)
+
+**Stage A** (20 epochs, 640 px):
+
+| strides | AP | mean | faint AP | mean faint |
+|---|---|---|---|---|
+| 32 (`architecture.md`) | 0.935 / 0.962 / 0.907 | 0.935 | 0.688 / 0.786 / 0.682 | 0.719 |
+| 16,32 | 0.969 / 0.983 / 0.934 | 0.962 | 0.831 / 0.899 / 0.760 | 0.830 |
+| **8,16,32** | 0.977 / 0.983 / 0.940 | **0.967** | 0.870 / 0.908 / 0.776 | **0.851** |
+| 4,8,16,32 | 0.975 / 0.983 / 0.931 | 0.963 | 0.851 / 0.910 / 0.754 | 0.838 |
+| 2,4,8,16,32 | 0.968 / 0.982 / 0.930 | 0.960 | 0.824 / 0.905 / 0.743 | 0.824 |
+
+**Stage B** (multi-scale head, focal α=0.75, 40 epochs):
+
+| strides | AP | mean | faint AP | mean faint |
+|---|---|---|---|---|
+| 32 (control: bigger head, P5 only) | 0.805 / 0.780 / 0.491 | 0.692 | 0.506 / 0.431 / 0.314 | 0.417 |
+| 16,32 | 0.898 / 0.888 / 0.733 | 0.840 | 0.717 / 0.667 / 0.577 | 0.654 |
+| 8,16,32 | 0.922 / 0.914 / 0.793 | 0.876 | 0.779 / 0.737 / 0.647 | 0.721 |
+| **4,8,16,32** (existing) | 0.932 / 0.921 / 0.822 | **0.892** | 0.806 / 0.775 / 0.691 | **0.757** |
+| 2,4,8,16,32 | 0.933 / 0.924 / 0.810 | 0.889 | 0.808 / 0.779 / 0.663 | 0.750 |
+
+**Stage C** (U-Net decoder, 25 epochs):
+
+| strides | AP | mean | faint AP | mean faint |
+|---|---|---|---|---|
+| 16,32 | 0.877 / 0.872 / 0.515 | 0.755 | 0.682 / 0.628 / 0.345 | 0.552 |
+| 8,16,32 | 0.898 / 0.886 / 0.672 | 0.819 | 0.734 / 0.694 / 0.493 | 0.640 |
+| 4,8,16,32 (existing) | 0.902 / 0.889 / 0.744 | 0.845 | 0.743 / 0.684 / 0.564 | 0.664 |
+| **2,4,8,16,32** | 0.907 / 0.896 / 0.775 | **0.859** | 0.758 / 0.703 / 0.601 | **0.687** |
+
+**Gate** (multi-scale, 512 px; threshold for >= 95% impaired recall):
+
+| strides | ROC-AUC | clean passed |
+|---|---|---|
+| 32 | 0.908 | 62% |
+| 8,16,32 | 0.953 | 38% |
+| **4,8,16,32** (existing) | **0.959** | **32%** |
+| 2,4,8,16,32 | 0.953 | 35% |
+
+The pattern: the finer the task's output, the finer the layers that help. A whole-image
+decision (Stage A, gate) gains most from P3/P4 and nothing from stride 4/2 (averaged over the
+whole image, that detail is mostly noise); 32-px tiles (Stage B) gain down to stride 4;
+per-pixel masks (Stage C) gain down to stride 2, mostly for thin scratches. The Stage B
+control shows the gain comes from the layers, not from the bigger head.
+
+### Phase 4 -- Scratch weighting (on each stage's winning layers)
+
+| run | AP dirt / water / scratch | faint AP dirt / water / scratch |
+|---|---|---|
+| Stage B, unweighted | 0.932 / 0.921 / 0.822 | 0.806 / 0.775 / 0.691 |
+| Stage B, `1,1,2` | 0.926 / 0.916 / 0.820 | 0.785 / 0.759 / 0.685 |
+| Stage B, `1,1,3` | 0.926 / 0.909 / 0.825 | 0.780 / 0.714 / 0.694 |
+| Stage C, unweighted | 0.907 / 0.896 / 0.775 | 0.758 / 0.703 / 0.601 |
+| Stage C, `1,1,2` | 0.902 / 0.893 / 0.785 | 0.746 / 0.695 / 0.612 |
+| Stage C, `1,1,3` | 0.900 / 0.892 / 0.794 | 0.736 / 0.693 / 0.626 |
+
+Stage B: no scratch gain, dirt/water worse. Stage C: scratch improves (+0.01-0.02 AP) but
+faint dirt drops (-0.012 to -0.022). Per the user's condition, weighting was not adopted.
+
+### Phase 5 -- New canonical models, test split
+
+- **Stage A** -> `checkpoints/stage_a_multiscale` (strides 8,16,32; training log
+  `stage_a_multiscale_1823220.out`, test run `final_a_1823272.out`). Test AP 0.975 / 0.979 /
+  0.937 (P5-only: 0.940 / 0.958 / 0.913); low-severity AP 0.861 / 0.886 / 0.732 (P5-only:
+  0.702 / 0.773 / 0.665).
+- **Stage C** -> `checkpoints/stage_c_unet_t2` (strides 2-32; `stage_c_unet_t2_1823237.out`,
+  `final_c_1823301.out`). Test AP 0.901 / 0.890 / 0.780 (strides 4-32: 0.898 / 0.878 / 0.756);
+  low-severity AP 0.735 / 0.686 / 0.557 (0.728 / 0.664 / 0.544); gated 0.902 / 0.891 / 0.744.
+- **Stage B** and the **gate** keep their existing stride-4-32 checkpoints.
+
+All three stage reports updated (Stage A §3 now explains what the strides are and why P3/P4
+help); figures regenerated for the two new canonical models.

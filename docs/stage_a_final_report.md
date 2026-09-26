@@ -1,7 +1,8 @@
 # Stage A Final Report — Image-Level Distortion Classification
 
-**Status:** complete. Canonical checkpoint: `checkpoints/stage_a_severity/stage_a_head.pt`,
-trained on `data/processed/stage_a` (14000 images, combo-inclusive, severity-balanced). A
+**Status:** complete. Canonical checkpoint: `checkpoints/stage_a_multiscale/stage_a_head.pt`
+(backbone layers at strides 8, 16 and 32 — P3, P4, P5), trained on `data/processed/stage_a`
+(14000 images, combo-inclusive, severity-balanced). A
 companion image-level "impaired/not impaired" gate head (§5) is trained alongside it and used
 as a real inference-time filter on Stage B's tile predictions — see
 [`stage_b_final_report.md`](stage_b_final_report.md). For the full session-by-session history
@@ -15,8 +16,8 @@ final result.
 
 Per `architecture.md` §2, Stage A is the first and simplest of three planned distortion-head
 designs: **image-level multi-label classification** of camera-lens soiling — `dirt`, `water`,
-`scratch` — using global average pooling over a shared backbone's deepest feature map, a
-small classification head, and a **frozen** (not fine-tuned) COCO-pretrained YOLO backbone
+`scratch` — using global average pooling over the shared backbone's feature maps, a small
+classification head, and a **frozen** (not fine-tuned) COCO-pretrained YOLO backbone
 (architecture.md §3, "Option 1"). The purpose is explicitly to validate the whole pipeline
 cheaply before any heavier investment (Stage B tile classification, Stage C pixel-level
 segmentation, or unfreezing the backbone).
@@ -57,9 +58,9 @@ does that reliability change with how severe the distortion is?**
   `add_scratch(...)` — each returning `(distorted_image, mask)`.
 - **Severity**: a single, universal post-hoc alpha-blend (`SEVERITY_ALPHA = {"low": 0.3,
   "medium": 0.6, "high": 1.0}`) applied identically to all three effects, blending the
-  full-strength output back toward the clean image and scaling the mask by the same factor —
-  so a low-severity patch legitimately covers less/lighter ground truth too, not just looks
-  fainter.
+  full-strength output back toward the clean image. Severity only changes how visible a
+  distortion is; the label stays "present" at every level (for Stages B/C, the ground-truth
+  region also stays the same size — see `development_log.md` Session 22).
 
 ### Dataset
 
@@ -74,12 +75,47 @@ combinatorial explosion (3 effects × 3 levels for the triple-effect kind).
 
 ### Model
 
-- **Backbone:** Ultralytics YOLOv11-m, COCO-pretrained, entirely frozen. Taps P5 (the last
-  purely-sequential layer before the FPN/PAN neck, layer 10/`C2PSA`) — 512 channels, stride 32.
-- **Head:** GAP → FC(512→64) → ReLU → FC(64→3), raw logits (sigmoid applied by the loss /
-  at inference, not as a layer).
+- **Backbone:** Ultralytics YOLOv11-m, COCO-pretrained, entirely frozen. The backbone processes
+  an image in steps, and each step makes the representation smaller and more abstract. The
+  *stride* says how much smaller: at stride 8, each position of the feature map covers an 8×8
+  patch of the image. For Stage A's 640×640 input:
+
+  | stride | name | map size | what it captures |
+  |---|---|---|---|
+  | 8 | P3 (layer 4) | 80×80 | fine textures and edges |
+  | 16 | P4 (layer 6) | 40×40 | mid-level patterns |
+  | 32 | P5 (layer 10, `C2PSA`) | 20×20 | coarse, abstract content of the scene |
+
+  These are the three feature maps `architecture.md`'s diagram shows the backbone producing
+  (P3/P4/P5); each has 512 channels.
+- **Head:** each of the three maps is global-average-pooled to one 512-number summary, the
+  three summaries are concatenated (1536 numbers), then FC(1536→64) → ReLU → FC(64→3), raw
+  logits (sigmoid applied by the loss / at inference, not as a layer).
+  `architecture.md` §2/§6 describes GAP over **P5 alone**; that design is kept as the
+  reference (`--taps 32`) and was the canonical model until the layer study below showed the
+  finer maps help, above all for faint distortions. P5 is the most abstract map and has
+  largely lost the subtle texture changes a faint distortion causes; P3/P4 still carry them.
 - **Loss:** `BCEWithLogitsLoss` with `pos_weight` from the training split's own class
   frequencies. Only the head's parameters are ever optimized.
+
+### Layer study: which backbone layers help
+
+Identical training (20 epochs, best-validation epoch kept) with different sets of backbone
+layers, compared on the **validation** split so the test split stays untouched for the final
+numbers (AP dirt / water / scratch):
+
+| layers (strides) | AP | mean AP | faint (low-severity) AP | mean faint AP |
+|---|---|---|---|---|
+| 32 (P5 only, `architecture.md` design) | 0.935 / 0.962 / 0.907 | 0.935 | 0.688 / 0.786 / 0.682 | 0.719 |
+| 16 + 32 | 0.969 / 0.983 / 0.934 | 0.962 | 0.831 / 0.899 / 0.760 | 0.830 |
+| **8 + 16 + 32 (canonical)** | **0.977 / 0.983 / 0.940** | **0.967** | **0.870 / 0.908 / 0.776** | **0.851** |
+| 4 + 8 + 16 + 32 | 0.975 / 0.983 / 0.931 | 0.963 | 0.851 / 0.910 / 0.754 | 0.838 |
+| 2 + 4 + 8 + 16 + 32 | 0.968 / 0.982 / 0.930 | 0.960 | 0.824 / 0.905 / 0.743 | 0.824 |
+
+Adding the mid-level maps (P4, then P3) raises faint-distortion AP by 0.13. The finest maps
+(stride 4 and 2) add nothing for a whole-image decision: averaged over the entire image, their
+fine detail mostly adds noise. (Stages B and C, which must say *where* a distortion is, do
+benefit from the finest maps — see their reports.)
 
 ### Decision threshold
 
@@ -91,48 +127,50 @@ as `evaluate_stage_a.py --tune-thresholds`), then applied once to test.
 
 ## 4. Results
 
-HPC job `1822358` (a100), 20 epochs, `checkpoints/stage_a_severity/stage_a_head.pt`. Train
-loss converged to 0.317, no overfitting.
+HPC job `1823220`, 20 epochs, best validation loss at the last epoch (0.2489),
+`checkpoints/stage_a_multiscale/stage_a_head.pt`.
 
-![Stage A train/val loss](images/stage_a_training_curve_severity.jpg)
+![Stage A train/val loss](images/stage_a_training_curve_multiscale.jpg)
 
 **Per-class metrics (held-out test split, 1400 images, tuned per-class thresholds)**
 
-![Stage A per-class precision/recall/F1/AP/ROC-AUC](images/stage_a_test_metrics_severity.jpg)
+![Stage A per-class precision/recall/F1/AP/ROC-AUC](images/stage_a_test_metrics_multiscale.jpg)
 
 | class | threshold | precision | recall | F1 | AP | ROC-AUC | support |
 |---|---|---|---|---|---|---|---|
-| dirt | 0.445 | 0.824 | 0.875 | 0.849 | 0.940 | 0.943 | 600 |
-| water | 0.547 | 0.914 | 0.835 | 0.873 | 0.958 | 0.959 | 600 |
-| scratch | 0.540 | 0.811 | 0.813 | 0.812 | 0.913 | 0.916 | 600 |
+| dirt | 0.619 | 0.959 | 0.892 | 0.924 | 0.975 | 0.976 | 600 |
+| water | 0.454 | 0.935 | 0.928 | 0.931 | 0.979 | 0.979 | 600 |
+| scratch | 0.445 | 0.838 | 0.865 | 0.852 | 0.937 | 0.941 | 600 |
 
-![Stage A ROC and precision-recall curves](images/stage_a_roc_pr_curves_severity.jpg)
+For comparison, the P5-only design scored AP 0.940 / 0.958 / 0.913 on the same test split.
+
+![Stage A ROC and precision-recall curves](images/stage_a_roc_pr_curves_multiscale.jpg)
 
 **Per-severity breakdown** (`evaluate_stage_a.py --by-severity`) — the headline question this
 dataset was built to answer: does the model do worse on subtle distortions than obvious ones?
 
 | class | severity | precision | recall | F1 | AP | ROC-AUC | support |
 |---|---|---|---|---|---|---|---|
-| dirt | low | 0.564 | 0.694 | 0.622 | 0.702 | 0.869 | 209 |
-| dirt | medium | 0.628 | 0.955 | 0.758 | 0.934 | 0.976 | 198 |
-| dirt | high | 0.630 | 0.990 | 0.770 | 0.972 | 0.989 | 193 |
-| water | low | 0.730 | 0.629 | 0.676 | 0.773 | 0.907 | 202 |
-| water | medium | 0.790 | 0.917 | 0.849 | 0.960 | 0.983 | 193 |
-| water | high | 0.807 | 0.961 | 0.878 | 0.975 | 0.989 | 205 |
-| scratch | low | 0.521 | 0.670 | 0.586 | 0.665 | 0.846 | 185 |
-| scratch | medium | 0.611 | 0.825 | 0.702 | 0.850 | 0.929 | 217 |
-| scratch | high | 0.619 | 0.934 | 0.744 | 0.928 | 0.968 | 198 |
+| dirt | low | 0.868 | 0.722 | 0.789 | 0.861 | 0.939 | 209 |
+| dirt | medium | 0.894 | 0.975 | 0.932 | 0.984 | 0.994 | 198 |
+| dirt | high | 0.893 | 0.990 | 0.939 | 0.996 | 0.999 | 193 |
+| water | low | 0.811 | 0.827 | 0.819 | 0.886 | 0.952 | 202 |
+| water | medium | 0.830 | 0.984 | 0.900 | 0.987 | 0.993 | 193 |
+| water | high | 0.837 | 0.976 | 0.901 | 0.986 | 0.993 | 205 |
+| scratch | low | 0.576 | 0.735 | 0.646 | 0.732 | 0.888 | 185 |
+| scratch | medium | 0.661 | 0.899 | 0.762 | 0.893 | 0.958 | 217 |
+| scratch | high | 0.653 | 0.949 | 0.774 | 0.944 | 0.973 | 198 |
 
-**Yes, clearly — a monotonic, physically sensible trend for all three classes.** AP drops
-20-30 points from high to low severity (dirt 0.972→0.702, water 0.975→0.773, scratch
-0.928→0.665). Visualized as a violin+box plot of predicted probability grouped by
-ground-truth severity:
+**Yes — a monotonic, physically sensible trend for all three classes**, but a much smaller gap
+than with P5 alone: faint-distortion AP is 0.861 / 0.886 / 0.732 (P5 only: 0.702 / 0.773 /
+0.665). Faint scratches remain the hardest case. Visualized as a violin+box plot of predicted
+probability grouped by ground-truth severity:
 
-![Stage A predicted probability by ground-truth severity](images/stage_a_probability_by_severity_severity.jpg)
+![Stage A predicted probability by ground-truth severity](images/stage_a_probability_by_severity_multiscale.jpg)
 
 **Predictions on real test images**
 
-![Stage A sample predictions](images/stage_a_sample_predictions_severity.jpg)
+![Stage A sample predictions](images/stage_a_sample_predictions_multiscale.jpg)
 
 ### Qualitative examples: clean vs. distorted, per class
 
@@ -146,7 +184,7 @@ hit, gray = correct reject, orange = false alarm, red = miss, at threshold 0.5):
 
 ```bash
 python scripts/visualize_stage_a_class_examples.py \
-    --checkpoint checkpoints/stage_a_severity/stage_a_head.pt \
+    --checkpoint checkpoints/stage_a_multiscale/stage_a_head.pt \
     --data data/processed/stage_a --split test --device cpu --out-dir docs/images
 ```
 
@@ -160,15 +198,28 @@ at all**, as a genuine binary decision, separate from *which* class(es) are pres
 **Architecture:** `ImpairedGateHead` (`src/models/distortion_head.py`) — global average pooling
 + 2×FC with 2 mutually-exclusive logits (`not_impaired`, `impaired`), trained with **softmax +
 class-weighted `nn.CrossEntropyLoss`** rather than sigmoid/BCE. Label (`impaired = 1` if any
-of dirt/water/scratch is 1) is derived on the fly — no dataset rebuild needed. Unlike the
-Stage A head above (which follows `architecture.md`'s "GAP over P5" literally), the canonical
-gate pools **four backbone depths** (stride 4/8/16 and P5) and concatenates them, so it also
+of dirt/water/scratch is 1) is derived on the fly — no dataset rebuild needed. Like the
+Stage A head above, the canonical gate pools **several backbone depths** (stride 4/8/16 and
+P5) and concatenates them, so it also
 sees the finer layers where faint texture changes survive. It is trained at 512 px on the
 Stage B/C dataset's images — the resolution it is applied at — from the same 1000 source
 photos and splits.
 
 **Training:** HPC job `1823027`, 20 epochs, best-validation epoch kept —
 `checkpoints/impaired_gate_multiscale/impaired_gate_head.pt`.
+
+**Which layers?** The same layer study as for the Stage A head, on the **validation** split
+(threshold tuned to keep ≥95% of impaired images, as below):
+
+| gate layers (strides) | ROC-AUC | clean images passed |
+|---|---|---|
+| 32 (P5 only) | 0.908 | 62% |
+| 8 + 16 + 32 | 0.953 | 38% |
+| **4 + 8 + 16 + 32 (canonical)** | **0.959** | **32%** |
+| 2 + 4 + 8 + 16 + 32 | 0.953 | 35% |
+
+The finer layers roughly halve the clean images that slip through; the top three settings are
+close (the val split has only 100 clean images), so the existing stride-4–32 gate is kept.
 
 **Choosing the threshold.** The gate is a filter: it should drop clean images without
 discarding real distortions. Best-F1 is the wrong criterion here (with ~93% impaired images it
@@ -192,19 +243,23 @@ predictions for any image this head calls "not impaired" — see
 (a gate false negative silently suppresses a genuine detection too).
 
 ```bash
-python scripts/train_impaired_gate.py --data data/processed/stage_b --arch multiscale     --img-size 512 --epochs 20 --device cuda --out checkpoints/impaired_gate_multiscale
-python scripts/evaluate_impaired_gate.py --checkpoint checkpoints/impaired_gate_multiscale/impaired_gate_head.pt     --data data/processed/stage_b --split test --tune-thresholds --recall-target 0.95
+python scripts/train_impaired_gate.py --data data/processed/stage_b --arch multiscale \
+    --img-size 512 --epochs 20 --device cuda --out checkpoints/impaired_gate_multiscale
+python scripts/evaluate_impaired_gate.py --checkpoint checkpoints/impaired_gate_multiscale/impaired_gate_head.pt \
+    --data data/processed/stage_b --split test --tune-thresholds --recall-target 0.95
 ```
 
 ---
 
 ## 6. Known limitations
 
-- **The backbone was never fine-tuned.** All learning happened in a ~33k-parameter head on
+- **The backbone was never fine-tuned.** All learning happened in a ~99k-parameter head on
   top of frozen COCO features.
-- **Low-severity distortions are measurably harder to detect than high** (§4) — AP drops
-  20-30 points from high to low severity across all three classes. A real, quantified gap in
-  the model's sensitivity to subtle distortions, not a limitation of the balancing itself.
+- **Faint distortions are still harder to detect than strong ones** (§4) — AP drops 10–21
+  points from high to low severity (dirt 0.996→0.861, water 0.986→0.886, scratch
+  0.944→0.732). Faint scratches are the weakest case.
+- **Deviates from the literal `architecture.md` Stage A design** (GAP over P5 only) by also
+  pooling P3/P4; the P5-only design is kept as `--taps 32` and its numbers are in §3.
 - **Purely synthetic distortions**, untested against real multi-distortion photos — an
   unmeasured domain gap between this and an actual soiled lens remains.
 - **Small pilot dataset.** 1000 source photos, 14000 total training images — enough to
@@ -217,16 +272,17 @@ python scripts/evaluate_impaired_gate.py --checkpoint checkpoints/impaired_gate_
 ```bash
 python scripts/build_stage_a_dataset.py --source data/raw/mio_tcd/images \
     --out data/processed/stage_a --variants 14 --include-combos --include-severity
-python scripts/evaluate_stage_a.py --checkpoint checkpoints/stage_a_severity/stage_a_head.pt \
+python scripts/train_stage_a.py --data data/processed/stage_a --taps 8,16,32 --epochs 20 \
+    --img-size 640 --device cuda --out checkpoints/stage_a_multiscale
+python scripts/evaluate_stage_a.py --checkpoint checkpoints/stage_a_multiscale/stage_a_head.pt \
     --data data/processed/stage_a --split test --tune-thresholds --by-severity
-python scripts/visualize_stage_a_results.py --checkpoint checkpoints/stage_a_severity/stage_a_head.pt \
-    --data data/processed/stage_a --split test --log-file stage_a_severity_1822358.out \
-    --tag _severity --out-dir docs/images
+python scripts/visualize_stage_a_results.py --checkpoint checkpoints/stage_a_multiscale/stage_a_head.pt \
+    --data data/processed/stage_a --split test --tune-thresholds --log-file stage_a_multiscale_1823220.out \
+    --tag _multiscale --out-dir docs/images
 ```
 
-`stage_a_severity_1822358.out` (training), `build_a_severity_1822266.out` (dataset rebuild)
-and `eval_stage_a_1823040.out` (the evaluation above, run on a GPU) are the raw stdout of the
-actual TinyGPU jobs; both exist locally and (job logs only) on the
-FAU HPC `$WORK` — see `docs/hpc_stage_a.md` for cluster paths. Earlier intermediate datasets/
-checkpoints (pre-combo, combo-only pre-severity) are superseded and no longer on disk — their
-numbers are preserved in `docs/development_log.md`, not reproducible locally anymore.
+The layer study is `scripts/hpc/layer_study.sh` (its logs are in `study_logs/`).
+`build_a_severity_1822266.out` (dataset build), `stage_a_multiscale_1823220.out` (training)
+and `final_a_1823272.out` (test evaluation and figures) are the raw stdout of the TinyGPU jobs.
+The earlier P5-only checkpoint (`checkpoints/stage_a_severity`) and older intermediate results
+are recorded in `docs/development_log.md`.

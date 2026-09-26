@@ -1,0 +1,91 @@
+### Starting TaskPrologue of job 1823272 on tg083 at Sun Sep 27 12:11:20 AM CEST 2026
+Running on cores 0-1,16-17,32-33,48-49 with governor powersave
+Sun Sep 27 00:11:20 2026       
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 610.57.04              KMD Version: 610.57.04     CUDA UMD Version: 13.3     |
++-----------------------------------------+------------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  NVIDIA GeForce RTX 3080        On  |   00000000:1A:00.0 Off |                  N/A |
+| 30%   45C    P8             50W /  300W |       1MiB /  10240MiB |      0%      Default |
+|                                         |                        |                  N/A |
++-----------------------------------------+------------------------+----------------------+
+
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
+|        ID   ID                                                               Usage      |
+|=========================================================================================|
+|  No running processes found                                                             |
++-----------------------------------------------------------------------------------------+
+### Finished TaskPrologue
+
+/home/woody/iwnt/iwnt196h/software/private/conda/envs/stage_a/lib/python3.11/site-packages/pythonperlin/__init__.py:4: UserWarning: pkg_resources is deprecated as an API. See https://setuptools.pypa.io/en/latest/pkg_resources.html. The pkg_resources package is slated for removal as early as 2025-11-30. Refrain from using this package or pin to Setuptools<81.
+  from pkg_resources import get_distribution
+Tuned per-class thresholds (best-F1 on val split):
+  dirt      0.619
+  water     0.454
+  scratch   0.445
+Evaluated 1400 images from split='test', threshold=tuned per-class
+class      threshold precision    recall        f1        AP   ROC-AUC   support
+dirt           0.619     0.959     0.892     0.924     0.975     0.976       600
+water          0.454     0.935     0.928     0.931     0.979     0.979       600
+scratch        0.445     0.838     0.865     0.852     0.937     0.941       600
+
+Per-severity breakdown:
+class     severity   threshold precision    recall        f1        AP   ROC-AUC   support
+dirt      low            0.619     0.868     0.722     0.789     0.861     0.939       209
+dirt      medium         0.619     0.894     0.975     0.932     0.984     0.994       198
+dirt      high           0.619     0.893     0.990     0.939     0.996     0.999       193
+water     low            0.454     0.811     0.827     0.819     0.886     0.952       202
+water     medium         0.454     0.830     0.984     0.900     0.987     0.993       193
+water     high           0.454     0.837     0.976     0.901     0.986     0.993       205
+scratch   low            0.445     0.576     0.735     0.646     0.732     0.888       185
+scratch   medium         0.445     0.661     0.899     0.762     0.893     0.958       217
+scratch   high           0.445     0.653     0.949     0.774     0.944     0.973       198
+/home/woody/iwnt/iwnt196h/software/private/conda/envs/stage_a/lib/python3.11/site-packages/pythonperlin/__init__.py:4: UserWarning: pkg_resources is deprecated as an API. See https://setuptools.pypa.io/en/latest/pkg_resources.html. The pkg_resources package is slated for removal as early as 2025-11-30. Refrain from using this package or pin to Setuptools<81.
+  from pkg_resources import get_distribution
+tuned thresholds: {'dirt': 0.6186900734901428, 'water': 0.4542456567287445, 'scratch': 0.44505399465560913}
+wrote figs_a/stage_a_test_metrics_multiscale.jpg
+wrote figs_a/stage_a_roc_pr_curves_multiscale.jpg
+wrote figs_a/stage_a_sample_predictions_multiscale.jpg
+wrote figs_a/stage_a_probability_by_severity_multiscale.jpg
+wrote figs_a/stage_a_training_curve_multiscale.jpg
+/home/woody/iwnt/iwnt196h/software/private/conda/envs/stage_a/lib/python3.11/site-packages/pythonperlin/__init__.py:4: UserWarning: pkg_resources is deprecated as an API. See https://setuptools.pypa.io/en/latest/pkg_resources.html. The pkg_resources package is slated for removal as early as 2025-11-30. Refrain from using this package or pin to Setuptools<81.
+  from pkg_resources import get_distribution
+/home/woody/iwnt/iwnt196h/Farhad_Vaseghi_MA/scripts/visualize_stage_a_class_examples.py:137: UserWarning: This figure includes Axes that are not compatible with tight_layout, so results might be incorrect.
+  fig.tight_layout(rect=[0, 0.05, 1, 0.95])
+wrote figs_a/stage_a_example_dirt.jpg
+/home/woody/iwnt/iwnt196h/Farhad_Vaseghi_MA/scripts/visualize_stage_a_class_examples.py:137: UserWarning: This figure includes Axes that are not compatible with tight_layout, so results might be incorrect.
+  fig.tight_layout(rect=[0, 0.05, 1, 0.95])
+wrote figs_a/stage_a_example_water.jpg
+/home/woody/iwnt/iwnt196h/Farhad_Vaseghi_MA/scripts/visualize_stage_a_class_examples.py:137: UserWarning: This figure includes Axes that are not compatible with tight_layout, so results might be incorrect.
+  fig.tight_layout(rect=[0, 0.05, 1, 0.95])
+wrote figs_a/stage_a_example_scratch.jpg
+=== JOB_STATISTICS ===
+=== current date     : Sun Sep 27 12:12:45 AM CEST 2026
+= Job-ID             : 1823272 on tinygpu
+= Job-Name           : final_a
+= Job-Command        : /home/woody/iwnt/iwnt196h/Farhad_Vaseghi_MA/scripts/hpc/run_shell.slurm
+= Initial workdir    : /home/woody/iwnt/iwnt196h/Farhad_Vaseghi_MA
+= Queue/Partition    : work
+= Slurm account      : iwnt with QOS=normal
+= Requested resources:  for 01:00:00
+= Elapsed runtime    : 00:01:28
+= Total RAM usage    : 2.2 GiB of requested  GiB (%)   
+= Node list          : tg083
+= Subm/Elig/Start/End: 2026-09-26T23:53:34 / 2026-09-26T23:53:34 / 2026-09-27T00:11:16 / 2026-09-27T00:12:44
+======================
+=== Quota infos ======
+    Path                 Used     SoftQ    HardQ    Gracetime  Filec    FileQ    FiHaQ    FileGrace    
+    /home/woody            10.5G  1000.0G  1500.0G        N/A     101K   5,000K   7,500K        N/A    
+    /home/hpc               6.0G   104.9G   209.7G        N/A   1,449      500K   1,000K        N/A    
+    /home/vault             0.0K  1048.6G  2097.2G        N/A       1      200K     400K        N/A    
+======================
+=== GPU utilization ==
+gpu_name, gpu_bus_id, pid, gpu_utilization [%], mem_utilization [%], max_memory_usage [MiB], time [ms]
+NVIDIA GeForce RTX 3080, 00000000:1A:00.0, 980175, 32 %, 22 %, 5306 MiB, 33147 ms
+NVIDIA GeForce RTX 3080, 00000000:1A:00.0, 980317, 34 %, 23 %, 5306 MiB, 31011 ms
+NVIDIA GeForce RTX 3080, 00000000:1A:00.0, 980174, 1 %, 0 %, 544 MiB, 3015 ms

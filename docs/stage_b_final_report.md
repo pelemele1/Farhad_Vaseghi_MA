@@ -63,6 +63,28 @@ each tile also sees the finer layers, where faint texture changes are still pres
 is deep and semantic, and loses most of that signal — the P5-only head reached only 0.20–0.27 AP
 on low-severity distortions (§4).
 
+### Layer study and scratch weighting
+
+Identical training (focal α=0.75, 40 epochs, best-validation epoch kept) with different sets of
+backbone layers, compared on the **validation** split (AP dirt / water / scratch):
+
+| layers (strides) | AP | mean AP | faint (low-severity) AP | mean faint AP |
+|---|---|---|---|---|
+| 32 only, same multi-scale head (control) | 0.805 / 0.780 / 0.491 | 0.692 | 0.506 / 0.431 / 0.314 | 0.417 |
+| 16 + 32 | 0.898 / 0.888 / 0.733 | 0.840 | 0.717 / 0.667 / 0.577 | 0.654 |
+| 8 + 16 + 32 | 0.922 / 0.914 / 0.793 | 0.876 | 0.779 / 0.737 / 0.647 | 0.721 |
+| **4 + 8 + 16 + 32 (canonical)** | **0.932 / 0.921 / 0.822** | **0.892** | **0.806 / 0.775 / 0.691** | **0.757** |
+| 2 + 4 + 8 + 16 + 32 | 0.933 / 0.924 / 0.810 | 0.889 | 0.808 / 0.779 / 0.663 | 0.750 |
+
+The control row runs P5 alone through the same bigger head: it beats the original 1×1-conv
+head but stays far behind, so the gain comes mainly from the finer layers, not from the head.
+Localizing needs finer detail than whole-image classification (Stage A's best set stops at
+stride 8); the stride-2 layer adds nothing here, since everything is pooled to 32-px tiles.
+
+Weighting scratch more heavily in the loss (`--class-weights 1,1,2` / `1,1,3`) did not help:
+scratch AP 0.820 / 0.825 (unweighted 0.822), while faint-water AP fell to 0.759 / 0.714
+(unweighted 0.775). Not adopted.
+
 ### Loss and decision threshold
 
 **Focal loss (α=0.75, γ=2.0).** Tile-level class imbalance is severe (scratch tiles ~2%

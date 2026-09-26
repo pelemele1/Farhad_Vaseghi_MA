@@ -1,0 +1,116 @@
+### Starting TaskPrologue of job 1823277 on tg083 at Sun Sep 27 12:12:47 AM CEST 2026
+Running on cores 0-1,16-17,32-33,48-49 with governor powersave
+Sun Sep 27 00:12:47 2026       
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 610.57.04              KMD Version: 610.57.04     CUDA UMD Version: 13.3     |
++-----------------------------------------+------------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  NVIDIA GeForce RTX 3080        On  |   00000000:1A:00.0 Off |                  N/A |
+| 32%   50C    P5             44W /  300W |       1MiB /  10240MiB |      0%      Default |
+|                                         |                        |                  N/A |
++-----------------------------------------+------------------------+----------------------+
+
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
+|        ID   ID                                                               Usage      |
+|=========================================================================================|
+|  No running processes found                                                             |
++-----------------------------------------------------------------------------------------+
+### Finished TaskPrologue
+
+/home/woody/iwnt/iwnt196h/software/private/conda/envs/stage_a/lib/python3.11/site-packages/pythonperlin/__init__.py:4: UserWarning: pkg_resources is deprecated as an API. See https://setuptools.pypa.io/en/latest/pkg_resources.html. The pkg_resources package is slated for removal as early as 2025-11-30. Refrain from using this package or pin to Setuptools<81.
+  from pkg_resources import get_distribution
+arch=multiscale taps=(4, 8, 16, 32)
+train=11200 val=1400 loss=focal alpha=0.75 gamma=2.0 class_weights=[1.0, 1.0, 2.0]
+epoch 1/40  train_loss=0.0201  val_loss=0.0180  (40.1s)  *saved
+epoch 2/40  train_loss=0.0165  val_loss=0.0158  (38.4s)  *saved
+epoch 3/40  train_loss=0.0156  val_loss=0.0155  (38.1s)  *saved
+epoch 4/40  train_loss=0.0146  val_loss=0.0168  (38.3s)
+epoch 5/40  train_loss=0.0140  val_loss=0.0144  (38.4s)  *saved
+epoch 6/40  train_loss=0.0135  val_loss=0.0145  (38.3s)
+epoch 7/40  train_loss=0.0131  val_loss=0.0151  (38.2s)
+epoch 8/40  train_loss=0.0127  val_loss=0.0136  (38.1s)  *saved
+epoch 9/40  train_loss=0.0123  val_loss=0.0141  (38.5s)
+epoch 10/40  train_loss=0.0121  val_loss=0.0142  (39.1s)
+epoch 11/40  train_loss=0.0118  val_loss=0.0138  (38.9s)
+epoch 12/40  train_loss=0.0115  val_loss=0.0140  (38.4s)
+epoch 13/40  train_loss=0.0113  val_loss=0.0136  (38.3s)  *saved
+epoch 14/40  train_loss=0.0111  val_loss=0.0140  (38.1s)
+epoch 15/40  train_loss=0.0109  val_loss=0.0143  (37.8s)
+epoch 16/40  train_loss=0.0108  val_loss=0.0138  (37.8s)
+epoch 17/40  train_loss=0.0105  val_loss=0.0143  (38.0s)
+epoch 18/40  train_loss=0.0104  val_loss=0.0141  (38.3s)
+epoch 19/40  train_loss=0.0103  val_loss=0.0141  (38.1s)
+epoch 20/40  train_loss=0.0101  val_loss=0.0139  (38.1s)
+epoch 21/40  train_loss=0.0100  val_loss=0.0143  (38.3s)
+epoch 22/40  train_loss=0.0100  val_loss=0.0141  (38.8s)
+epoch 23/40  train_loss=0.0097  val_loss=0.0142  (38.3s)
+epoch 24/40  train_loss=0.0096  val_loss=0.0150  (38.1s)
+epoch 25/40  train_loss=0.0095  val_loss=0.0144  (38.2s)
+epoch 26/40  train_loss=0.0094  val_loss=0.0146  (38.3s)
+epoch 27/40  train_loss=0.0094  val_loss=0.0145  (38.2s)
+epoch 28/40  train_loss=0.0092  val_loss=0.0161  (38.7s)
+epoch 29/40  train_loss=0.0092  val_loss=0.0152  (38.1s)
+epoch 30/40  train_loss=0.0090  val_loss=0.0156  (38.1s)
+epoch 31/40  train_loss=0.0090  val_loss=0.0148  (38.2s)
+epoch 32/40  train_loss=0.0089  val_loss=0.0147  (38.0s)
+epoch 33/40  train_loss=0.0088  val_loss=0.0159  (38.3s)
+epoch 34/40  train_loss=0.0087  val_loss=0.0156  (38.2s)
+epoch 35/40  train_loss=0.0088  val_loss=0.0156  (38.5s)
+epoch 36/40  train_loss=0.0086  val_loss=0.0154  (38.6s)
+epoch 37/40  train_loss=0.0086  val_loss=0.0156  (38.4s)
+epoch 38/40  train_loss=0.0085  val_loss=0.0164  (38.2s)
+epoch 39/40  train_loss=0.0083  val_loss=0.0165  (38.4s)
+epoch 40/40  train_loss=0.0084  val_loss=0.0160  (38.4s)
+wrote checkpoints/study/bw_s2/stage_b_head.pt (best val_loss=0.0136)
+/home/woody/iwnt/iwnt196h/software/private/conda/envs/stage_a/lib/python3.11/site-packages/pythonperlin/__init__.py:4: UserWarning: pkg_resources is deprecated as an API. See https://setuptools.pypa.io/en/latest/pkg_resources.html. The pkg_resources package is slated for removal as early as 2025-11-30. Refrain from using this package or pin to Setuptools<81.
+  from pkg_resources import get_distribution
+Tuned per-class thresholds (best-F1 on val split):
+  dirt      0.576
+  water     0.579
+  scratch   0.621
+Evaluated 1400 images (358400 tiles) from split='val', threshold=tuned per-class
+class      threshold precision    recall        f1        AP   ROC-AUC   support
+dirt           0.576     0.863     0.822     0.842     0.926     0.971     72751
+water          0.579     0.815     0.851     0.832     0.916     0.969     83062
+scratch        0.621     0.845     0.708     0.770     0.820     0.977      9330
+
+Per-severity breakdown (ungated, per tile):
+class     severity   threshold precision    recall        f1        AP   ROC-AUC   support
+dirt      low            0.576     0.763     0.658     0.706     0.785     0.947     25323
+dirt      medium         0.576     0.783     0.886     0.831     0.930     0.986     23366
+dirt      high           0.576     0.793     0.933     0.857     0.959     0.993     24062
+water     low            0.579     0.709     0.685     0.697     0.759     0.953     27570
+water     medium         0.579     0.741     0.930     0.825     0.932     0.989     27295
+water     high           0.579     0.781     0.936     0.851     0.952     0.992     28197
+scratch   low            0.621     0.809     0.566     0.666     0.685     0.963      3234
+scratch   medium         0.621     0.815     0.740     0.776     0.822     0.985      3218
+scratch   high           0.621     0.787     0.830     0.808     0.884     0.994      2878
+=== JOB_STATISTICS ===
+=== current date     : Sun Sep 27 12:39:03 AM CEST 2026
+= Job-ID             : 1823277 on tinygpu
+= Job-Name           : bw_s2
+= Job-Command        : /home/woody/iwnt/iwnt196h/Farhad_Vaseghi_MA/scripts/hpc/run_shell.slurm
+= Initial workdir    : /home/woody/iwnt/iwnt196h/Farhad_Vaseghi_MA
+= Queue/Partition    : work
+= Slurm account      : iwnt with QOS=normal
+= Requested resources:  for 03:00:00
+= Elapsed runtime    : 00:26:18
+= Total RAM usage    : 4.1 GiB of requested  GiB (%)   
+= Node list          : tg083
+= Subm/Elig/Start/End: 2026-09-27T00:02:22 / 2026-09-27T00:02:22 / 2026-09-27T00:12:45 / 2026-09-27T00:39:03
+======================
+=== Quota infos ======
+    Path                 Used     SoftQ    HardQ    Gracetime  Filec    FileQ    FiHaQ    FileGrace    
+    /home/woody            10.5G  1000.0G  1500.0G        N/A     101K   5,000K   7,500K        N/A    
+    /home/hpc               6.0G   104.9G   209.7G        N/A   1,449      500K   1,000K        N/A    
+    /home/vault             0.0K  1048.6G  2097.2G        N/A       1      200K     400K        N/A    
+======================
+=== GPU utilization ==
+gpu_name, gpu_bus_id, pid, gpu_utilization [%], mem_utilization [%], max_memory_usage [MiB], time [ms]
+NVIDIA GeForce RTX 3080, 00000000:1A:00.0, 980590, 87 %, 62 %, 2990 MiB, 1538393 ms
+NVIDIA GeForce RTX 3080, 00000000:1A:00.0, 980589, 28 %, 19 %, 3522 MiB, 24523 ms

@@ -1,0 +1,101 @@
+### Starting TaskPrologue of job 1823286 on tg082 at Sun Sep 27 12:15:47 AM CEST 2026
+Running on cores 6-7,22-23,38-39,54-55 with governor powersave
+Sun Sep 27 00:15:47 2026       
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 610.57.04              KMD Version: 610.57.04     CUDA UMD Version: 13.3     |
++-----------------------------------------+------------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  NVIDIA GeForce RTX 3080        On  |   00000000:3E:00.0 Off |                  N/A |
+| 30%   33C    P8             18W /  300W |       1MiB /  10240MiB |      0%      Default |
+|                                         |                        |                  N/A |
++-----------------------------------------+------------------------+----------------------+
+
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
+|        ID   ID                                                               Usage      |
+|=========================================================================================|
+|  No running processes found                                                             |
++-----------------------------------------------------------------------------------------+
+### Finished TaskPrologue
+
+/home/woody/iwnt/iwnt196h/software/private/conda/envs/stage_a/lib/python3.11/site-packages/pythonperlin/__init__.py:4: UserWarning: pkg_resources is deprecated as an API. See https://setuptools.pypa.io/en/latest/pkg_resources.html. The pkg_resources package is slated for removal as early as 2025-11-30. Refrain from using this package or pin to Setuptools<81.
+  from pkg_resources import get_distribution
+train=11200 val=1400 arch=unet taps=(2, 4, 8, 16, 32) loss=dice_bce bce_weight=0.5 class_weights=[1.0, 1.0, 3.0]
+epoch 1/25  train_loss=0.3632  val_loss=0.2722  (109.0s)  *saved
+epoch 2/25  train_loss=0.2653  val_loss=0.2607  (108.2s)  *saved
+epoch 3/25  train_loss=0.2572  val_loss=0.2510  (107.8s)  *saved
+epoch 4/25  train_loss=0.2501  val_loss=0.2491  (107.6s)  *saved
+epoch 5/25  train_loss=0.2447  val_loss=0.2439  (108.6s)  *saved
+epoch 6/25  train_loss=0.2422  val_loss=0.2437  (107.8s)  *saved
+epoch 7/25  train_loss=0.2393  val_loss=0.2410  (108.0s)  *saved
+epoch 8/25  train_loss=0.2365  val_loss=0.2451  (108.2s)
+epoch 9/25  train_loss=0.2354  val_loss=0.2415  (108.2s)
+epoch 10/25  train_loss=0.2325  val_loss=0.2367  (108.7s)  *saved
+epoch 11/25  train_loss=0.2304  val_loss=0.2384  (108.6s)
+epoch 12/25  train_loss=0.2291  val_loss=0.2414  (107.7s)
+epoch 13/25  train_loss=0.2284  val_loss=0.2368  (108.6s)
+epoch 14/25  train_loss=0.2264  val_loss=0.2349  (108.4s)  *saved
+epoch 15/25  train_loss=0.2253  val_loss=0.2365  (108.3s)
+epoch 16/25  train_loss=0.2238  val_loss=0.2367  (107.7s)
+epoch 17/25  train_loss=0.2232  val_loss=0.2365  (108.6s)
+epoch 18/25  train_loss=0.2226  val_loss=0.2357  (107.9s)
+epoch 19/25  train_loss=0.2213  val_loss=0.2359  (108.7s)
+epoch 20/25  train_loss=0.2200  val_loss=0.2335  (108.6s)  *saved
+epoch 21/25  train_loss=0.2196  val_loss=0.2361  (107.7s)
+epoch 22/25  train_loss=0.2192  val_loss=0.2359  (108.4s)
+epoch 23/25  train_loss=0.2184  val_loss=0.2329  (108.1s)  *saved
+epoch 24/25  train_loss=0.2168  val_loss=0.2356  (108.4s)
+epoch 25/25  train_loss=0.2171  val_loss=0.2346  (107.9s)
+wrote checkpoints/study/cw_s3/stage_c_head.pt (best val_loss=0.2329)
+/home/woody/iwnt/iwnt196h/software/private/conda/envs/stage_a/lib/python3.11/site-packages/pythonperlin/__init__.py:4: UserWarning: pkg_resources is deprecated as an API. See https://setuptools.pypa.io/en/latest/pkg_resources.html. The pkg_resources package is slated for removal as early as 2025-11-30. Refrain from using this package or pin to Setuptools<81.
+  from pkg_resources import get_distribution
+Tuned per-class thresholds (best-F1 on val split):
+  dirt      0.135
+  water     0.232
+  scratch   0.004
+ground-truth cell threshold: {'dirt': 0.2, 'water': 0.25, 'scratch': 0.015}
+Evaluated 1400 images (5734400 tiles) from split='val', threshold=tuned per-class
+class      threshold precision    recall        f1        AP   ROC-AUC   support
+dirt           0.135     0.856     0.794     0.824     0.900     0.959   1135969
+water          0.232     0.808     0.819     0.814     0.892     0.957   1298411
+scratch        0.004     0.903     0.738     0.812     0.794     0.965     55214
+
+Per-severity breakdown (ungated, pooled to 64x64):
+class     severity   threshold precision    recall        f1        AP   ROC-AUC   support
+dirt      low            0.135     0.738     0.619     0.673     0.736     0.932    396141
+dirt      medium         0.135     0.761     0.854     0.805     0.889     0.978    363915
+dirt      high           0.135     0.773     0.919     0.840     0.926     0.989    375913
+water     low            0.232     0.665     0.640     0.652     0.693     0.935    432292
+water     medium         0.232     0.717     0.912     0.803     0.898     0.985    425661
+water     high           0.232     0.773     0.904     0.834     0.923     0.989    440458
+scratch   low            0.004     0.846     0.582     0.690     0.626     0.935     19467
+scratch   medium         0.004     0.865     0.780     0.820     0.803     0.979     18703
+scratch   high           0.004     0.856     0.871     0.864     0.872     0.991     17044
+=== JOB_STATISTICS ===
+=== current date     : Sun Sep 27 01:02:54 AM CEST 2026
+= Job-ID             : 1823286 on tinygpu
+= Job-Name           : cw_s3
+= Job-Command        : /home/woody/iwnt/iwnt196h/Farhad_Vaseghi_MA/scripts/hpc/run_shell.slurm
+= Initial workdir    : /home/woody/iwnt/iwnt196h/Farhad_Vaseghi_MA
+= Queue/Partition    : work
+= Slurm account      : iwnt with QOS=normal
+= Requested resources:  for 05:00:00
+= Elapsed runtime    : 00:47:10
+= Total RAM usage    : 6.8 GiB of requested  GiB (%)   
+= Node list          : tg082
+= Subm/Elig/Start/End: 2026-09-27T00:10:56 / 2026-09-27T00:10:56 / 2026-09-27T00:15:43 / 2026-09-27T01:02:53
+======================
+=== Quota infos ======
+    Path                 Used     SoftQ    HardQ    Gracetime  Filec    FileQ    FiHaQ    FileGrace    
+    /home/woody            10.5G  1000.0G  1500.0G        N/A     101K   5,000K   7,500K        N/A    
+    /home/hpc               6.0G   104.9G   209.7G        N/A   1,449      500K   1,000K        N/A    
+    /home/vault             0.0K  1048.6G  2097.2G        N/A       1      200K     400K        N/A    
+======================
+=== GPU utilization ==
+gpu_name, gpu_bus_id, pid, gpu_utilization [%], mem_utilization [%], max_memory_usage [MiB], time [ms]
+NVIDIA GeForce RTX 3080, 00000000:3E:00.0, 3753466, 92 %, 62 %, 8338 MiB, 2710775 ms
+NVIDIA GeForce RTX 3080, 00000000:3E:00.0, 3753465, 12 %, 7 %, 3162 MiB, 102434 ms

@@ -1,0 +1,87 @@
+### Starting TaskPrologue of job 1823301 on tg083 at Sun Sep 27 12:56:02 AM CEST 2026
+Running on cores 0-1,16-17,32-33,48-49 with governor powersave
+Sun Sep 27 00:56:02 2026       
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 610.57.04              KMD Version: 610.57.04     CUDA UMD Version: 13.3     |
++-----------------------------------------+------------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  NVIDIA GeForce RTX 3080        On  |   00000000:1A:00.0 Off |                  N/A |
+| 30%   45C    P8             18W /  300W |       1MiB /  10240MiB |      0%      Default |
+|                                         |                        |                  N/A |
++-----------------------------------------+------------------------+----------------------+
+
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
+|        ID   ID                                                               Usage      |
+|=========================================================================================|
+|  No running processes found                                                             |
++-----------------------------------------------------------------------------------------+
+### Finished TaskPrologue
+
+/home/woody/iwnt/iwnt196h/software/private/conda/envs/stage_a/lib/python3.11/site-packages/pythonperlin/__init__.py:4: UserWarning: pkg_resources is deprecated as an API. See https://setuptools.pypa.io/en/latest/pkg_resources.html. The pkg_resources package is slated for removal as early as 2025-11-30. Refrain from using this package or pin to Setuptools<81.
+  from pkg_resources import get_distribution
+Tuned per-class thresholds (best-F1 on val split):
+  dirt      0.090
+  water     0.242
+  scratch   0.004
+ground-truth cell threshold: {'dirt': 0.2, 'water': 0.25, 'scratch': 0.015}
+[ungated] Evaluated 1400 images (5734400 tiles) from split='test', threshold=tuned per-class
+class      threshold precision    recall        f1        AP   ROC-AUC   support
+dirt           0.090     0.864     0.786     0.823     0.901     0.961   1137437
+water          0.242     0.788     0.835     0.811     0.890     0.958   1286477
+scratch        0.004     0.881     0.742     0.805     0.780     0.963     53245
+
+[gated] Evaluated 1400 images (5734400 tiles) from split='test', threshold=tuned per-class
+class      threshold precision    recall        f1        AP   ROC-AUC   support
+dirt           0.090     0.869     0.785     0.825     0.902     0.961   1137437
+water          0.242     0.792     0.835     0.813     0.891     0.958   1286477
+scratch        0.004     0.885     0.708     0.787     0.744     0.905     53245
+
+Per-severity breakdown (ungated, pooled to 64x64):
+class     severity   threshold precision    recall        f1        AP   ROC-AUC   support
+dirt      low            0.090     0.755     0.601     0.669     0.735     0.934    397373
+dirt      medium         0.090     0.778     0.855     0.815     0.892     0.982    373754
+dirt      high           0.090     0.795     0.917     0.852     0.927     0.991    366310
+water     low            0.242     0.639     0.672     0.655     0.686     0.936    425232
+water     medium         0.242     0.694     0.912     0.788     0.885     0.983    414043
+water     high           0.242     0.762     0.918     0.833     0.930     0.990    447202
+scratch   low            0.004     0.769     0.556     0.645     0.557     0.923     16323
+scratch   medium         0.004     0.826     0.776     0.800     0.772     0.977     18841
+scratch   high           0.004     0.828     0.875     0.851     0.852     0.990     18081
+/home/woody/iwnt/iwnt196h/software/private/conda/envs/stage_a/lib/python3.11/site-packages/pythonperlin/__init__.py:4: UserWarning: pkg_resources is deprecated as an API. See https://setuptools.pypa.io/en/latest/pkg_resources.html. The pkg_resources package is slated for removal as early as 2025-11-30. Refrain from using this package or pin to Setuptools<81.
+  from pkg_resources import get_distribution
+tuned thresholds: {'dirt': 0.08678755909204483, 'water': 0.24232421815395355, 'scratch': 0.004263648297637701}
+wrote figs_c/stage_c_test_metrics_unet_t2.jpg
+wrote figs_c/stage_c_roc_pr_curves_unet_t2.jpg
+wrote figs_c/stage_c_probability_by_severity_unet_t2.jpg
+wrote figs_c/stage_c_full_report_unet_t2_page1.jpg
+wrote figs_c/stage_c_full_report_unet_t2_page2.jpg
+wrote figs_c/stage_c_training_curve_unet_t2.jpg
+=== JOB_STATISTICS ===
+=== current date     : Sun Sep 27 01:00:14 AM CEST 2026
+= Job-ID             : 1823301 on tinygpu
+= Job-Name           : final_c
+= Job-Command        : /home/woody/iwnt/iwnt196h/Farhad_Vaseghi_MA/scripts/hpc/run_shell.slurm
+= Initial workdir    : /home/woody/iwnt/iwnt196h/Farhad_Vaseghi_MA
+= Queue/Partition    : work
+= Slurm account      : iwnt with QOS=normal
+= Requested resources:  for 01:00:00
+= Elapsed runtime    : 00:04:16
+= Total RAM usage    : 3.3 GiB of requested  GiB (%)   
+= Node list          : tg083
+= Subm/Elig/Start/End: 2026-09-27T00:55:13 / 2026-09-27T00:55:13 / 2026-09-27T00:55:58 / 2026-09-27T01:00:14
+======================
+=== Quota infos ======
+    Path                 Used     SoftQ    HardQ    Gracetime  Filec    FileQ    FiHaQ    FileGrace    
+    /home/woody            10.5G  1000.0G  1500.0G        N/A     101K   5,000K   7,500K        N/A    
+    /home/hpc               6.0G   104.9G   209.7G        N/A   1,449      500K   1,000K        N/A    
+    /home/vault             0.0K  1048.6G  2097.2G        N/A       1      200K     400K        N/A    
+======================
+=== GPU utilization ==
+gpu_name, gpu_bus_id, pid, gpu_utilization [%], mem_utilization [%], max_memory_usage [MiB], time [ms]
+NVIDIA GeForce RTX 3080, 00000000:1A:00.0, 1028969, 11 %, 7 %, 3178 MiB, 137503 ms
+NVIDIA GeForce RTX 3080, 00000000:1A:00.0, 1028968, 16 %, 10 %, 2036 MiB, 102483 ms
