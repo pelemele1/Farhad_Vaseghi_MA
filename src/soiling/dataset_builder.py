@@ -324,7 +324,7 @@ def build_variant_with_mask(image, source_id, variant_idx, kind, base_seed):
 def build_stage_b_dataset(source_dir, out_dir, variants_per_image=4, seed=0,
                            ratios=(0.8, 0.1, 0.1), img_size=512,
                            thresholds=None, include_combos=False,
-                           include_severity=False):
+                           include_severity=False, save_pixel_masks=False):
     """Stage B dataset (architecture.md §2): same balanced variants as
     `build_stage_a_dataset` (reuses the same kind-assignment and split
     logic, so results are directly comparable, including the same
@@ -343,6 +343,21 @@ def build_stage_b_dataset(source_dir, out_dir, variants_per_image=4, seed=0,
     can have more than one class positive in the same tile wherever the
     combined effects' masks overlap -- `rasterize_tile_label` is already
     called independently per class below, so this needs no special-casing.
+
+    `save_pixel_masks=True` (Session 21, Stage C prep) additionally writes
+    the *full-resolution* per-class mask this same call already computes
+    (before it gets downsampled to a tile grid below) to `masks/
+    {source_id}_v{idx:02d}.png` -- a 3-channel image, one channel per class
+    in EFFECT_NAMES order, each scaled from its native [0,1] float coverage
+    value to uint8 via round(mask * 255). This is Stage C's ground truth:
+    additive and opt-in (default off, identical output otherwise) so the
+    exact same call that builds Stage B's dataset can also serve Stage C,
+    without a second, redundant synthesis pass over the same source images
+    -- see docs/development_log.md Session 21. Kept continuous (not
+    thresholded to binary, unlike the tile grid below) since a per-pixel
+    output has no single-scalar-per-cell constraint forcing a build-time
+    threshold choice; Stage C's own eval tunes a decision threshold at eval
+    time instead, the same convention every other stage already follows.
     """
     if img_size % 32 != 0:
         raise ValueError(f"img_size must be a multiple of 32 (P5 stride), got {img_size}")
@@ -355,6 +370,9 @@ def build_stage_b_dataset(source_dir, out_dir, variants_per_image=4, seed=0,
     out_dir = Path(out_dir)
     images_out = out_dir / "images"
     images_out.mkdir(parents=True, exist_ok=True)
+    if save_pixel_masks:
+        masks_out = out_dir / "masks"
+        masks_out.mkdir(parents=True, exist_ok=True)
 
     source_paths = sorted(source_dir.glob("*.jpg"))
     source_ids = [p.stem for p in source_paths]
@@ -381,6 +399,14 @@ def build_stage_b_dataset(source_dir, out_dir, variants_per_image=4, seed=0,
             ])
             tile_labels.append(grid)
 
+            if save_pixel_masks:
+                mask_stack = np.stack(
+                    [np.clip(masks[name] * 255.0, 0, 255).round() for name in EFFECT_NAMES],
+                    axis=-1,
+                ).astype(np.uint8)
+                mask_name = f"{source_id}_v{variant_idx:02d}.png"
+                cv.imwrite(str(masks_out / mask_name), mask_stack)
+
             rows.append({
                 "path": f"images/{out_name}",
                 "source_id": source_id,
@@ -404,6 +430,7 @@ def build_stage_b_dataset(source_dir, out_dir, variants_per_image=4, seed=0,
         "grid_w": grid_size,
         "class_names": list(EFFECT_NAMES),
         "thresholds": thresholds,
+        "has_pixel_masks": save_pixel_masks,
     }
     with open(out_dir / "stage_b_meta.json", "w") as f:
         json.dump(meta, f, indent=2)

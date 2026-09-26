@@ -1,5 +1,6 @@
 import csv
 import json
+from pathlib import Path
 
 import cv2 as cv
 import numpy as np
@@ -538,6 +539,93 @@ def test_build_stage_b_dataset_with_combos_inactive_classes_still_all_zero(tmp_p
         for i, name in enumerate(EFFECT_NAMES):
             if row[name] == 0:
                 assert grid[i].sum() == 0, f"{name} inactive but tile grid has a positive tile"
+
+
+def test_build_stage_b_dataset_save_pixel_masks_off_by_default(tmp_path):
+    source_dir = tmp_path / "source"
+    source_dir.mkdir()
+    _write_fake_sources(source_dir, n=2)
+
+    out_dir = tmp_path / "out"
+    build_stage_b_dataset(source_dir, out_dir, variants_per_image=4, seed=0, img_size=64)
+
+    assert not (out_dir / "masks").exists()
+    with open(out_dir / "stage_b_meta.json") as f:
+        meta = json.load(f)
+    assert meta["has_pixel_masks"] is False
+
+
+def test_build_stage_b_dataset_save_pixel_masks_writes_one_file_per_row(tmp_path):
+    source_dir = tmp_path / "source"
+    source_dir.mkdir()
+    _write_fake_sources(source_dir, n=2, size=(64, 96))
+
+    out_dir = tmp_path / "out"
+    rows, _ = build_stage_b_dataset(
+        source_dir, out_dir, variants_per_image=4, seed=0, img_size=64, save_pixel_masks=True,
+    )
+
+    assert (out_dir / "masks").exists()
+    with open(out_dir / "stage_b_meta.json") as f:
+        meta = json.load(f)
+    assert meta["has_pixel_masks"] is True
+
+    for row in rows:
+        mask_name = Path(row["path"]).stem + ".png"
+        mask_path = out_dir / "masks" / mask_name
+        assert mask_path.exists()
+        mask = cv.imread(str(mask_path), cv.IMREAD_UNCHANGED)
+        assert mask.shape == (64, 96, 3)
+        assert mask.dtype == np.uint8
+
+
+def test_build_stage_b_dataset_save_pixel_masks_consistent_with_saved_tile_labels(tmp_path):
+    # The saved PNG mask and the saved tile_labels grid both come from the
+    # exact same in-call `masks[name]` value (see module docstring on why a
+    # mask can't be pixel-reproduced by a second, separate call to
+    # build_variant_with_mask -- pythonperlin silently reseeds np.random
+    # internally, per tile_labels.py). This checks they stay consistent
+    # WITH EACH OTHER: rasterizing the saved PNG the same way the builder
+    # rasterized its own in-call mask must reproduce the exact same stored
+    # tile-label grid.
+    source_dir = tmp_path / "source"
+    source_dir.mkdir()
+    _write_fake_sources(source_dir, n=2)
+
+    out_dir = tmp_path / "out"
+    rows, tile_labels = build_stage_b_dataset(
+        source_dir, out_dir, variants_per_image=4, seed=0, img_size=64, save_pixel_masks=True,
+    )
+
+    with open(out_dir / "stage_b_meta.json") as f:
+        meta = json.load(f)
+    thresholds = meta["thresholds"]
+
+    for row, grid in zip(rows, tile_labels):
+        mask_name = Path(row["path"]).stem + ".png"
+        saved = cv.imread(str(out_dir / "masks" / mask_name), cv.IMREAD_UNCHANGED)
+        for i, name in enumerate(EFFECT_NAMES):
+            mask_float = saved[..., i].astype(np.float32) / 255.0
+            expected = rasterize_tile_label(mask_float, meta["grid_h"], meta["grid_w"], thresholds[name])
+            assert np.array_equal(grid[i], expected)
+
+
+def test_build_stage_b_dataset_save_pixel_masks_inactive_class_is_all_zero(tmp_path):
+    source_dir = tmp_path / "source"
+    source_dir.mkdir()
+    _write_fake_sources(source_dir, n=3)
+
+    out_dir = tmp_path / "out"
+    rows, _ = build_stage_b_dataset(
+        source_dir, out_dir, variants_per_image=4, seed=0, img_size=64, save_pixel_masks=True,
+    )
+
+    for row in rows:
+        mask_name = Path(row["path"]).stem + ".png"
+        mask = cv.imread(str(out_dir / "masks" / mask_name), cv.IMREAD_UNCHANGED)
+        for i, name in enumerate(EFFECT_NAMES):
+            if row[name] == 0:
+                assert mask[..., i].sum() == 0, f"{name} inactive but its mask channel is nonzero"
 
 
 def test_apply_effect_combo_with_masks_gives_zero_mask_for_inactive_classes():

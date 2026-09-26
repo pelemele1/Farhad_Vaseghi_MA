@@ -46,6 +46,12 @@ def main():
                          "(low/medium/high, see SEVERITY_VARIANT_KINDS in "
                          "src/soiling/dataset_builder.py) -- 10 kinds total (or 14 combined with "
                          "--include-combos). Default: off, every active class is full-strength.")
+    parser.add_argument("--save-pixel-masks", action="store_true",
+                         help="Also write each variant's full-resolution per-class mask to "
+                         "masks/ (3-channel PNG, one channel per class, continuous [0,1] scaled "
+                         "to uint8) -- this is Stage C's (pixel-level segmentation) ground "
+                         "truth, computed for free in the same call that already builds this "
+                         "Stage B dataset. Default: off, no masks/ folder written.")
     args = parser.parse_args()
 
     thresholds = None
@@ -60,6 +66,7 @@ def main():
         args.source, args.out,
         variants_per_image=args.variants, seed=args.seed, img_size=args.img_size,
         thresholds=thresholds, include_combos=args.include_combos, include_severity=args.include_severity,
+        save_pixel_masks=args.save_pixel_masks,
     )
 
     used_thresholds = thresholds if thresholds is not None else DEFAULT_TILE_THRESHOLDS
@@ -68,6 +75,8 @@ def main():
     print(f"Wrote {len(rows)} images to {Path(args.out) / 'images'}")
     print(f"Metadata: {Path(args.out) / 'metadata.csv'}")
     print(f"Tile labels: {Path(args.out) / 'tile_labels.npy'} (shape {tile_labels.shape}, grid {grid_h}x{grid_w})")
+    if args.save_pixel_masks:
+        print(f"Pixel masks: {Path(args.out) / 'masks'} (one 3-channel PNG per image)")
     print(f"Split sizes: {dict(by_split)}")
     for i, name in enumerate(EFFECT_NAMES):
         positives = sum(r[name] for r in rows)
