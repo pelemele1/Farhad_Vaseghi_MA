@@ -7,7 +7,7 @@ below is the only training this project runs from the local/dev side --
 real training is the user's own `sbatch` job on their HPC allocation.
 
 Usage:
-    python scripts/train_stage_c.py --data data/processed/stage_b_scratch15 --epochs 20 --device cuda
+    python scripts/train_stage_c.py --data data/processed/stage_b --epochs 20 --device cuda
 
 Smoke test (tiny subset, 1 epoch, CPU, no checkpoint written -- verifies the
 pipeline runs, not a real training run):
@@ -47,7 +47,7 @@ def build_stage_c_model(arch, weights, class_names, device):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--data", default="data/processed/stage_b_scratch15",
+    parser.add_argument("--data", default="data/processed/stage_b",
                          help="Dataset dir built with --save-pixel-masks (metadata.csv + images/ + masks/)")
     parser.add_argument("--weights", default="weights/yolo11m.pt", help="COCO-pretrained backbone weights")
     parser.add_argument("--epochs", type=int, default=20)

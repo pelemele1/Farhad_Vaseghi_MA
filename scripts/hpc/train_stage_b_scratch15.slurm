@@ -9,7 +9,7 @@
 # (focal, alpha=0.75, gamma=2.0) for a clean single-variable comparison --
 # only the dataset changes. Original dataset (data/processed/stage_b) is
 # kept untouched; this trains against the new copy
-# (data/processed/stage_b_scratch15) so both remain comparable/reproducible.
+# (data/processed/stage_b) so both remain comparable/reproducible.
 #
 #SBATCH --job-name=stage_b_s15
 #SBATCH --gres=gpu:1
@@ -24,7 +24,7 @@ module load python
 conda activate stage_a
 
 python3 scripts/train_stage_b.py \
-    --data data/processed/stage_b_scratch15 \
+    --data data/processed/stage_b \
     --weights weights/yolo11m.pt \
     --epochs 40 \
     --batch-size 16 \
@@ -34,4 +34,4 @@ python3 scripts/train_stage_b.py \
     --focal-alpha 0.75 \
     --focal-gamma 2.0 \
     --device cuda \
-    --out checkpoints/stage_b_scratch15
+    --out checkpoints/stage_b

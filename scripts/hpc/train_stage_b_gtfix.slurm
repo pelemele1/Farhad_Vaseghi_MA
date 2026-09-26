@@ -20,7 +20,7 @@ module load python
 conda activate stage_a
 
 python3 -u scripts/train_stage_b.py \
-    --data data/processed/stage_b_scratch15 \
+    --data data/processed/stage_b \
     --weights weights/yolo11m.pt \
     --epochs 40 \
     --batch-size 16 \

@@ -2,7 +2,7 @@
 #
 # Stage B training on NHR@FAU TinyGPU (rtx3080 partition, 1 GPU).
 # Session 19+, supervisor item 5: retrain on the rebuilt Stage B dataset
-# (data/processed/stage_b_scratch15), which now includes multi-distortion
+# (data/processed/stage_b), which now includes multi-distortion
 # (combo) variants -- 8000 images, scratch threshold still 1.5% (carried
 # forward from the prior session's adopted fix). Uses the winning loss
 # config from Phase 3's comparison (focal alpha=0.75, gamma=2.0 -- SSD did
@@ -24,7 +24,7 @@ module load python
 conda activate stage_a
 
 python3 scripts/train_stage_b.py \
-    --data data/processed/stage_b_scratch15 \
+    --data data/processed/stage_b \
     --weights weights/yolo11m.pt \
     --epochs 40 \
     --batch-size 16 \

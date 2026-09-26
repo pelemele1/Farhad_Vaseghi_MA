@@ -192,8 +192,8 @@ predictions for any image this head calls "not impaired" — see
 (a gate false negative silently suppresses a genuine detection too).
 
 ```bash
-python scripts/train_impaired_gate.py --data data/processed/stage_b_scratch15 --arch multiscale     --img-size 512 --epochs 20 --device cuda --out checkpoints/impaired_gate_multiscale
-python scripts/evaluate_impaired_gate.py --checkpoint checkpoints/impaired_gate_multiscale/impaired_gate_head.pt     --data data/processed/stage_b_scratch15 --split test --tune-thresholds --recall-target 0.95
+python scripts/train_impaired_gate.py --data data/processed/stage_b --arch multiscale     --img-size 512 --epochs 20 --device cuda --out checkpoints/impaired_gate_multiscale
+python scripts/evaluate_impaired_gate.py --checkpoint checkpoints/impaired_gate_multiscale/impaired_gate_head.pt     --data data/processed/stage_b --split test --tune-thresholds --recall-target 0.95
 ```
 
 ---

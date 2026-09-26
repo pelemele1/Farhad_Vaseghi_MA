@@ -126,8 +126,8 @@ def test_group_probs_by_severity_omits_absent_levels():
 
 def test_group_probs_by_severity_falls_back_for_rows_predating_the_column():
     # A dataset built before severity columns existed at all (real case:
-    # the current data/processed/stage_b_scratch15 on disk, mid-rebuild as
-    # of Session 20 Round 3) has no "dirt_severity" key whatsoever -- must
+    # the Stage B dataset on disk while it was being rebuilt in Session 20
+    # Round 3) has no "dirt_severity" key whatsoever -- must
     # not crash, and should infer "high"/"none" from the plain 0/1 column.
     rows = [{"dirt": "1"}, {"dirt": "0"}, {"dirt": 1}, {"dirt": 0}]
     probs = [0.9, 0.1, 0.8, 0.2]

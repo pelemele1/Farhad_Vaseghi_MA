@@ -4,7 +4,7 @@
 # Session 20, Round 2, Phase 8: same canonical hyperparameters as
 # checkpoints/stage_b_combo (train_stage_b_combo.slurm) -- focal loss,
 # alpha=0.75 uniform, gamma=2.0, 40 epochs -- retrained ONLY on the
-# recalibrated-threshold rebuild of data/processed/stage_b_scratch15
+# recalibrated-threshold rebuild of data/processed/stage_b
 # (dirt 0.15->0.20, water 0.15->0.25, scratch unchanged at 0.015). Single-
 # variable comparison against stage_b_combo, same precedent as the earlier
 # scratch-threshold-only retrain. Writes to a NEW checkpoint dir so
@@ -23,7 +23,7 @@ module load python
 conda activate stage_a
 
 python3 scripts/train_stage_b.py \
-    --data data/processed/stage_b_scratch15 \
+    --data data/processed/stage_b \
     --weights weights/yolo11m.pt \
     --epochs 40 \
     --batch-size 16 \

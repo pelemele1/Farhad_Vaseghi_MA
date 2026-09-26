@@ -19,7 +19,7 @@ conda activate stage_a
 echo "=== default threshold=0.5 ==="
 python3 scripts/evaluate_stage_b.py \
     --checkpoint checkpoints/stage_b_ssd/stage_b_head.pt \
-    --data data/processed/stage_b_scratch15 \
+    --data data/processed/stage_b \
     --split test \
     --device cuda
 
@@ -27,7 +27,7 @@ echo ""
 echo "=== tuned per-class thresholds ==="
 python3 scripts/evaluate_stage_b.py \
     --checkpoint checkpoints/stage_b_ssd/stage_b_head.pt \
-    --data data/processed/stage_b_scratch15 \
+    --data data/processed/stage_b \
     --split test \
     --device cuda \
     --tune-thresholds

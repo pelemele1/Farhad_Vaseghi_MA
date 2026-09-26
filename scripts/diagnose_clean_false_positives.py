@@ -15,7 +15,7 @@ impaired-gate head are both meant to improve on.
 Usage:
     python scripts/diagnose_clean_false_positives.py \
         --checkpoint checkpoints/stage_b_combo/stage_b_head.pt \
-        --data data/processed/stage_b_scratch15 --split test --tune-thresholds
+        --data data/processed/stage_b --split test --tune-thresholds
 """
 import argparse
 import sys
@@ -64,7 +64,7 @@ def clean_false_positive_rates(probs, labels, rows, class_names, threshold):
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--checkpoint", default="checkpoints/stage_b_combo/stage_b_head.pt")
-    parser.add_argument("--data", default="data/processed/stage_b_scratch15")
+    parser.add_argument("--data", default="data/processed/stage_b")
     parser.add_argument("--split", default="test", choices=["train", "val", "test"])
     parser.add_argument("--weights", default="weights/yolo11m.pt")
     parser.add_argument("--batch-size", type=int, default=32)

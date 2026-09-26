@@ -4,8 +4,8 @@
 # Session 19+, supervisor item 2: localized (per-tile) sum of squared
 # differences loss (LocalizedSSDLoss, src/models/losses.py), compared
 # against the current focal alpha=0.75, gamma=2.0 winner
-# (checkpoints/stage_b_scratch15) on the SAME dataset
-# (data/processed/stage_b_scratch15) for a clean single-variable
+# (checkpoints/stage_b) on the SAME dataset
+# (data/processed/stage_b) for a clean single-variable
 # comparison. No imbalance-correction hyperparameters -- plain SSD as
 # literally requested.
 #
@@ -22,7 +22,7 @@ module load python
 conda activate stage_a
 
 python3 scripts/train_stage_b.py \
-    --data data/processed/stage_b_scratch15 \
+    --data data/processed/stage_b \
     --weights weights/yolo11m.pt \
     --epochs 40 \
     --batch-size 16 \

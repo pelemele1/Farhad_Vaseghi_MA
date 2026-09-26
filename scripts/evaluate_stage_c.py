@@ -8,7 +8,7 @@ True).
 
 Usage:
     python scripts/evaluate_stage_c.py --checkpoint checkpoints/stage_c/stage_c_head.pt \
-        --data data/processed/stage_b_scratch15 --split test --device cuda
+        --data data/processed/stage_b --split test --device cuda
 """
 import argparse
 import sys
@@ -105,7 +105,7 @@ def resolve_gt_threshold(arg, dataset):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--checkpoint", default="checkpoints/stage_c/stage_c_head.pt")
-    parser.add_argument("--data", default="data/processed/stage_b_scratch15")
+    parser.add_argument("--data", default="data/processed/stage_b")
     parser.add_argument("--split", default="test", choices=["train", "val", "test"])
     parser.add_argument("--weights", default="weights/yolo11m.pt")
     parser.add_argument("--img-size", type=int, default=512, help="Must be a multiple of 32 (P5 stride)")

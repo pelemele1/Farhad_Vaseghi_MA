@@ -1,7 +1,7 @@
 # Stage B Final Report — Tile/Grid Distortion Localization
 
 **Status:** complete. Canonical checkpoint: `checkpoints/stage_b_multiscale/stage_b_head.pt`
-(multi-scale tile head, focal loss α=0.75, γ=2.0), trained on `data/processed/stage_b_scratch15`
+(multi-scale tile head, focal loss α=0.75, γ=2.0), trained on `data/processed/stage_b`
 (14000 images, combo-inclusive, severity-balanced, severity-independent ground truth), gated at
 inference time by `checkpoints/impaired_gate_multiscale/impaired_gate_head.pt` at threshold
 **0.140** ([`stage_a_final_report.md`](stage_a_final_report.md) §5). The same dataset directory
@@ -184,18 +184,18 @@ deterministic function of the 3 the model already predicts.
 
 ```bash
 python scripts/build_stage_b_dataset.py --source data/raw/mio_tcd/images \
-    --out data/processed/stage_b_scratch15 --variants 14 --include-combos --include-severity \
+    --out data/processed/stage_b --variants 14 --include-combos --include-severity \
     --dirt-threshold 0.20 --water-threshold 0.25 --scratch-threshold 0.015 --save-pixel-masks
-python scripts/train_impaired_gate.py --data data/processed/stage_b_scratch15 --arch multiscale \
+python scripts/train_impaired_gate.py --data data/processed/stage_b --arch multiscale \
     --img-size 512 --epochs 20 --device cuda --out checkpoints/impaired_gate_multiscale
-python scripts/train_stage_b.py --data data/processed/stage_b_scratch15 --arch multiscale \
+python scripts/train_stage_b.py --data data/processed/stage_b --arch multiscale \
     --epochs 40 --loss focal --focal-alpha 0.75 --focal-gamma 2.0 --device cuda \
     --out checkpoints/stage_b_multiscale
 python scripts/evaluate_stage_b.py --checkpoint checkpoints/stage_b_multiscale/stage_b_head.pt \
-    --data data/processed/stage_b_scratch15 --split test --tune-thresholds --by-severity \
+    --data data/processed/stage_b --split test --tune-thresholds --by-severity \
     --gate-checkpoint checkpoints/impaired_gate_multiscale/impaired_gate_head.pt --gate-threshold 0.140
 python scripts/visualize_stage_b_results.py --checkpoint checkpoints/stage_b_multiscale/stage_b_head.pt \
-    --data data/processed/stage_b_scratch15 --split test --tune-thresholds \
+    --data data/processed/stage_b --split test --tune-thresholds \
     --gate-checkpoint checkpoints/impaired_gate_multiscale/impaired_gate_head.pt --gate-threshold 0.140 \
     --log-file stage_b_multiscale_1823015.out --tag _multiscale --out-dir docs/images
 ```

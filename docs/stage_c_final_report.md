@@ -2,7 +2,7 @@
 
 **Status:** complete. Canonical checkpoint: `checkpoints/stage_c_unet/stage_c_head.pt`
 (U-Net-style decoder on the frozen backbone, Dice + BCE), trained on the pixel masks of
-`data/processed/stage_b_scratch15` (the same 14000 images, splits and severities as Stage B),
+`data/processed/stage_b` (the same 14000 images, splits and severities as Stage B),
 gated at inference time by `checkpoints/impaired_gate_multiscale/impaired_gate_head.pt` at
 threshold **0.140** ([`stage_a_final_report.md`](stage_a_final_report.md) §5). The full
 history — the P5-only v1 decoder, the ground-truth fix, the 50-epoch comparison — is in
@@ -151,15 +151,15 @@ is erased because the gate called the image clean.
 
 ```bash
 python scripts/build_stage_b_dataset.py --source data/raw/mio_tcd/images \
-    --out data/processed/stage_b_scratch15 --variants 14 --include-combos --include-severity \
+    --out data/processed/stage_b --variants 14 --include-combos --include-severity \
     --dirt-threshold 0.20 --water-threshold 0.25 --scratch-threshold 0.015 --save-pixel-masks
-python scripts/train_stage_c.py --data data/processed/stage_b_scratch15 --arch unet \
+python scripts/train_stage_c.py --data data/processed/stage_b --arch unet \
     --epochs 25 --batch-size 16 --img-size 512 --device cuda --out checkpoints/stage_c_unet
 python scripts/evaluate_stage_c.py --checkpoint checkpoints/stage_c_unet/stage_c_head.pt \
-    --data data/processed/stage_b_scratch15 --split test --tune-thresholds --by-severity \
+    --data data/processed/stage_b --split test --tune-thresholds --by-severity \
     --gate-checkpoint checkpoints/impaired_gate_multiscale/impaired_gate_head.pt --gate-threshold 0.140
 python scripts/visualize_stage_c_results.py --checkpoint checkpoints/stage_c_unet/stage_c_head.pt \
-    --data data/processed/stage_b_scratch15 --split test --tune-thresholds \
+    --data data/processed/stage_b --split test --tune-thresholds \
     --gate-checkpoint checkpoints/impaired_gate_multiscale/impaired_gate_head.pt --gate-threshold 0.140 \
     --log-file stage_c_unet_1822980.out --tag _unet --out-dir docs/images
 ```

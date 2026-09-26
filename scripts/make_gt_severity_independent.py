@@ -12,7 +12,7 @@ directly. Refuses to run twice (stage_b_meta.json's
 `severity_independent_gt` flag).
 
 Usage:
-    python scripts/make_gt_severity_independent.py --data data/processed/stage_b_scratch15
+    python scripts/make_gt_severity_independent.py --data data/processed/stage_b
 """
 import argparse
 import csv

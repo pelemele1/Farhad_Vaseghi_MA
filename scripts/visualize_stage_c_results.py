@@ -14,7 +14,7 @@ saved training log via --log-file, the train/val loss curve.
 Usage:
     python scripts/visualize_stage_c_results.py \
         --checkpoint checkpoints/stage_c/stage_c_head.pt \
-        --data data/processed/stage_b_scratch15 --split test --device cpu \
+        --data data/processed/stage_b --split test --device cpu \
         --log-file stage_c_<jobid>.out --out-dir docs/images
 """
 import argparse
@@ -183,7 +183,7 @@ def plot_stage_c_report(dataset, report_rows, probs, masks, class_names, out_dir
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--checkpoint", default="checkpoints/stage_c/stage_c_head.pt")
-    parser.add_argument("--data", default="data/processed/stage_b_scratch15")
+    parser.add_argument("--data", default="data/processed/stage_b")
     parser.add_argument("--split", default="test", choices=["train", "val", "test"])
     parser.add_argument("--weights", default="weights/yolo11m.pt")
     parser.add_argument("--img-size", type=int, default=512, help="Must be a multiple of 32 (P5 stride)")

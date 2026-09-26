@@ -2089,3 +2089,15 @@ low-severity AP 0.744 / 0.679 / 0.519 (25 epochs: 0.728 / 0.664 / 0.544) -- a ti
 low-severity AP 0.647 vs 0.645), slightly better on dirt/water and worse on scratch, the
 hardest class. The 25-epoch `checkpoints/stage_c_unet` stays canonical;
 `checkpoints/stage_c_unet50` is kept for comparison.
+
+### Phase 10 -- Dataset renamed to `data/processed/stage_b`
+
+To match `data/processed/stage_a`, the Stage B/C dataset `data/processed/stage_b_scratch15`
+(the name came from the Session 18 scratch-threshold experiment) was renamed to
+`data/processed/stage_b`, locally and on HPC, together with every reference in code, tests,
+slurm scripts and the three stage reports. Stage B (tile labels) and Stage C (pixel masks)
+both read this one directory. On HPC the old `data/processed/stage_b` (the superseded
+original Stage B dataset from before Session 18) was deleted to free the name, and the temporary
+`stage_b_gtfix` link removed. Earlier entries in this log and the raw job logs keep the
+names that were in use at the time: `stage_b_scratch15` / `stage_b_gtfix` there mean
+today's `stage_b`, while `stage_b` in entries before Session 18 means that older dataset.

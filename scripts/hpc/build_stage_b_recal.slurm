@@ -20,6 +20,6 @@ conda activate stage_a
 
 python3 scripts/build_stage_b_dataset.py \
     --source data/raw/mio_tcd/images \
-    --out data/processed/stage_b_scratch15 \
+    --out data/processed/stage_b \
     --variants 8 --include-combos \
     --dirt-threshold 0.20 --water-threshold 0.25 --scratch-threshold 0.015
