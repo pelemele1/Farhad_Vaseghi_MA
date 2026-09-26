@@ -1,0 +1,89 @@
+"""
+Train the Stage C pixel-level segmentation head (architecture.md §2, §3
+Option 1: frozen backbone, only the head is optimized).
+
+This script is meant to run on the FAU HPC (NHR@FAU TinyGPU); the smoke test
+below is the only training this project runs from the local/dev side --
+real training is the user's own `sbatch` job on their HPC allocation.
+
+Usage:
+    python scripts/train_stage_c.py --data data/processed/stage_b_scratch15 --epochs 20 --device cuda
+
+Smoke test (tiny subset, 1 epoch, CPU, no checkpoint written -- verifies the
+pipeline runs, not a real training run):
+    python scripts/train_stage_c.py --smoke-test
+"""
+import argparse
+import sys
+import time
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+import torch
+from torch.utils.data import DataLoader
+
+from scripts.train_stage_a import run_epoch
+from src.data.stage_c_dataset import StageCDataset
+from src.models.backbone import FrozenYOLOBackbone
+from src.models.distortion_head import StageCDistortionHead
+from src.models.losses import build_stage_c_loss
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--data", default="data/processed/stage_b_scratch15",
+                         help="Dataset dir built with --save-pixel-masks (metadata.csv + images/ + masks/)")
+    parser.add_argument("--weights", default="weights/yolo11m.pt", help="COCO-pretrained backbone weights")
+    parser.add_argument("--epochs", type=int, default=20)
+    parser.add_argument("--batch-size", type=int, default=16)
+    parser.add_argument("--lr", type=float, default=1e-3)
+    parser.add_argument("--img-size", type=int, default=512, help="Must be a multiple of 32 (P5 stride)")
+    parser.add_argument("--bce-weight", type=float, default=0.5,
+                         help="DiceBCELoss's BCE/Dice mix -- 1.0 is pure BCE, 0.0 is pure soft Dice")
+    parser.add_argument("--device", default="cpu")
+    parser.add_argument("--out", default="checkpoints/stage_c", help="Where to write the trained head's weights")
+    parser.add_argument(
+        "--smoke-test", action="store_true",
+        help="Tiny subset, 1 epoch, CPU, no checkpoint written -- pipeline correctness only",
+    )
+    args = parser.parse_args()
+
+    if args.smoke_test:
+        args.epochs, args.batch_size = 1, 2
+        max_samples = 8
+        print(f"[smoke-test] 1 epoch, batch_size=2, device={args.device}, 8 train / 8 val samples, no checkpoint written")
+    else:
+        max_samples = None
+
+    device = torch.device(args.device)
+
+    train_set = StageCDataset(args.data, split="train", img_size=args.img_size, max_samples=max_samples)
+    val_set = StageCDataset(args.data, split="val", img_size=args.img_size, max_samples=max_samples)
+    train_loader = DataLoader(train_set, batch_size=args.batch_size, shuffle=True)
+    val_loader = DataLoader(val_set, batch_size=args.batch_size, shuffle=False)
+
+    backbone = FrozenYOLOBackbone(args.weights).to(device)
+    head = StageCDistortionHead(in_channels=backbone.out_channels, class_names=train_set.class_names).to(device)
+
+    loss_fn = build_stage_c_loss(bce_weight=args.bce_weight)
+    print(f"train={len(train_set)} val={len(val_set)} loss=dice_bce bce_weight={args.bce_weight}")
+
+    optimizer = torch.optim.Adam(head.parameters(), lr=args.lr)
+
+    for epoch in range(1, args.epochs + 1):
+        start = time.time()
+        train_loss = run_epoch(backbone, head, train_loader, device, loss_fn, optimizer)
+        val_loss = run_epoch(backbone, head, val_loader, device, loss_fn, optimizer=None)
+        print(f"epoch {epoch}/{args.epochs}  train_loss={train_loss:.4f}  val_loss={val_loss:.4f}  ({time.time() - start:.1f}s)")
+
+    if not args.smoke_test:
+        out_dir = Path(args.out)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        ckpt_path = out_dir / "stage_c_head.pt"
+        torch.save({"head_state_dict": head.state_dict(), "class_names": head.class_names}, ckpt_path)
+        print(f"wrote {ckpt_path}")
+
+
+if __name__ == "__main__":
+    main()
