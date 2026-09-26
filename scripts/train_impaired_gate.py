@@ -15,19 +15,29 @@ pipeline runs, not a real training run):
 """
 import argparse
 import sys
-import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import torch
-from torch.utils.data import DataLoader
 
-from scripts.train_stage_a import run_epoch
+from scripts.train_stage_a import add_common_args, fit, make_loaders
 from src.data.stage_a_dataset import ImpairedGateDataset
-from src.models.backbone import FrozenYOLOBackbone
+from src.models.backbone import STRIDE_TAPS, FrozenYOLOBackbone
 from src.models.distortion_head import ImpairedGateHead
 from src.models.losses import build_impaired_gate_loss, compute_impaired_class_weight
+
+GATE_ARCHS = ("p5", "multiscale")
+
+
+def build_gate_model(arch, weights, device):
+    if arch == "multiscale":
+        backbone = FrozenYOLOBackbone(weights, return_layers=[STRIDE_TAPS[s] for s in (4, 8, 16, 32)])
+    elif arch == "p5":
+        backbone = FrozenYOLOBackbone(weights)
+    else:
+        raise ValueError(f"unknown gate arch {arch!r}, expected one of {GATE_ARCHS}")
+    return backbone.to(device), ImpairedGateHead(in_channels=backbone.out_channels).to(device)
 
 
 def main():
@@ -44,43 +54,39 @@ def main():
         "--smoke-test", action="store_true",
         help="Tiny subset, 1 epoch, CPU, no checkpoint written -- pipeline correctness only",
     )
+    parser.add_argument("--arch", default="p5", choices=GATE_ARCHS,
+                        help="'p5': GAP over P5 only (v1). 'multiscale': GAP over the stride-4/8/16 layers "
+                        "and P5, concatenated (v2).")
+    add_common_args(parser)
     args = parser.parse_args()
 
     if args.smoke_test:
-        args.epochs, args.batch_size = 1, 2
+        args.epochs, args.batch_size, args.num_workers = 1, 2, 0
         max_samples = 8
         print(f"[smoke-test] 1 epoch, batch_size=2, device={args.device}, 8 train / 8 val samples, no checkpoint written")
     else:
         max_samples = None
 
+    torch.manual_seed(args.seed)
     device = torch.device(args.device)
 
     train_set = ImpairedGateDataset(args.data, split="train", img_size=args.img_size, max_samples=max_samples)
     val_set = ImpairedGateDataset(args.data, split="val", img_size=args.img_size, max_samples=max_samples)
-    train_loader = DataLoader(train_set, batch_size=args.batch_size, shuffle=True)
-    val_loader = DataLoader(val_set, batch_size=args.batch_size, shuffle=False)
+    train_loader, val_loader = make_loaders(train_set, val_set, args.batch_size, args.num_workers,
+                                            low_severity_weight=args.low_severity_weight)
 
-    backbone = FrozenYOLOBackbone(args.weights).to(device)
-    head = ImpairedGateHead(in_channels=backbone.out_channels).to(device)
+    backbone, head = build_gate_model(args.arch, args.weights, device)
+    print(f"arch={args.arch} img_size={args.img_size}", flush=True)
 
     class_weight = compute_impaired_class_weight(Path(args.data) / "metadata.csv", split="train").to(device)
     loss_fn = build_impaired_gate_loss(class_weight)
     optimizer = torch.optim.Adam(head.parameters(), lr=args.lr)
 
-    print(f"train={len(train_set)} val={len(val_set)} class_weight={class_weight.tolist()}")
+    print(f"train={len(train_set)} val={len(val_set)} class_weight={class_weight.tolist()}", flush=True)
 
-    for epoch in range(1, args.epochs + 1):
-        start = time.time()
-        train_loss = run_epoch(backbone, head, train_loader, device, loss_fn, optimizer)
-        val_loss = run_epoch(backbone, head, val_loader, device, loss_fn, optimizer=None)
-        print(f"epoch {epoch}/{args.epochs}  train_loss={train_loss:.4f}  val_loss={val_loss:.4f}  ({time.time() - start:.1f}s)")
-
-    if not args.smoke_test:
-        out_dir = Path(args.out)
-        out_dir.mkdir(parents=True, exist_ok=True)
-        ckpt_path = out_dir / "impaired_gate_head.pt"
-        torch.save({"head_state_dict": head.state_dict(), "class_names": head.class_names}, ckpt_path)
-        print(f"wrote {ckpt_path}")
+    ckpt_path = None if args.smoke_test else Path(args.out) / "impaired_gate_head.pt"
+    fit(backbone, head, train_loader, val_loader, device, loss_fn, optimizer, args.epochs, ckpt_path,
+        extra_ckpt={"img_size": args.img_size, "arch": args.arch})
 
 
 if __name__ == "__main__":

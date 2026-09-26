@@ -44,10 +44,10 @@ from scripts.visualize_stage_a_results import (
     select_diverse_sample_indices,
 )
 from src.data.stage_b_dataset import StageBDataset
-from src.eval.gate import apply_gate, collect_gate_probs
+from src.eval.gate import apply_gate, collect_gate_probs, load_gate
 from src.eval.metrics import collect_predictions, compute_metrics
-from src.models.backbone import FrozenYOLOBackbone
-from src.models.distortion_head import ImpairedGateHead, StageBDistortionHead
+from src.eval.thresholds import threshold_for, tune_per_class_thresholds
+from scripts.train_stage_b import load_stage_b
 
 
 def max_prob_per_image(probs):
@@ -115,7 +115,7 @@ def plot_tile_grid_overlay(dataset, indices, probs, labels, class_names, thresho
         ax.imshow(overlay)
         ax.axis("off")
 
-        pred_active = bool(pred_grid.max() >= threshold)
+        pred_active = bool(pred_grid.max() >= threshold_for(threshold, class_names[class_idx]))
         correct = pred_active == bool(active)
         ax.set_title(
             f"class={kind} ({class_names[class_idx]} shown)\n"
@@ -182,7 +182,7 @@ def plot_combo_sample(dataset, idx, active_classes, probs, labels, class_names, 
         ax.imshow(overlay)
         ax.axis("off")
 
-        pred_active = bool(pred_grid.max() >= threshold)
+        pred_active = bool(pred_grid.max() >= threshold_for(threshold, cls))
         ax.set_title(
             f"{cls} (GT green / pred red)\nmax pred prob={pred_grid.max():.2f}"
             f"{'  (missed)' if not pred_active else ''}",
@@ -269,7 +269,7 @@ def _load_image_for_row(dataset, row):
 def plot_stage_b_eight_column_report(
     dataset, report_rows, probs, labels, class_names,
     labels_flat, probs_flat, out_dir, tag="", rows_per_page=6,
-    gate_probs=None, gated_tile_probs=None,
+    gate_probs=None, gated_tile_probs=None, gate_threshold=0.5,
 ):
     """Stage B results figure (supervisor item 1, extended per two
     follow-ups): one row per (idx, kind, class_idx) entry in `report_rows`.
@@ -357,7 +357,7 @@ def plot_stage_b_eight_column_report(
             distorted_title = f"distorted ({kind})"
             if gate_probs is not None and idx in gate_probs:
                 p = gate_probs[idx]
-                verdict = "impaired" if p >= 0.5 else "not impaired"
+                verdict = "impaired" if p >= gate_threshold else "not impaired"
                 distorted_title += f"\n[gate: {verdict} p={p:.2f}]"
             axes[r, 1].imshow(distorted)
             axes[r, 1].set_title(distorted_title, fontsize=9)
@@ -433,6 +433,10 @@ def main():
     parser.add_argument("--weights", default="weights/yolo11m.pt")
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--threshold", type=float, default=0.5)
+    parser.add_argument("--tune-thresholds", action="store_true",
+                        help="Use per-class best-F1 thresholds tuned on the val split (same as "
+                        "evaluate_stage_b.py --tune-thresholds) instead of --threshold, so the figures "
+                        "match the evaluation table.")
     parser.add_argument("--per-kind", type=int, default=3, help="Sample images per label kind for the grid")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--out-dir", default="docs/images")
@@ -453,13 +457,14 @@ def main():
     args = parser.parse_args()
 
     device = torch.device(args.device)
-    ckpt = torch.load(args.checkpoint, map_location=device, weights_only=False)
-    class_names = ckpt["class_names"]
+    backbone, head, class_names = load_stage_b(args.checkpoint, args.weights, device)
 
-    backbone = FrozenYOLOBackbone(args.weights).to(device)
-    head = StageBDistortionHead(in_channels=backbone.out_channels, class_names=class_names).to(device)
-    head.load_state_dict(ckpt["head_state_dict"])
-    head.eval()
+    threshold = args.threshold
+    if args.tune_thresholds:
+        val_loader = DataLoader(StageBDataset(args.data, split="val"), batch_size=32, shuffle=False)
+        val_probs, val_labels = collect_predictions(backbone, head, val_loader, device)
+        threshold = tune_per_class_thresholds(*flatten_tiles(val_labels, val_probs), class_names)
+        print(f"tuned thresholds: {threshold}")
 
     dataset = StageBDataset(args.data, split=args.split)
     loader = DataLoader(dataset, batch_size=32, shuffle=False)
@@ -468,11 +473,8 @@ def main():
 
     gate_probs = None
     if args.gate_checkpoint:
-        gate_ckpt = torch.load(args.gate_checkpoint, map_location=device, weights_only=False)
-        gate_head = ImpairedGateHead(in_channels=backbone.out_channels).to(device)
-        gate_head.load_state_dict(gate_ckpt["head_state_dict"])
-        gate_head.eval()
-        gate_probs = collect_gate_probs(backbone, gate_head, loader, device)
+        gate_head, gate_img_size = load_gate(args.gate_checkpoint, backbone.out_channels, device)
+        gate_probs = collect_gate_probs(backbone, gate_head, loader, device, img_size=gate_img_size)
         # Real inference-time gate (Session 20, Round 2): the metrics table,
         # ROC/PR curves file, overlay grid, and severity plot below all see
         # the GATED probs -- `apply_gate` returns a new array, so `raw_probs`
@@ -486,7 +488,7 @@ def main():
     # gating never touches `labels`, only `probs` -- so flattened labels are
     # identical either way; only the raw probs differ from the gated ones.
     _, raw_probs_flat = flatten_tiles(labels, raw_probs)
-    metric_rows = compute_metrics(labels_flat, probs_flat, class_names, threshold=args.threshold)
+    metric_rows = compute_metrics(labels_flat, probs_flat, class_names, threshold=threshold)
 
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -506,13 +508,13 @@ def main():
 
     sample_indices = select_diverse_sample_indices(dataset.rows, class_names, per_kind=args.per_kind, seed=args.seed)
     grid_path = out_dir / f"stage_b_sample_predictions{args.tag}.jpg"
-    plot_tile_grid_overlay(dataset, sample_indices, probs, labels, class_names, args.threshold, grid_path)
+    plot_tile_grid_overlay(dataset, sample_indices, probs, labels, class_names, threshold, grid_path)
     print(f"wrote {grid_path}")
 
     combo_idx, combo_classes = find_combo_sample_index(dataset.rows, class_names)
     if combo_idx is not None:
         combo_path = out_dir / f"stage_b_combo_sample{args.tag}.jpg"
-        plot_combo_sample(dataset, combo_idx, combo_classes, probs, labels, class_names, args.threshold, combo_path)
+        plot_combo_sample(dataset, combo_idx, combo_classes, probs, labels, class_names, threshold, combo_path)
         print(f"wrote {combo_path}")
 
     # Round 3 follow-up: the report's columns 4-6 (and PR curve) always show
@@ -528,6 +530,7 @@ def main():
         labels_flat, raw_probs_flat, out_dir, tag=args.tag,
         rows_per_page=args.rows_per_page, gate_probs=gate_probs,
         gated_tile_probs=probs if gate_probs is not None else None,
+        gate_threshold=args.gate_threshold,
     )
     for p in report_paths:
         print(f"wrote {p}")

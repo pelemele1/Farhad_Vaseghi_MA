@@ -361,6 +361,18 @@ def test_dice_bce_loss_degenerate_all_zero_target_does_not_nan():
     assert loss.item() < 0.1  # correct confident prediction on an all-negative target -> small loss
 
 
+def test_dice_is_batch_level_so_empty_target_samples_do_not_dominate():
+    # Sample 0: a perfectly predicted positive region. Sample 1: empty
+    # target with a small residual 0.01 probability everywhere. Batch-level
+    # Dice stays small; per-sample Dice would put sample 1 at ~1.
+    targets = torch.zeros(2, 1, 64, 64)
+    targets[0, 0, :32] = 1.0
+    logits = torch.full((2, 1, 64, 64), float(torch.logit(torch.tensor(0.01))))
+    logits[0, 0, :32] = 20.0
+    dice_only = DiceBCELoss(bce_weight=0.0)(logits, targets)
+    assert dice_only.item() < 0.05
+
+
 def test_dice_bce_loss_weight_interpolates_between_bce_and_dice():
     torch.manual_seed(0)
     logits = torch.randn(2, 3, 8, 8)

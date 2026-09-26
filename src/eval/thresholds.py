@@ -34,6 +34,28 @@ def best_f1_threshold(y_true, y_prob):
     )
 
 
+def threshold_for_recall(y_true, y_prob, target_recall):
+    """Highest threshold whose recall on (y_true, y_prob) is still >=
+    `target_recall` -- for a gate, whose job is to drop as many negatives
+    as possible while keeping a guaranteed share of positives (best-F1 is
+    the wrong criterion there: with ~93% positives it lands near 0 and lets
+    almost every negative through). Returns (threshold, recall,
+    negative_pass_rate)."""
+    y_true = np.asarray(y_true).astype(bool)
+    y_prob = np.asarray(y_prob)
+    pos = np.sort(y_prob[y_true])[::-1]
+    k = int(np.ceil(target_recall * len(pos)))
+    threshold = float(pos[max(k, 1) - 1])
+    recall = float((y_prob[y_true] >= threshold).mean())
+    neg_pass = float((y_prob[~y_true] >= threshold).mean()) if (~y_true).any() else float("nan")
+    return threshold, recall, neg_pass
+
+
+def threshold_for(threshold, class_name):
+    """A single float applies to every class; a dict gives each class its own."""
+    return threshold[class_name] if isinstance(threshold, dict) else threshold
+
+
 def tune_per_class_thresholds(labels, probs, class_names):
     """labels, probs: (n_samples, n_classes) arrays (same shape
     `compute_metrics` expects -- flatten Stage B's tile grid first). Returns

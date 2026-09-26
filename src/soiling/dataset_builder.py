@@ -279,12 +279,21 @@ def build_stage_a_dataset(source_dir, out_dir, variants_per_image=4, seed=0,
 
 def apply_effect_combo_with_masks(image, combo, seeds, severities=None):
     """Like `apply_effect_combo`, but also returns each class's own
-    full-resolution `[0, 1]` mask (all-zero for a class not in `combo`,
-    severity-scaled for an active one -- see `apply_severity`) -- needed by
-    Stage B to rasterize tile labels from the *exact* mask that produced
-    this image, not a separately-regenerated one (see module docstring /
-    docs/development_log.md Session 6: add_dirt/add_water aren't
-    pixel-reproducible across separate calls, only label-reproducible)."""
+    full-resolution `[0, 1]` mask (all-zero for a class not in `combo`) --
+    needed by Stage B to rasterize tile labels from the *exact* mask that
+    produced this image, not a separately-regenerated one (see module
+    docstring / docs/development_log.md Session 6: add_dirt/add_water aren't
+    pixel-reproducible across separate calls, only label-reproducible).
+
+    The returned mask is the effect's own full-strength mask, NOT scaled by
+    the severity alpha: ground truth marks *where* the distortion is, while
+    severity only changes how visible it is in the image. Scaling the mask
+    too (Session 20 Round 3's original design) shrank a low-severity
+    variant's labeled region to the few tiles whose coverage * 0.3 still
+    cleared thresholds calibrated on full-strength masks -- ~4x fewer
+    positive tiles for low- vs high-severity water despite an identically
+    sized region, contradicting Stage A's image-level label (still 1 at any
+    severity). See docs/development_log.md Session 22."""
     severities = severities or {}
     out = image
     labels = {}
@@ -304,8 +313,8 @@ def apply_effect_combo_with_masks(image, combo, seeds, severities=None):
             effect_out, mask = add_water(before, seed=seeds["water"])
         elif name == "scratch":
             effect_out, mask = add_scratch(before, seed=seeds["scratch"])
-        out, scaled_mask = apply_severity(before, effect_out, mask, severity)
-        masks[name] = scaled_mask
+        out, _ = apply_severity(before, effect_out, mask, severity)
+        masks[name] = mask
     return out, labels, masks
 
 
@@ -330,8 +339,9 @@ def build_stage_b_dataset(source_dir, out_dir, variants_per_image=4, seed=0,
     logic, so results are directly comparable, including the same
     `include_combos`/`include_severity` flags -- see that docstring), plus
     a per-tile label grid rasterized from each variant's own
-    severity-scaled mask in the same call that produced its image -- see
-    module-level note on why this can't be a post-hoc step.
+    (severity-independent, see `apply_effect_combo_with_masks`) mask in the
+    same call that produced its image -- see module-level note on why this
+    can't be a post-hoc step.
 
     Tile grid size = img_size // 32, matching the frozen backbone's P5
     stride (architecture.md: "the feature map is treated as a grid") --
@@ -431,6 +441,7 @@ def build_stage_b_dataset(source_dir, out_dir, variants_per_image=4, seed=0,
         "class_names": list(EFFECT_NAMES),
         "thresholds": thresholds,
         "has_pixel_masks": save_pixel_masks,
+        "severity_independent_gt": True,
     }
     with open(out_dir / "stage_b_meta.json", "w") as f:
         json.dump(meta, f, indent=2)

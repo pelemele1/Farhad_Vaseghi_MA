@@ -19,16 +19,16 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import cv2 as cv
 import numpy as np
 import torch
+import torch.nn.functional as F
 from torch.utils.data import DataLoader
 
 from scripts.evaluate_stage_b import _print_metrics_table, flatten_tiles
+from scripts.train_stage_c import build_stage_c_model
 from src.data.stage_c_dataset import StageCDataset
-from src.eval.gate import apply_gate, collect_gate_probs
-from src.eval.metrics import collect_predictions, compute_metrics
+from src.eval.gate import apply_gate, collect_gate_probs, load_gate
+from src.eval.metrics import compute_metrics
 from src.eval.severity import broadcast_rows_to_tiles, compute_metrics_by_severity
-from src.eval.thresholds import tune_per_class_thresholds
-from src.models.backbone import FrozenYOLOBackbone
-from src.models.distortion_head import ImpairedGateHead, StageCDistortionHead
+from src.eval.thresholds import threshold_for, tune_per_class_thresholds
 
 
 def pool_to_grid(array, grid_size):
@@ -59,6 +59,49 @@ def pool_to_grid(array, grid_size):
     return pooled
 
 
+def load_stage_c(checkpoint, weights, device):
+    """(backbone, head, class_names) from a Stage C checkpoint. Checkpoints
+    without an "arch" field predate the U-Net head and are the v1 FCN."""
+    ckpt = torch.load(checkpoint, map_location=device, weights_only=False)
+    class_names = ckpt["class_names"]
+    backbone, head = build_stage_c_model(ckpt.get("arch", "fcn"), weights, class_names, device)
+    head.load_state_dict(ckpt["head_state_dict"])
+    head.eval()
+    return backbone, head, class_names
+
+
+@torch.no_grad()
+def collect_pooled_predictions(backbone, head, loader, device, grid_size):
+    """Like src.eval.metrics.collect_predictions, but area-pools every batch
+    to (grid_size, grid_size) as it goes (adaptive average pooling == the
+    INTER_AREA pooling of pool_to_grid for an integer downscale factor).
+    Holding the full-resolution arrays instead would need ~4.4 GB per array
+    for a 1400-image split at 512x512 -- probabilities and masks, for val and
+    test, overflows a 24 GB machine. Also returns each image's full-
+    resolution max probability per class, (N, C), for the per-image plots.
+    Returns (probs_pooled, masks_pooled, max_probs)."""
+    probs_out, masks_out, max_out = [], [], []
+    for images, masks in loader:
+        probs = torch.sigmoid(head(backbone(images.to(device))))
+        probs_out.append(F.adaptive_avg_pool2d(probs, grid_size).cpu().numpy())
+        masks_out.append(F.adaptive_avg_pool2d(masks.to(device), grid_size).cpu().numpy())
+        max_out.append(probs.amax(dim=(2, 3)).cpu().numpy())
+    return np.concatenate(probs_out), np.concatenate(masks_out), np.concatenate(max_out)
+
+
+def binarize_masks(masks_pooled, gt_threshold, class_names):
+    """(N, C, g, g) pooled coverage -> uint8 labels; `gt_threshold` is a
+    float or dict[class_name, float]."""
+    labels = np.empty(masks_pooled.shape, dtype=np.uint8)
+    for i, name in enumerate(class_names):
+        labels[:, i] = masks_pooled[:, i] >= threshold_for(gt_threshold, name)
+    return labels
+
+
+def resolve_gt_threshold(arg, dataset):
+    return dataset.meta["thresholds"] if arg is None else arg
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--checkpoint", default="checkpoints/stage_c/stage_c_head.pt")
@@ -73,14 +116,11 @@ def main():
                          "computing metrics (see pool_to_grid) -- default 64 is 16x finer than "
                          "Stage B's 16x16 tile grid while staying tractable for sklearn's "
                          "sort-based AP/ROC-AUC.")
-    parser.add_argument("--gt-threshold", type=float, default=0.5,
-                         help="Cutoff on the pooled [0,1] ground-truth mask value for a cell to "
-                         "count as a genuine positive -- P/R/F1/AP/ROC-AUC need binary ground "
-                         "truth; the stored mask is kept continuous (see StageCDataset), so this "
-                         "binarizes it at evaluation time instead of at dataset-build time, the "
-                         "same 'decide the threshold at eval time' convention this project "
-                         "already follows for the *predicted*-probability decision threshold "
-                         "below.")
+    parser.add_argument("--gt-threshold", type=float, default=None,
+                         help="Pooled ground-truth coverage a cell needs to count as positive. Default: "
+                         "the dataset's own per-class Stage B tile thresholds (stage_b_meta.json), i.e. "
+                         "the same 'distorted' criterion as a Stage B tile, at finer resolution -- a "
+                         "single cutoff like 0.5 would count almost no thin-scratch cells.")
     parser.add_argument("--threshold", type=float, default=0.5, help="Sigmoid threshold for precision/recall/F1")
     parser.add_argument(
         "--tune-thresholds", action="store_true",
@@ -106,21 +146,16 @@ def main():
 
     device = torch.device(args.device)
 
-    ckpt = torch.load(args.checkpoint, map_location=device, weights_only=False)
-    class_names = ckpt["class_names"]
-
-    backbone = FrozenYOLOBackbone(args.weights).to(device)
-    head = StageCDistortionHead(in_channels=backbone.out_channels, class_names=class_names).to(device)
-    head.load_state_dict(ckpt["head_state_dict"])
-    head.eval()
+    backbone, head, class_names = load_stage_c(args.checkpoint, args.weights, device)
 
     threshold = args.threshold
     if args.tune_thresholds:
         val_set = StageCDataset(args.data, split="val", img_size=args.img_size)
         val_loader = DataLoader(val_set, batch_size=args.batch_size, shuffle=False)
-        val_probs, val_masks = collect_predictions(backbone, head, val_loader, device)
-        val_probs_pooled = pool_to_grid(val_probs, args.eval_grid)
-        val_labels_pooled = (pool_to_grid(val_masks, args.eval_grid) >= args.gt_threshold).astype(np.uint8)
+        val_probs_pooled, val_masks_pooled, _ = collect_pooled_predictions(
+            backbone, head, val_loader, device, args.eval_grid)
+        val_labels_pooled = binarize_masks(
+            val_masks_pooled, resolve_gt_threshold(args.gt_threshold, val_set), class_names)
         val_labels_flat, val_probs_flat = flatten_tiles(val_labels_pooled, val_probs_pooled)
         threshold = tune_per_class_thresholds(val_labels_flat, val_probs_flat, class_names)
         print("Tuned per-class thresholds (best-F1 on val split):")
@@ -130,9 +165,10 @@ def main():
     dataset = StageCDataset(args.data, split=args.split, img_size=args.img_size)
     loader = DataLoader(dataset, batch_size=args.batch_size, shuffle=False)
 
-    probs, masks = collect_predictions(backbone, head, loader, device)
-    probs_pooled = pool_to_grid(probs, args.eval_grid)
-    labels_pooled = (pool_to_grid(masks, args.eval_grid) >= args.gt_threshold).astype(np.uint8)
+    probs_pooled, masks_pooled, _ = collect_pooled_predictions(backbone, head, loader, device, args.eval_grid)
+    gt_threshold = resolve_gt_threshold(args.gt_threshold, dataset)
+    print(f"ground-truth cell threshold: {gt_threshold}")
+    labels_pooled = binarize_masks(masks_pooled, gt_threshold, class_names)
     labels_flat, probs_flat = flatten_tiles(labels_pooled, probs_pooled)
     rows = compute_metrics(labels_flat, probs_flat, class_names, threshold=threshold)
 
@@ -142,14 +178,10 @@ def main():
                           label="ungated" if args.gate_checkpoint else None)
 
     if args.gate_checkpoint:
-        gate_ckpt = torch.load(args.gate_checkpoint, map_location=device, weights_only=False)
-        gate_head = ImpairedGateHead(in_channels=backbone.out_channels).to(device)
-        gate_head.load_state_dict(gate_ckpt["head_state_dict"])
-        gate_head.eval()
-        gate_probs = collect_gate_probs(backbone, gate_head, loader, device)
-        gated_probs = apply_gate(probs, gate_probs, threshold=args.gate_threshold)
-
-        gated_probs_pooled = pool_to_grid(gated_probs, args.eval_grid)
+        gate_head, gate_img_size = load_gate(args.gate_checkpoint, backbone.out_channels, device)
+        gate_probs = collect_gate_probs(backbone, gate_head, loader, device, img_size=gate_img_size)
+        # Zeroing a whole image commutes with pooling, so gating the pooled grid is exact.
+        gated_probs_pooled = apply_gate(probs_pooled, gate_probs, threshold=args.gate_threshold)
         gated_labels_flat, gated_probs_flat = flatten_tiles(labels_pooled, gated_probs_pooled)
         gated_rows = compute_metrics(gated_labels_flat, gated_probs_flat, class_names, threshold=threshold)
         print()

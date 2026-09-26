@@ -29,7 +29,12 @@ import torch
 from torch.utils.data import DataLoader
 
 from scripts.evaluate_stage_b import flatten_tiles
-from scripts.evaluate_stage_c import pool_to_grid
+from scripts.evaluate_stage_c import (
+    binarize_masks,
+    collect_pooled_predictions,
+    load_stage_c,
+    resolve_gt_threshold,
+)
 from scripts.visualize_stage_a_results import (
     parse_training_log,
     plot_metrics_bar_chart,
@@ -42,30 +47,41 @@ from scripts.visualize_stage_b_results import (
     _clean_image_lookup,
     _load_image_for_row,
     class_index_for_sample,
-    max_prob_per_image,
 )
 from src.data.stage_c_dataset import StageCDataset
-from src.eval.gate import apply_gate, collect_gate_probs
-from src.eval.metrics import collect_predictions, compute_metrics
-from src.models.backbone import FrozenYOLOBackbone
-from src.models.distortion_head import ImpairedGateHead, StageCDistortionHead
+from src.eval.gate import apply_gate, collect_gate_probs, load_gate
+from src.eval.metrics import compute_metrics
+from src.eval.thresholds import tune_per_class_thresholds
 
 
-def select_report_rows(dataset, probs, class_names, per_class=3, seed=0):
+def select_report_rows(dataset, max_probs, class_names, per_class=3, seed=0):
     """Same idea as visualize_stage_b_results.py::select_report_rows: a
     diverse set of (idx, kind, class_idx) rows covering every label kind,
-    for the per-sample report figure below."""
+    for the per-sample report figure below. `max_probs`: (N, C) per-image
+    max probability (a clean sample shows its most-confident class)."""
     indices = select_diverse_sample_indices(dataset.rows, class_names, per_kind=per_class, seed=seed)
     rows = []
     for idx in indices:
         row = dataset.rows[idx]
-        kind, class_idx = class_index_for_sample(row, class_names, probs[idx])
+        kind, class_idx = class_index_for_sample(row, class_names, np.asarray(max_probs[idx])[:, None, None])
         rows.append((idx, kind, class_idx))
     return rows
 
 
+@torch.no_grad()
+def full_resolution_predictions(backbone, head, dataset, indices, device):
+    """{idx: (C, H, W) probability map} and {idx: (C, H, W) mask} for just
+    the report's handful of samples."""
+    probs, masks = {}, {}
+    for idx in indices:
+        image, mask = dataset[idx]
+        probs[idx] = torch.sigmoid(head(backbone(image[None].to(device))))[0].cpu().numpy()
+        masks[idx] = mask.numpy()
+    return probs, masks
+
+
 def plot_stage_c_report(dataset, report_rows, probs, masks, class_names, out_dir,
-                         tag="", rows_per_page=6, gate_probs=None, gated_probs=None):
+                         tag="", rows_per_page=6, gate_probs=None, gated_probs=None, gate_threshold=0.5):
     """Stage C per-sample report: one row per (idx, kind, class_idx) entry
     in `report_rows`, at full (native training) resolution -- no pooling,
     unlike the scalar metrics this script also writes (see pool_to_grid's
@@ -86,7 +102,8 @@ def plot_stage_c_report(dataset, report_rows, probs, masks, class_names, out_dir
 
     Paginated at `rows_per_page` rows per file:
     out_dir/stage_c_full_report{tag}_page{N}.jpg. Returns the list of
-    written paths."""
+    written paths. `probs`/`masks`/`gated_probs` are indexed as
+    `x[idx][class_idx]` -- full (N, C, H, W) arrays or {idx: (C, H, W)} dicts."""
     n_cols = 5 if gated_probs is not None else 4
     clean_lookup = _clean_image_lookup(dataset, class_names)
 
@@ -122,20 +139,20 @@ def plot_stage_c_report(dataset, report_rows, probs, masks, class_names, out_dir
             distorted_title = f"distorted ({kind})"
             if gate_probs is not None and idx in gate_probs:
                 p = gate_probs[idx]
-                verdict = "impaired" if p >= 0.5 else "not impaired"
+                verdict = "impaired" if p >= gate_threshold else "not impaired"
                 distorted_title += f"\n[gate: {verdict} p={p:.2f}]"
             axes[r, 1].imshow(distorted)
             axes[r, 1].set_title(distorted_title, fontsize=9)
             axes[r, 1].axis("off")
 
-            gt_mask = masks[idx, class_idx].astype(np.float32)
+            gt_mask = masks[idx][class_idx].astype(np.float32)
             im_gt = axes[r, 2].imshow(gt_mask, cmap="viridis", vmin=0, vmax=1)
             axes[r, 2].set_title(f"GT mask ({class_name})", fontsize=9)
             axes[r, 2].set_xticks([])
             axes[r, 2].set_yticks([])
             fig.colorbar(im_gt, ax=axes[r, 2], fraction=0.046)
 
-            pred_mask = probs[idx, class_idx].astype(np.float32)
+            pred_mask = probs[idx][class_idx].astype(np.float32)
             im_pred = axes[r, 3].imshow(pred_mask, cmap="viridis", vmin=0, vmax=1)
             axes[r, 3].set_title(f"predicted mask ({class_name})", fontsize=9)
             axes[r, 3].set_xticks([])
@@ -143,7 +160,7 @@ def plot_stage_c_report(dataset, report_rows, probs, masks, class_names, out_dir
             fig.colorbar(im_pred, ax=axes[r, 3], fraction=0.046)
 
             if gated_probs is not None:
-                gated_mask = gated_probs[idx, class_idx].astype(np.float32)
+                gated_mask = gated_probs[idx][class_idx].astype(np.float32)
                 im_gated = axes[r, 4].imshow(gated_mask, cmap="viridis", vmin=0, vmax=1)
                 axes[r, 4].set_title(f"gated mask ({class_name})", fontsize=9)
                 axes[r, 4].set_xticks([])
@@ -172,14 +189,17 @@ def main():
     parser.add_argument("--img-size", type=int, default=512, help="Must be a multiple of 32 (P5 stride)")
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--threshold", type=float, default=0.5)
+    parser.add_argument("--tune-thresholds", action="store_true",
+                         help="Use per-class best-F1 thresholds tuned on the val split (same as "
+                         "evaluate_stage_c.py --tune-thresholds) instead of --threshold.")
     parser.add_argument("--eval-grid", type=int, default=64,
                          help="Pool both predictions and ground truth to this grid size before "
                          "computing the metrics bar chart/ROC-PR curves (see evaluate_stage_c.py's "
                          "pool_to_grid) -- the per-sample report figure is unaffected, always full "
                          "resolution.")
-    parser.add_argument("--gt-threshold", type=float, default=0.5,
-                         help="Cutoff on the pooled [0,1] ground-truth mask value for a cell to "
-                         "count as a genuine positive in the metrics bar chart/ROC-PR curves.")
+    parser.add_argument("--gt-threshold", type=float, default=None,
+                         help="Pooled ground-truth coverage for a positive cell (default: the dataset's "
+                         "per-class Stage B tile thresholds -- see evaluate_stage_c.py).")
     parser.add_argument("--per-kind", type=int, default=3, help="Sample images per label kind for the report")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--out-dir", default="docs/images")
@@ -198,32 +218,33 @@ def main():
     args = parser.parse_args()
 
     device = torch.device(args.device)
-    ckpt = torch.load(args.checkpoint, map_location=device, weights_only=False)
-    class_names = ckpt["class_names"]
+    backbone, head, class_names = load_stage_c(args.checkpoint, args.weights, device)
 
-    backbone = FrozenYOLOBackbone(args.weights).to(device)
-    head = StageCDistortionHead(in_channels=backbone.out_channels, class_names=class_names).to(device)
-    head.load_state_dict(ckpt["head_state_dict"])
-    head.eval()
+    threshold = args.threshold
+    if args.tune_thresholds:
+        val_set = StageCDataset(args.data, split="val", img_size=args.img_size)
+        val_loader = DataLoader(val_set, batch_size=8, shuffle=False)
+        val_probs, val_masks, _ = collect_pooled_predictions(backbone, head, val_loader, device, args.eval_grid)
+        val_labels = binarize_masks(val_masks, resolve_gt_threshold(args.gt_threshold, val_set), class_names)
+        threshold = tune_per_class_thresholds(*flatten_tiles(val_labels, val_probs), class_names)
+        print(f"tuned thresholds: {threshold}")
 
     dataset = StageCDataset(args.data, split=args.split, img_size=args.img_size)
     loader = DataLoader(dataset, batch_size=8, shuffle=False)
-    raw_probs, masks = collect_predictions(backbone, head, loader, device)
-    probs = raw_probs
+    probs_pooled, masks_pooled, raw_max_probs = collect_pooled_predictions(
+        backbone, head, loader, device, args.eval_grid)
+    max_probs = raw_max_probs
 
     gate_probs = None
     if args.gate_checkpoint:
-        gate_ckpt = torch.load(args.gate_checkpoint, map_location=device, weights_only=False)
-        gate_head = ImpairedGateHead(in_channels=backbone.out_channels).to(device)
-        gate_head.load_state_dict(gate_ckpt["head_state_dict"])
-        gate_head.eval()
-        gate_probs = collect_gate_probs(backbone, gate_head, loader, device)
-        probs = apply_gate(raw_probs, gate_probs, threshold=args.gate_threshold)
+        gate_head, gate_img_size = load_gate(args.gate_checkpoint, backbone.out_channels, device)
+        gate_probs = collect_gate_probs(backbone, gate_head, loader, device, img_size=gate_img_size)
+        probs_pooled = apply_gate(probs_pooled, gate_probs, threshold=args.gate_threshold)
+        max_probs = apply_gate(raw_max_probs, gate_probs, threshold=args.gate_threshold)
 
-    probs_pooled = pool_to_grid(probs, args.eval_grid)
-    labels_pooled = (pool_to_grid(masks, args.eval_grid) >= args.gt_threshold).astype(np.uint8)
+    labels_pooled = binarize_masks(masks_pooled, resolve_gt_threshold(args.gt_threshold, dataset), class_names)
     labels_flat, probs_flat = flatten_tiles(labels_pooled, probs_pooled)
-    metric_rows = compute_metrics(labels_flat, probs_flat, class_names, threshold=args.threshold)
+    metric_rows = compute_metrics(labels_flat, probs_flat, class_names, threshold=threshold)
 
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -237,15 +258,21 @@ def main():
     print(f"wrote {curves_path}")
 
     severity_path = out_dir / f"stage_c_probability_by_severity{args.tag}.jpg"
-    plot_probability_by_severity(dataset.rows, max_prob_per_image(probs), class_names, severity_path,
+    plot_probability_by_severity(dataset.rows, max_probs, class_names, severity_path,
                                   title=f"Stage C{args.tag} (max prob per image)")
     print(f"wrote {severity_path}")
 
-    report_rows = select_report_rows(dataset, raw_probs, class_names, per_class=args.per_kind, seed=args.seed)
+    report_rows = select_report_rows(dataset, raw_max_probs, class_names, per_class=args.per_kind, seed=args.seed)
+    report_probs, report_masks = full_resolution_predictions(
+        backbone, head, dataset, [idx for idx, _, _ in report_rows], device)
+    gated_report_probs = None
+    if gate_probs is not None:
+        gated_report_probs = {idx: p * float(gate_probs[idx] >= args.gate_threshold)
+                              for idx, p in report_probs.items()}
     report_paths = plot_stage_c_report(
-        dataset, report_rows, raw_probs, masks, class_names, out_dir, tag=args.tag,
+        dataset, report_rows, report_probs, report_masks, class_names, out_dir, tag=args.tag,
         rows_per_page=args.rows_per_page, gate_probs=gate_probs,
-        gated_probs=probs if gate_probs is not None else None,
+        gated_probs=gated_report_probs, gate_threshold=args.gate_threshold,
     )
     for p in report_paths:
         print(f"wrote {p}")

@@ -3,7 +3,6 @@ import io
 import subprocess
 import sys
 import tarfile
-from pathlib import Path
 
 
 def _make_fake_archive(path, train_ids, gt_rows):

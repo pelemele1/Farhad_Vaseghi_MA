@@ -170,3 +170,24 @@ def test_stage_c_single_optimizer_step_decreases_loss():
 
     assert torch.isfinite(loss_before)
     assert loss_after.item() < loss_before.item()
+
+
+def test_stage_c_unet_head_outputs_input_resolution_logits():
+    from src.models.distortion_head import StageCUNetHead
+
+    head = StageCUNetHead([16, 32, 32, 32])
+    # features for a 64x64 input: strides 4, 8, 16, 32
+    features = [torch.randn(2, 16, 16, 16), torch.randn(2, 32, 8, 8),
+                torch.randn(2, 32, 4, 4), torch.randn(2, 32, 2, 2)]
+    out = head(features)
+    assert out.shape == (2, 3, 64, 64)
+    assert out.min() < 0 or out.max() > 1  # raw logits, not probabilities
+
+
+def test_stage_b_multiscale_head_outputs_one_logit_per_p5_tile():
+    from src.models.distortion_head import StageBMultiScaleHead
+
+    head = StageBMultiScaleHead([16, 32, 32, 32])
+    features = [torch.randn(2, 16, 16, 16), torch.randn(2, 32, 8, 8),
+                torch.randn(2, 32, 4, 4), torch.randn(2, 32, 2, 2)]
+    assert head(features).shape == (2, 3, 2, 2)

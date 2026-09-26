@@ -92,3 +92,32 @@ def test_writes_checkpoint_when_not_smoke_test(tmp_path):
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert (out_dir / "stage_c_head.pt").exists()
+
+
+@pytest.mark.parametrize("arch", ["unet", "fcn"])
+def test_checkpoint_records_arch_and_best_epoch(tmp_path, arch):
+    import torch
+
+    source_dir = tmp_path / "source"
+    source_dir.mkdir()
+    rng = np.random.default_rng(0)
+    for i in range(4):
+        cv.imwrite(str(source_dir / f"{i:08d}.jpg"), rng.integers(0, 255, size=(96, 128, 3), dtype=np.uint8))
+    data_dir = tmp_path / "stage_c"
+    build_stage_b_dataset(
+        source_dir, data_dir, variants_per_image=4, seed=0,
+        ratios=(0.5, 0.25, 0.25), img_size=64, save_pixel_masks=True,
+    )
+
+    out_dir = tmp_path / "checkpoints"
+    result = subprocess.run(
+        [sys.executable, "scripts/train_stage_c.py", "--arch", arch, "--num-workers", "0",
+         "--data", str(data_dir), "--weights", str(_WEIGHTS), "--img-size", "64",
+         "--epochs", "2", "--batch-size", "2", "--out", str(out_dir)],
+        capture_output=True, text=True, timeout=300,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    ckpt = torch.load(out_dir / "stage_c_head.pt", weights_only=False)
+    assert ckpt["arch"] == arch
+    assert ckpt["epoch"] in (1, 2)
+    assert "best val_loss" in result.stdout

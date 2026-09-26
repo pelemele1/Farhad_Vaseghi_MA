@@ -29,7 +29,7 @@ def test_select_report_rows_covers_every_kind():
     class_names = ("dirt", "water", "scratch")
     probs = np.zeros((4, 3, 8, 8), dtype=np.float32)
 
-    report_rows = select_report_rows(dataset, probs, class_names, per_class=1, seed=0)
+    report_rows = select_report_rows(dataset, probs.max(axis=(2, 3)), class_names, per_class=1, seed=0)
 
     kinds = {kind for _, kind, _ in report_rows}
     assert kinds == {"dirt", "water", "scratch", "clean"}
@@ -58,7 +58,7 @@ def test_plot_stage_c_report_writes_expected_pages(tmp_path):
     probs = rng.random((n, 3, 64, 64)).astype(np.float32)
     masks = rng.random((n, 3, 64, 64)).astype(np.float32)
 
-    report_rows = select_report_rows(dataset, probs, class_names, per_class=1, seed=0)
+    report_rows = select_report_rows(dataset, probs.max(axis=(2, 3)), class_names, per_class=1, seed=0)
 
     out_dir = tmp_path / "out"
     out_dir.mkdir()

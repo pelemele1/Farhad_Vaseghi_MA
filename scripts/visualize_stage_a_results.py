@@ -26,14 +26,15 @@ from torch.utils.data import DataLoader
 
 from scripts.evaluate_stage_a import collect_predictions, compute_metrics
 from src.data.stage_a_dataset import StageADataset
+from src.eval.thresholds import threshold_for, tune_per_class_thresholds
 from src.models.backbone import FrozenYOLOBackbone
 from src.models.distortion_head import StageADistortionHead
 
 
 def select_diverse_sample_indices(rows, class_names, per_kind=3, seed=0):
     """rows: a list of metadata dicts (e.g. dataset.rows), in the same order
-    as the model's predictions. Groups by label kind (clean, or whichever
-    single class is active -- the dataset never combines two), then samples
+    as the model's predictions. Groups by label kind (clean, or the first
+    active class -- a combo variant is grouped under its first class), then samples
     up to `per_kind` indices from each kind that actually occurs, so the
     resulting grid represents every kind rather than being purely random."""
     by_kind = {}
@@ -53,12 +54,13 @@ def select_diverse_sample_indices(rows, class_names, per_kind=3, seed=0):
 
 def kind_from_scores(scores, class_names, threshold=None):
     """scores: 1D array, either 0/1 ground-truth labels or [0,1] predicted
-    probabilities (in which case `threshold` picks which count as active).
+    probabilities (in which case `threshold` -- a float, or a per-class
+    dict -- picks which count as active).
     Returns a tuple of active class names, or ("clean",) if none."""
     if threshold is None:
         active = tuple(name for name, v in zip(class_names, scores) if v)
     else:
-        active = tuple(name for name, v in zip(class_names, scores) if v >= threshold)
+        active = tuple(name for name, v in zip(class_names, scores) if v >= threshold_for(threshold, name))
     return active if active else ("clean",)
 
 
@@ -284,6 +286,9 @@ def main():
     parser.add_argument("--img-size", type=int, default=640)
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--threshold", type=float, default=0.5)
+    parser.add_argument("--tune-thresholds", action="store_true",
+                        help="Use per-class best-F1 thresholds tuned on the val split (same as "
+                        "evaluate_stage_a.py --tune-thresholds) so the figures match the evaluation table.")
     parser.add_argument("--per-kind", type=int, default=3, help="Sample images per label kind for the grid")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--out-dir", default="docs/images")
@@ -302,10 +307,18 @@ def main():
     head.load_state_dict(ckpt["head_state_dict"])
     head.eval()
 
+    threshold = args.threshold
+    if args.tune_thresholds:
+        val_loader = DataLoader(StageADataset(args.data, split="val", img_size=args.img_size),
+                                batch_size=32, shuffle=False)
+        val_probs, val_labels = collect_predictions(backbone, head, val_loader, device)
+        threshold = tune_per_class_thresholds(val_labels, val_probs, class_names)
+        print(f"tuned thresholds: {threshold}")
+
     dataset = StageADataset(args.data, split=args.split, img_size=args.img_size)
     loader = DataLoader(dataset, batch_size=32, shuffle=False)
     probs, labels = collect_predictions(backbone, head, loader, device)
-    metric_rows = compute_metrics(labels, probs, class_names, threshold=args.threshold)
+    metric_rows = compute_metrics(labels, probs, class_names, threshold=threshold)
 
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -320,7 +333,7 @@ def main():
 
     sample_indices = select_diverse_sample_indices(dataset.rows, class_names, per_kind=args.per_kind, seed=args.seed)
     grid_path = out_dir / f"stage_a_sample_predictions{args.tag}.jpg"
-    plot_prediction_grid(dataset, sample_indices, probs, labels, class_names, args.threshold, grid_path)
+    plot_prediction_grid(dataset, sample_indices, probs, labels, class_names, threshold, grid_path)
     print(f"wrote {grid_path}")
 
     severity_path = out_dir / f"stage_a_probability_by_severity{args.tag}.jpg"

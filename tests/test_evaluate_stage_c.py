@@ -144,3 +144,57 @@ def test_evaluate_stage_c_by_severity_prints_breakdown(tmp_path):
     assert "Per-severity breakdown" in result.stdout
     for level in ("low", "medium", "high"):
         assert level in result.stdout
+
+
+def test_collect_pooled_predictions_matches_pool_to_grid():
+    from scripts.evaluate_stage_c import collect_pooled_predictions
+
+    class _Identity(torch.nn.Module):
+        def forward(self, x):
+            return x
+
+    rng = np.random.default_rng(0)
+    logits = rng.normal(size=(3, 2, 32, 32)).astype(np.float32)
+    masks = rng.random((3, 2, 32, 32)).astype(np.float32)
+    loader = [(torch.from_numpy(logits[:2]), torch.from_numpy(masks[:2])),
+              (torch.from_numpy(logits[2:]), torch.from_numpy(masks[2:]))]
+
+    probs_pooled, masks_pooled, max_probs = collect_pooled_predictions(
+        _Identity(), _Identity(), loader, torch.device("cpu"), grid_size=8)
+
+    full_probs = 1 / (1 + np.exp(-logits))
+    assert np.allclose(probs_pooled, pool_to_grid(full_probs, 8), atol=1e-5)
+    assert np.allclose(masks_pooled, pool_to_grid(masks, 8), atol=1e-5)
+    assert np.allclose(max_probs, full_probs.max(axis=(2, 3)), atol=1e-6)
+
+
+def test_evaluate_stage_c_unet_checkpoint_end_to_end(tmp_path):
+    from scripts.train_stage_c import build_stage_c_model
+
+    source_dir = tmp_path / "source"
+    source_dir.mkdir()
+    rng = np.random.default_rng(0)
+    for i in range(4):
+        cv.imwrite(str(source_dir / f"{i:08d}.jpg"), rng.integers(0, 255, size=(96, 128, 3), dtype=np.uint8))
+    data_dir = tmp_path / "stage_c"
+    build_stage_b_dataset(
+        source_dir, data_dir, variants_per_image=4, seed=0,
+        ratios=(0.25, 0.25, 0.5), img_size=64, save_pixel_masks=True,
+    )
+
+    backbone, head = build_stage_c_model("unet", str(_WEIGHTS), ("dirt", "water", "scratch"), torch.device("cpu"))
+    ckpt_path = tmp_path / "stage_c_head.pt"
+    torch.save({"head_state_dict": head.state_dict(), "class_names": head.class_names, "arch": "unet"}, ckpt_path)
+    gate_head = ImpairedGateHead(in_channels=backbone.out_channels[-1])
+    gate_ckpt_path = tmp_path / "gate.pt"
+    torch.save({"head_state_dict": gate_head.state_dict(), "img_size": 64}, gate_ckpt_path)
+
+    result = subprocess.run(
+        [sys.executable, "scripts/evaluate_stage_c.py",
+         "--checkpoint", str(ckpt_path), "--data", str(data_dir), "--weights", str(_WEIGHTS),
+         "--split", "test", "--img-size", "64", "--eval-grid", "16",
+         "--gate-checkpoint", str(gate_ckpt_path), "--tune-thresholds"],
+        capture_output=True, text=True, timeout=300,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "[gated]" in result.stdout

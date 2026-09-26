@@ -29,11 +29,10 @@ from torch.utils.data import DataLoader
 
 from scripts.evaluate_stage_b import flatten_tiles
 from src.data.stage_b_dataset import StageBDataset
-from src.eval.gate import apply_gate, collect_gate_probs
+from src.eval.gate import apply_gate, collect_gate_probs, load_gate
 from src.eval.metrics import collect_predictions
 from src.eval.thresholds import tune_per_class_thresholds
-from src.models.backbone import FrozenYOLOBackbone
-from src.models.distortion_head import ImpairedGateHead, StageBDistortionHead
+from scripts.train_stage_b import load_stage_b
 
 
 def clean_row_mask(rows, class_names):
@@ -88,13 +87,7 @@ def main():
     args = parser.parse_args()
 
     device = torch.device(args.device)
-    ckpt = torch.load(args.checkpoint, map_location=device, weights_only=False)
-    class_names = ckpt["class_names"]
-
-    backbone = FrozenYOLOBackbone(args.weights).to(device)
-    head = StageBDistortionHead(in_channels=backbone.out_channels, class_names=class_names).to(device)
-    head.load_state_dict(ckpt["head_state_dict"])
-    head.eval()
+    backbone, head, class_names = load_stage_b(args.checkpoint, args.weights, device)
 
     threshold = args.threshold
     if args.tune_thresholds:
@@ -126,11 +119,8 @@ def main():
     _print_rates(rates, label="ungated" if args.gate_checkpoint else None)
 
     if args.gate_checkpoint:
-        gate_ckpt = torch.load(args.gate_checkpoint, map_location=device, weights_only=False)
-        gate_head = ImpairedGateHead(in_channels=backbone.out_channels).to(device)
-        gate_head.load_state_dict(gate_ckpt["head_state_dict"])
-        gate_head.eval()
-        gate_probs = collect_gate_probs(backbone, gate_head, loader, device)
+        gate_head, gate_img_size = load_gate(args.gate_checkpoint, backbone.out_channels, device)
+        gate_probs = collect_gate_probs(backbone, gate_head, loader, device, img_size=gate_img_size)
         gated_probs = apply_gate(probs, gate_probs, threshold=args.gate_threshold)
 
         gated_rates = clean_false_positive_rates(gated_probs, labels, dataset.rows, class_names, threshold)

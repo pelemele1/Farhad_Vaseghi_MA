@@ -18,11 +18,20 @@ from ultralytics import YOLO
 # begins. Layer 10 (C2PSA)'s output is therefore the last single-scale
 # feature map before any multi-scale fusion -- i.e. P5.
 BACKBONE_END = 10
+# Last layer at each stride (yolo11m @512: 2 -> 256ch/128px, 4 -> 512ch/64px,
+# 6 -> 512ch/32px, 10 -> 512ch/16px) -- the skip taps for Stage C's decoder.
+STRIDE_TAPS = {4: 2, 8: 4, 16: 6, 32: BACKBONE_END}
 
 
 class FrozenYOLOBackbone(nn.Module):
-    def __init__(self, model_name="weights/yolo11m.pt"):
+    """forward() returns the P5 tensor by default. With `return_layers`
+    (layer indices, e.g. STRIDE_TAPS values), returns a list of those layers'
+    outputs in the given order instead, and `out_channels` is a matching
+    list."""
+
+    def __init__(self, model_name="weights/yolo11m.pt", return_layers=None):
         super().__init__()
+        self.return_layers = tuple(return_layers) if return_layers is not None else None
         full_model = YOLO(model_name).model
         layers = full_model.model[: BACKBONE_END + 1]
         for layer in layers:
@@ -39,13 +48,23 @@ class FrozenYOLOBackbone(nn.Module):
         self.eval()
 
         with torch.no_grad():
-            probe = torch.zeros(1, 3, 64, 64)
-            self.out_channels = self.forward(probe).shape[1]
+            probe = self.forward(torch.zeros(1, 3, 64, 64))
+            if self.return_layers is None:
+                self.out_channels = probe.shape[1]
+            else:
+                self.out_channels = [f.shape[1] for f in probe]
 
     def forward(self, x):
-        for layer in self.layers:
+        if self.return_layers is None:
+            for layer in self.layers:
+                x = layer(x)
+            return x
+        taps = {}
+        for i, layer in enumerate(self.layers):
             x = layer(x)
-        return x
+            if i in self.return_layers:
+                taps[i] = x
+        return [taps[i] for i in self.return_layers]
 
     def train(self, mode=True):
         # Always frozen (Option 1: no detection fine-tuning this pass) --

@@ -45,7 +45,6 @@ def test_add_water_droplet_mechanism_changes_the_image():
 
 
 def test_add_water_random_mechanism_picks_all_three_over_many_seeds():
-    img = _sample_image()
     seen = set()
     for seed in range(30):
         np.random.seed(seed)

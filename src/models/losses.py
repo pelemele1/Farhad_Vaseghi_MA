@@ -211,11 +211,15 @@ class DiceBCELoss(nn.Module):
     targets, not just binary ones -- see src/data/stage_c_dataset.py /
     src/soiling/dataset_builder.py's save_pixel_masks docstring for why the
     ground truth is kept continuous): per class,
-    `1 - (2*sum(p*t) + smooth) / (sum(p) + sum(t) + smooth)`, summed over
-    every pixel of one sample+class, then averaged over classes and batch.
-    `smooth` avoids a 0/0 division when a sample+class has no positive
-    pixels at all (a genuinely clean image, or an inactive class) in either
-    the prediction or the target.
+    `1 - (2*sum(p*t) + smooth) / (sum(p) + sum(t) + smooth)`, with the sums
+    taken over every pixel of the whole *batch* for that class, then
+    averaged over classes. Batch-level rather than per-sample: most
+    (sample, class) pairs here have an empty target (clean images, inactive
+    classes -- ~57% of pairs), and per-sample Dice on an empty target stays
+    ~1 until every pixel's probability is essentially 0 (e.g. 0.01 over
+    512x512 pixels already sums to ~2600 >> smooth), which pushes the whole
+    model toward under-predicting. `smooth` avoids 0/0 for a class absent
+    from the entire batch.
 
     No pos_weight/imbalance correction in v1, unlike Stage B's `bce`
     variant -- follows architecture.md's literal "Dice + BCE" spec first;
@@ -234,7 +238,7 @@ class DiceBCELoss(nn.Module):
         bce = F.binary_cross_entropy_with_logits(logits, targets)
 
         probs = torch.sigmoid(logits)
-        dims = tuple(range(2, logits.dim()))  # sum over spatial dims only, keep (B, C)
+        dims = (0,) + tuple(range(2, logits.dim()))  # sum over batch + spatial, keep (C,)
         intersection = (probs * targets).sum(dim=dims)
         union = probs.sum(dim=dims) + targets.sum(dim=dims)
         dice_loss = 1 - (2 * intersection + self.smooth) / (union + self.smooth)

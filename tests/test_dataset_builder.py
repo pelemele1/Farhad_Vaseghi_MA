@@ -4,14 +4,11 @@ from pathlib import Path
 
 import cv2 as cv
 import numpy as np
-import pytest
 
 from src.soiling.dataset_builder import (
     ALL_VARIANT_KINDS,
     ALL_VARIANT_KINDS_WITH_SEVERITY,
-    COMBO_KINDS,
     EFFECT_NAMES,
-    SEVERITY_VARIANT_KINDS,
     VARIANT_KINDS,
     VARIANT_KINDS_WITH_SEVERITY,
     _combo_from_kind,
@@ -407,27 +404,36 @@ def test_build_stage_a_dataset_labels_are_reproducible(tmp_path):
 # --- Stage B (tile-grid) -----------------------------------------------
 
 
-def test_build_stage_b_dataset_with_severity_reduces_tile_coverage(tmp_path):
-    # Session 20 Round 3: a low-severity variant's tile-positive count
-    # should be <= its high-severity counterpart's for the same effect
-    # (mask scaled down by apply_severity -> fewer/no tiles clear the
-    # rasterization threshold).
+def test_apply_effect_combo_with_masks_ground_truth_is_severity_independent():
+    # Severity changes how visible an effect is in the image, not where it
+    # is: the ground-truth mask must be identical at every level. Uses
+    # scratch, which is pixel-reproducible for a fixed seed (dirt/water are
+    # not, see tile_labels.py).
+    from src.soiling.dataset_builder import apply_effect_combo_with_masks
+
+    img = np.random.default_rng(6).integers(0, 255, size=(48, 64, 3), dtype=np.uint8)
+    results = {
+        level: apply_effect_combo_with_masks(img, (False, False, True), {"scratch": 7}, {"scratch": level})
+        for level in ("low", "medium", "high")
+    }
+    high_out, _, high_masks = results["high"]
+    for level in ("low", "medium"):
+        out, labels, masks = results[level]
+        assert labels["scratch_severity"] == level
+        assert np.array_equal(masks["scratch"], high_masks["scratch"])
+        assert not np.array_equal(out, high_out)  # the image itself is fainter
+
+
+def test_build_stage_b_dataset_meta_records_severity_independent_gt(tmp_path):
     source_dir = tmp_path / "source"
     source_dir.mkdir()
-    _write_fake_sources(source_dir, n=4)
+    _write_fake_sources(source_dir, n=2)
 
     out_dir = tmp_path / "out"
-    rows, tile_labels = build_stage_b_dataset(
-        source_dir, out_dir, variants_per_image=10, seed=0, img_size=64, include_severity=True,
-    )
+    build_stage_b_dataset(source_dir, out_dir, variants_per_image=4, seed=0, img_size=64)
 
-    assert len(rows) == 4 * 10
-    for name in EFFECT_NAMES:
-        i = EFFECT_NAMES.index(name)
-        low_counts = [g[i].sum() for r, g in zip(rows, tile_labels) if r.get(f"{name}_severity") == "low"]
-        high_counts = [g[i].sum() for r, g in zip(rows, tile_labels) if r.get(f"{name}_severity") == "high"]
-        assert low_counts and high_counts
-        assert sum(low_counts) <= sum(high_counts)
+    with open(out_dir / "stage_b_meta.json") as f:
+        assert json.load(f)["severity_independent_gt"] is True
 
 
 def test_build_stage_b_dataset_end_to_end(tmp_path):

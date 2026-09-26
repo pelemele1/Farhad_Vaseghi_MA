@@ -16,24 +16,49 @@ pipeline runs, not a real training run):
 """
 import argparse
 import sys
-import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import torch
-from torch.utils.data import DataLoader
 
-from scripts.train_stage_a import run_epoch
+from scripts.train_stage_a import add_common_args, fit, make_loaders
 from src.data.stage_b_dataset import StageBDataset
-from src.models.backbone import FrozenYOLOBackbone
-from src.models.distortion_head import StageBDistortionHead
+from src.models.backbone import STRIDE_TAPS, FrozenYOLOBackbone
+from src.models.distortion_head import StageBDistortionHead, StageBMultiScaleHead
 from src.models.losses import (
     build_stage_b_focal_loss,
     build_stage_b_loss,
     build_stage_b_ssd_loss,
     compute_tile_pos_weight,
 )
+
+STAGE_B_ARCHS = ("conv1x1", "multiscale")
+
+
+def build_stage_b_model(arch, weights, class_names, device):
+    """(backbone, head) for a Stage B architecture: "conv1x1" (v1, one 1x1
+    conv on P5) or "multiscale" (v2, stride-4/8/16 + P5 features pooled to
+    the P5 tile grid). Checkpoints without an arch field are v1."""
+    if arch == "multiscale":
+        backbone = FrozenYOLOBackbone(weights, return_layers=[STRIDE_TAPS[s] for s in (4, 8, 16, 32)])
+        head = StageBMultiScaleHead(backbone.out_channels, class_names=class_names)
+    elif arch == "conv1x1":
+        backbone = FrozenYOLOBackbone(weights)
+        head = StageBDistortionHead(in_channels=backbone.out_channels, class_names=class_names)
+    else:
+        raise ValueError(f"unknown Stage B arch {arch!r}, expected one of {STAGE_B_ARCHS}")
+    return backbone.to(device), head.to(device)
+
+
+def load_stage_b(checkpoint, weights, device):
+    """(backbone, head, class_names) from a Stage B checkpoint, head in eval mode."""
+    ckpt = torch.load(checkpoint, map_location=device, weights_only=False)
+    class_names = ckpt["class_names"]
+    backbone, head = build_stage_b_model(ckpt.get("arch", "conv1x1"), weights, class_names, device)
+    head.load_state_dict(ckpt["head_state_dict"])
+    head.eval()
+    return backbone, head, class_names
 
 
 def main():
@@ -68,24 +93,29 @@ def main():
         "--smoke-test", action="store_true",
         help="Tiny subset, 1 epoch, CPU, no checkpoint written -- pipeline correctness only",
     )
+    parser.add_argument("--arch", default="conv1x1", choices=STAGE_B_ARCHS,
+                        help="'conv1x1': one 1x1 conv on P5 (v1). 'multiscale': stride-4/8/16 + P5 "
+                        "features pooled to the tile grid (v2).")
+    add_common_args(parser)
     args = parser.parse_args()
 
     if args.smoke_test:
-        args.epochs, args.batch_size = 1, 2
+        args.epochs, args.batch_size, args.num_workers = 1, 2, 0
         max_samples = 8
         print(f"[smoke-test] 1 epoch, batch_size=2, device={args.device}, 8 train / 8 val samples, no checkpoint written")
     else:
         max_samples = None
 
+    torch.manual_seed(args.seed)
     device = torch.device(args.device)
 
     train_set = StageBDataset(args.data, split="train", img_size=args.img_size, max_samples=max_samples)
     val_set = StageBDataset(args.data, split="val", img_size=args.img_size, max_samples=max_samples)
-    train_loader = DataLoader(train_set, batch_size=args.batch_size, shuffle=True)
-    val_loader = DataLoader(val_set, batch_size=args.batch_size, shuffle=False)
+    train_loader, val_loader = make_loaders(train_set, val_set, args.batch_size, args.num_workers,
+                                            low_severity_weight=args.low_severity_weight)
 
-    backbone = FrozenYOLOBackbone(args.weights).to(device)
-    head = StageBDistortionHead(in_channels=backbone.out_channels, class_names=train_set.class_names).to(device)
+    backbone, head = build_stage_b_model(args.arch, args.weights, train_set.class_names, device)
+    print(f"arch={args.arch}", flush=True)
 
     if args.loss == "focal":
         alpha_parts = [p.strip() for p in args.focal_alpha.split(",")]
@@ -112,18 +142,9 @@ def main():
 
     optimizer = torch.optim.Adam(head.parameters(), lr=args.lr)
 
-    for epoch in range(1, args.epochs + 1):
-        start = time.time()
-        train_loss = run_epoch(backbone, head, train_loader, device, loss_fn, optimizer)
-        val_loss = run_epoch(backbone, head, val_loader, device, loss_fn, optimizer=None)
-        print(f"epoch {epoch}/{args.epochs}  train_loss={train_loss:.4f}  val_loss={val_loss:.4f}  ({time.time() - start:.1f}s)")
-
-    if not args.smoke_test:
-        out_dir = Path(args.out)
-        out_dir.mkdir(parents=True, exist_ok=True)
-        ckpt_path = out_dir / "stage_b_head.pt"
-        torch.save({"head_state_dict": head.state_dict(), "class_names": head.class_names}, ckpt_path)
-        print(f"wrote {ckpt_path}")
+    ckpt_path = None if args.smoke_test else Path(args.out) / "stage_b_head.pt"
+    fit(backbone, head, train_loader, val_loader, device, loss_fn, optimizer, args.epochs, ckpt_path,
+        extra_ckpt={"arch": args.arch})
 
 
 if __name__ == "__main__":

@@ -72,3 +72,14 @@ def test_compute_metrics_accepts_per_class_threshold_dict():
     # unaffected regression check: the plain scalar-threshold path still works the same as before
     scalar_rows = compute_metrics(labels, probs, class_names=("a", "b"), threshold=0.5)
     assert scalar_rows[0]["threshold"] == 0.5 and scalar_rows[1]["threshold"] == 0.5
+
+
+def test_threshold_for_recall_keeps_target_share_of_positives():
+    from src.eval.thresholds import threshold_for_recall
+
+    y = np.array([1, 1, 1, 1, 0, 0])
+    p = np.array([0.9, 0.8, 0.6, 0.2, 0.7, 0.1])
+    t, recall, neg_pass = threshold_for_recall(y, p, 0.75)
+    assert t == 0.6
+    assert recall == 0.75
+    assert neg_pass == 0.5

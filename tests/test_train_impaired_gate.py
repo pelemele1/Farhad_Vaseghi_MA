@@ -40,3 +40,29 @@ def test_smoke_test_runs_end_to_end(tmp_path):
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert "epoch 1/1" in result.stdout
+
+
+def test_multiscale_gate_trains_and_evaluates(tmp_path):
+    source_dir = tmp_path / "source"
+    source_dir.mkdir()
+    rng = np.random.default_rng(0)
+    for i in range(4):
+        cv.imwrite(str(source_dir / f"{i:08d}.jpg"), rng.integers(0, 255, size=(96, 128, 3), dtype=np.uint8))
+    data_dir = tmp_path / "data"
+    build_stage_a_dataset(source_dir, data_dir, variants_per_image=4, seed=0, ratios=(0.5, 0.25, 0.25))
+
+    out_dir = tmp_path / "ckpt"
+    train = subprocess.run(
+        [sys.executable, "scripts/train_impaired_gate.py", "--arch", "multiscale", "--num-workers", "0",
+         "--data", str(data_dir), "--weights", str(_WEIGHTS), "--img-size", "64",
+         "--epochs", "1", "--batch-size", "2", "--out", str(out_dir)],
+        capture_output=True, text=True, timeout=300,
+    )
+    assert train.returncode == 0, train.stdout + train.stderr
+    evaluate = subprocess.run(
+        [sys.executable, "scripts/evaluate_impaired_gate.py", "--checkpoint", str(out_dir / "impaired_gate_head.pt"),
+         "--data", str(data_dir), "--weights", str(_WEIGHTS), "--split", "test", "--recall-target", "0.9"],
+        capture_output=True, text=True, timeout=300,
+    )
+    assert evaluate.returncode == 0, evaluate.stdout + evaluate.stderr
+    assert "Gate threshold for recall" in evaluate.stdout

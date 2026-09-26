@@ -211,10 +211,10 @@ SEVERITY_ALPHA = {"low": 0.3, "medium": 0.6, "high": 1.0}
 def apply_severity(image, out, mask, severity):
     """Blends a full-strength effect output (`out`, `mask`, as returned by
     add_dirt/add_water/add_scratch) back toward the original clean `image`
-    by `SEVERITY_ALPHA[severity]`, scaling `mask` by the same factor.
-    Scaling the mask too (not just the image) is deliberate: a low-severity
-    patch should legitimately cover fewer/lighter Stage B tiles, not just
-    look fainter while reporting the same ground-truth coverage. `severity
+    by `SEVERITY_ALPHA[severity]`, scaling `mask` by the same factor (the
+    returned mask is the effective rendered opacity). The dataset builder
+    deliberately does NOT use this scaled mask as ground truth -- see
+    `src.soiling.dataset_builder.apply_effect_combo_with_masks`. `severity
     == "high"` (alpha=1.0) returns `out`/`mask` unchanged -- identical to
     today's unparametrized full-strength effect."""
     alpha = SEVERITY_ALPHA[severity]

@@ -151,3 +151,32 @@ def test_focal_alpha_count_mismatch_raises(tmp_path):
     )
     assert result.returncode != 0
     assert "AssertionError" in result.stderr
+
+
+def test_multiscale_arch_trains_and_is_loaded_by_evaluate(tmp_path):
+    source_dir = tmp_path / "source"
+    source_dir.mkdir()
+    rng = np.random.default_rng(0)
+    for i in range(4):
+        cv.imwrite(str(source_dir / f"{i:08d}.jpg"), rng.integers(0, 255, size=(96, 128, 3), dtype=np.uint8))
+    data_dir = tmp_path / "stage_b"
+    build_stage_b_dataset(source_dir, data_dir, variants_per_image=4, seed=0,
+                          ratios=(0.5, 0.25, 0.25), img_size=64)
+
+    out_dir = tmp_path / "ckpt"
+    train = subprocess.run(
+        [sys.executable, "scripts/train_stage_b.py", "--arch", "multiscale", "--loss", "focal",
+         "--num-workers", "0", "--data", str(data_dir), "--weights", str(_WEIGHTS), "--img-size", "64",
+         "--epochs", "1", "--batch-size", "2", "--out", str(out_dir)],
+        capture_output=True, text=True, timeout=300,
+    )
+    assert train.returncode == 0, train.stdout + train.stderr
+    assert "arch=multiscale" in train.stdout
+
+    evaluate = subprocess.run(
+        [sys.executable, "scripts/evaluate_stage_b.py", "--checkpoint", str(out_dir / "stage_b_head.pt"),
+         "--data", str(data_dir), "--weights", str(_WEIGHTS), "--split", "test"],
+        capture_output=True, text=True, timeout=300,
+    )
+    assert evaluate.returncode == 0, evaluate.stdout + evaluate.stderr
+    assert "scratch" in evaluate.stdout
