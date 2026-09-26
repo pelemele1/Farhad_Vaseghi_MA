@@ -8,8 +8,13 @@ below as a historical reference (§4). **Session 20:** a new, separate image-lev
 "impaired/not impaired" gate head was added on top of this (§7) — trained on the same combo
 dataset, evaluates very well standalone, and (as of Session 20 Round 2) is used as a real
 inference-time filter on Stage B's own tile predictions — see
-[`stage_b_final_report.md`](stage_b_final_report.md). **Date:** 2026-09-18, gate head added
-2026-09-25.
+[`stage_b_final_report.md`](stage_b_final_report.md). **Session 20, Round 3 (2026-09-26):** the
+dataset was rebuilt again to add balanced low/medium/high **severity** levels per class (§8) —
+supervisor request that distortion samples of each class be evenly split across severity, not
+just present/absent — and all three heads (Stage A, Stage B, impaired-gate) retrained on it.
+**The severity-balanced retrain is now canonical** (`data/processed/stage_a`,
+`checkpoints/stage_a_severity/stage_a_head.pt`); the combo-only checkpoint above is kept for
+comparison. **Date:** 2026-09-18, gate head added 2026-09-25, severity added 2026-09-26.
 
 This is a standalone summary of Part 2, Stage A — distinct from
 [`development_log.md`](development_log.md)'s chronological session-by-session record. See
@@ -270,35 +275,46 @@ python scripts/visualize_stage_a_class_examples.py \
 - **Purely synthetic distortions.** `physical_lens_soiling`'s renders (and this project's
   own scratch generator) are a physics-inspired approximation, not real camera captures.
   There's an unmeasured domain gap between this and an actual soiled lens.
-- **Small pilot dataset.** 1000 source photos, 8000 total training images (Session 19+) —
-  enough to validate the pipeline, well short of the scale a production model would use.
+- **Small pilot dataset.** 1000 source photos, 14000 total training images (Session 20, Round
+  3) — enough to validate the pipeline, well short of the scale a production model would use.
+- **Low-severity distortions are measurably harder to detect than high** (§8) — AP drops
+  20-30 points from high to low severity across all three classes. Not a limitation of the
+  balancing itself (that's the point of measuring it), but a real, quantified gap in the
+  model's current sensitivity to subtle distortions.
 
 ---
 
 ## 6. Reproducing this report
 
 ```bash
-# canonical (combo dataset)
+# canonical (severity-balanced dataset, Session 20 Round 3)
 python scripts/build_stage_a_dataset.py --source data/raw/mio_tcd/images \
-    --out data/processed/stage_a --variants 8 --include-combos
-python scripts/evaluate_stage_a.py --checkpoint checkpoints/stage_a_combo/stage_a_head.pt \
-    --data data/processed/stage_a --split test --tune-thresholds
-python scripts/visualize_stage_a_results.py --checkpoint checkpoints/stage_a_combo/stage_a_head.pt \
-    --data data/processed/stage_a --split test --log-file stage_a_combo_1815700.out --tag _combo
-python scripts/visualize_stage_a_class_examples.py --checkpoint checkpoints/stage_a_combo/stage_a_head.pt \
+    --out data/processed/stage_a --variants 14 --include-combos --include-severity
+python scripts/evaluate_stage_a.py --checkpoint checkpoints/stage_a_severity/stage_a_head.pt \
+    --data data/processed/stage_a --split test --tune-thresholds --by-severity
+python scripts/visualize_stage_a_results.py --checkpoint checkpoints/stage_a_severity/stage_a_head.pt \
+    --data data/processed/stage_a --split test --log-file stage_a_severity_1822358.out --tag _severity
+python scripts/visualize_stage_a_class_examples.py --checkpoint checkpoints/stage_a_severity/stage_a_head.pt \
     --data data/processed/stage_a --split test --device cpu --out-dir docs/images
+
+# pre-severity combo result (superseded, kept for reference)
+python scripts/evaluate_stage_a.py --checkpoint checkpoints/stage_a_combo/stage_a_head.pt \
+    --data data/processed/stage_a --split test --tune-thresholds   # NOTE: data/processed/stage_a
+    # was replaced in place by the severity rebuild -- this checkpoint can no longer be
+    # re-evaluated against its original dataset locally; the numbers in §4 are from before the
+    # rebuild.
 
 # pre-combo result (original single-distortion-only dataset, superseded, kept for reference)
 python scripts/evaluate_stage_a.py --checkpoint checkpoints/stage_a/stage_a_head.pt \
-    --data data/processed/stage_a --split test   # NOTE: data/processed/stage_a was replaced
-    # in place by the combo rebuild -- this checkpoint can no longer be re-evaluated against
-    # its original dataset locally; the numbers above are from before the rebuild.
+    --data data/processed/stage_a --split test   # NOTE: same caveat, an even earlier rebuild.
 ```
 
-`stage_a_1791674.out` (original run) and `stage_a_combo_1815700.out` (combo-dataset run) are
-the raw stdout of the actual TinyGPU training jobs; `eval_a_combo_1815727.out` is the combo
-checkpoint's evaluation job output. All exist locally and (job logs only, not the now-replaced
-dataset) on the FAU HPC `$WORK` — see `docs/hpc_stage_a.md` for cluster paths.
+`stage_a_1791674.out` (original run), `stage_a_combo_1815700.out` (combo-dataset run), and
+`stage_a_severity_1822358.out` (severity-dataset run, current canonical) are the raw stdout of
+the actual TinyGPU training jobs; `eval_a_combo_1815727.out` is the combo checkpoint's
+evaluation job output; `build_a_severity_1822266.out` is the severity dataset rebuild. All exist
+locally and (job logs only, not the now-replaced dataset) on the FAU HPC `$WORK` — see
+`docs/hpc_stage_a.md` for cluster paths.
 
 ---
 
@@ -351,13 +367,158 @@ predicting non-trivial distortion probability. The gate is now used as a real fi
 "not impaired" — with the tradeoff spelled out there (a gate false negative now silently
 suppresses genuine Stage B detections too).
 
+### Retrained on the severity-balanced dataset (Session 20, Round 3)
+
+Same recipe, retrained on the severity-balanced `data/processed/stage_a` (§8) — HPC job
+`1822360`, `checkpoints/impaired_gate_severity/impaired_gate_head.pt`. Train_loss 0.317 →
+final; val_loss converged similarly to the Round 2 run.
+
+**Results (held-out test split, 1400 images, 1300 impaired / 100 clean)**
+
+| class | threshold | precision | recall | F1 | AP | ROC-AUC | support |
+|---|---|---|---|---|---|---|---|
+| impaired | 0.037 (tuned) | 0.934 | 0.996 | 0.964 | 0.994 | 0.927 | 1300 |
+
+Still a strong result (F1=0.964, AP=0.994), but **ROC-AUC drops noticeably (0.983→0.927)** —
+the same severity-driven effect seen throughout this round: the dataset now includes many
+low-severity images, which are inherently harder to call "impaired" with full confidence, so
+the gate's *ranking* quality (what ROC-AUC measures) takes a real hit even though its
+default-cutoff F1 stays high. Consistent with §8's finding that low-severity samples are harder
+across the board, not specific to this head. `checkpoints/impaired_gate_severity/
+impaired_gate_head.pt` is now the canonical gate checkpoint, used with `checkpoints/
+stage_b_severity/stage_b_head.pt` (see [`stage_b_final_report.md`](stage_b_final_report.md)
+§4c).
+
 ### Reproduction
 
 ```bash
+# canonical (severity-balanced dataset, Session 20 Round 3)
 python scripts/train_impaired_gate.py --data data/processed/stage_a --epochs 20 --device cuda \
-    --out checkpoints/impaired_gate
-python scripts/evaluate_impaired_gate.py --checkpoint checkpoints/impaired_gate/impaired_gate_head.pt \
+    --out checkpoints/impaired_gate_severity
+python scripts/evaluate_impaired_gate.py --checkpoint checkpoints/impaired_gate_severity/impaired_gate_head.pt \
     --data data/processed/stage_a --split test --tune-thresholds
+
+# pre-severity result (superseded, kept for reference)
+python scripts/evaluate_impaired_gate.py --checkpoint checkpoints/impaired_gate/impaired_gate_head.pt \
+    --data data/processed/stage_a --split test --tune-thresholds   # NOTE: data/processed/stage_a
+    # was replaced in place by the severity rebuild -- this checkpoint can no longer be
+    # re-evaluated against its original dataset locally.
 ```
 
-`impaired_gate_1821693.out` is the raw stdout of the actual TinyGPU training job.
+`impaired_gate_1821693.out` (Round 2 run) and `impaired_gate_severity_1822360.out` (Round 3
+run, current canonical) are the raw stdout of the actual TinyGPU training jobs.
+
+---
+
+## 8. Balanced severity levels (Session 20, Round 3)
+
+Supervisor feedback: the dataset must have **equal representation of distortion severity**
+within each class — e.g. of the images distorted by dirt, roughly a third should be low
+severity, a third medium, a third high — not just an equal count of present/absent per class
+(already true since Session 19+). Applies to **all three classes** (dirt, water, scratch).
+
+### Mechanism
+
+A single, universal post-hoc alpha-blend, applied identically to all three effects (including
+scratch — its mask already encodes per-streak brightness, so scaling it further by a severity
+factor composes correctly with no special-casing):
+
+```python
+SEVERITY_ALPHA = {"low": 0.3, "medium": 0.6, "high": 1.0}
+
+def apply_severity(image, out, mask, severity):
+    alpha = SEVERITY_ALPHA[severity]
+    if alpha >= 1.0:
+        return out, mask          # "high" == the original, unparametrized full-strength output
+    blended = image.astype(np.float32) + alpha * (out.astype(np.float32) - image.astype(np.float32))
+    return np.clip(blended, 0, 255).astype(np.uint8), mask * alpha
+```
+
+Scaling the mask by the same `alpha` means a low-severity patch legitimately covers
+fewer/lighter Stage B tiles too, not just looks fainter in the image while reporting the same
+ground-truth coverage. Exact 1/3-1/3-1/3 balance is guaranteed for **single-effect kinds only**
+(dirt-only, water-only, scratch-only); combo kinds (dirt+water, etc.) still get a severity per
+active effect, but picked pseudo-randomly (deterministically seeded via
+`derive_seed(base_seed, source_id, variant_idx, effect_name, "severity")`), avoiding a
+combinatorial explosion (3 effects × 3 levels = 27 combinations for the triple-effect kind
+alone).
+
+### Dataset
+
+Rebuilt on HPC (`scripts/hpc/build_stage_a_severity.slurm`, job `1822266`/`1822358` — see
+below): **14000 images** (up from 8000), `--variants 14 --include-combos --include-severity`.
+Severity landed close to the exact 1/3-1/3-1/3 target for each class's single-effect kind:
+
+| class | low | medium | high |
+|---|---|---|---|
+| dirt | 1975 | 1982 | 2043 |
+| water | 2011 | 1989 | 2000 |
+| scratch | 2006 | 1997 | 1997 |
+
+(Small deviations from an exact 2000/2000/2000 come from combo kinds' pseudo-random severity
+draws landing unevenly across levels — expected, since only single-effect kinds are exactly
+balanced by construction.)
+
+### Retrain and results
+
+Same canonical recipe as the combo-dataset result above (20 epochs, `BCEWithLogitsLoss`,
+frozen backbone) — HPC job `1822358` (raced onto `a100` after `rtx3080` was fully allocated),
+`checkpoints/stage_a_severity/stage_a_head.pt`. Train loss 0.317 final; converged cleanly, no
+overfitting.
+
+![Stage A train/val loss, severity dataset (job 1822358)](images/stage_a_training_curve_severity.jpg)
+
+**Per-class metrics (held-out test split, 1400 images, tuned per-class thresholds)**
+
+![Stage A per-class precision/recall/F1/AP/ROC-AUC, severity dataset](images/stage_a_test_metrics_severity.jpg)
+
+| class | threshold | precision | recall | F1 | AP | ROC-AUC | support |
+|---|---|---|---|---|---|---|---|
+| dirt | 0.461 | 0.832 | 0.868 | 0.850 | 0.940 | 0.943 | 600 |
+| water | 0.547 | 0.914 | 0.835 | 0.873 | 0.958 | 0.959 | 600 |
+| scratch | 0.548 | 0.816 | 0.812 | 0.814 | 0.913 | 0.916 | 600 |
+
+**Per-severity breakdown** (`evaluate_stage_a.py --by-severity`, `src/eval/severity.py`) — this
+is the headline result the rebuild was actually for: does the model do worse on subtle
+distortions than obvious ones?
+
+| class | severity | precision | recall | F1 | AP | ROC-AUC | support |
+|---|---|---|---|---|---|---|---|
+| dirt | low | 0.573 | 0.675 | 0.620 | 0.702 | 0.869 | 209 |
+| dirt | medium | 0.643 | 0.955 | 0.768 | 0.934 | 0.976 | 198 |
+| dirt | high | 0.645 | 0.990 | 0.781 | 0.972 | 0.989 | 193 |
+| water | low | 0.730 | 0.629 | 0.676 | 0.773 | 0.907 | 202 |
+| water | medium | 0.790 | 0.917 | 0.849 | 0.960 | 0.983 | 193 |
+| water | high | 0.807 | 0.961 | 0.878 | 0.975 | 0.989 | 205 |
+| scratch | low | 0.530 | 0.670 | 0.592 | 0.666 | 0.846 | 185 |
+| scratch | medium | 0.618 | 0.820 | 0.705 | 0.850 | 0.929 | 217 |
+| scratch | high | 0.627 | 0.934 | 0.751 | 0.928 | 0.969 | 198 |
+
+**Yes, clearly — a monotonic, physically sensible trend for all three classes.** AP drops
+20-30 points from high to low severity (dirt 0.972→0.702, water 0.975→0.773, scratch
+0.928→0.666) — subtle distortions are genuinely harder to detect, not an artifact of how the
+dataset was built. Visualized directly as a violin+box plot of predicted probability grouped by
+ground-truth severity (`scripts/visualize_stage_a_results.py::plot_probability_by_severity`):
+
+![Stage A predicted probability by ground-truth severity](images/stage_a_probability_by_severity_severity.jpg)
+
+Each class's distribution shifts up and tightens as severity increases — visible confirmation
+of the same trend the metrics table shows numerically.
+
+![Stage A ROC and precision-recall curves, severity dataset](images/stage_a_roc_pr_curves_severity.jpg)
+![Stage A sample predictions, severity dataset](images/stage_a_sample_predictions_severity.jpg)
+
+### Reproduction
+
+```bash
+python scripts/build_stage_a_dataset.py --source data/raw/mio_tcd/images \
+    --out data/processed/stage_a --variants 14 --include-combos --include-severity
+python scripts/evaluate_stage_a.py --checkpoint checkpoints/stage_a_severity/stage_a_head.pt \
+    --data data/processed/stage_a --split test --tune-thresholds --by-severity
+python scripts/visualize_stage_a_results.py --checkpoint checkpoints/stage_a_severity/stage_a_head.pt \
+    --data data/processed/stage_a --split test --log-file stage_a_severity_1822358.out \
+    --tag _severity --out-dir docs/images
+```
+
+`build_a_severity_1822266.out` (dataset rebuild) and `stage_a_severity_1822358.out` (training)
+are the raw stdout of the actual TinyGPU jobs.

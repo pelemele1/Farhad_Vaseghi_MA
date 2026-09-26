@@ -1687,3 +1687,197 @@ Both final reports (`stage_a_final_report.md` §7 new,
 up same-session. `checkpoints/stage_b_recal/stage_b_head.pt` +
 `checkpoints/impaired_gate/impaired_gate_head.pt` are the new canonical
 pair; `checkpoints/stage_b_combo/` kept for comparison.
+
+## Round 3 (same session) -- balanced low/medium/high severity levels per class
+
+Third round of supervisor feedback, relayed via the user: the dataset must
+have **equal representation of distortion severity** within each class --
+e.g. of the images distorted by dirt, roughly a third should be low
+severity, a third medium, a third high -- not just an equal count of
+present/absent per class (already true since Session 19+). Confirmed via
+clarifying questions: applies to **all three classes** (dirt, water,
+scratch), not just water/dirt; exact 1/3-1/3-1/3 balance required for
+**single-effect kinds only** (combo kinds get a severity per active
+effect too, but pseudo-randomly, not balanced -- avoids a 27-way
+combinatorial requirement for the triple-effect kind); **both** Stage A
+and Stage B get rebuilt and retrained.
+
+### Phase 10 -- Severity mechanism + kind system
+
+New `SEVERITY_LEVELS = ("low", "medium", "high")`, `SEVERITY_ALPHA =
+{"low": 0.3, "medium": 0.6, "high": 1.0}`, `apply_severity(image, out,
+mask, severity)` in `src/soiling/effects.py` -- a single, universal
+post-hoc alpha-blend applied identically to all three effects (including
+scratch), blending the full-strength output back toward the clean image
+and scaling the coverage mask by the same factor, so low severity
+legitimately means less Stage B tile coverage too, not just a fainter
+image. `add_dirt`/`add_water`/`add_scratch` themselves are unchanged.
+
+`src/soiling/dataset_builder.py`: `SEVERITY_VARIANT_KINDS` (9 kinds,
+`"dirt:low"` etc.), `VARIANT_KINDS_WITH_SEVERITY` (10, additive alongside
+`VARIANT_KINDS`), `ALL_VARIANT_KINDS_WITH_SEVERITY` (14, + combos).
+`_combo_from_kind` extended to parse `"effect:level"` tokens;
+`_resolve_severities` fills in unspecified (combo-kind) severities
+pseudo-randomly via a new deterministically-seeded draw
+(`derive_seed(base_seed, source_id, variant_idx, effect_name,
+"severity")`). New `include_severity: bool = False` param on both dataset
+builders, additive/opt-in like `include_combos`. `metadata.csv` gains
+`dirt_severity`/`water_severity`/`scratch_severity` columns
+unconditionally (always `"high"`/`"none"` when the flag is off, so the
+schema never forks).
+
+**A real bug caught by tests, not by inspection:** a bare single-token
+kind (e.g. `"dirt"`, used when `include_severity=False`) was initially
+treated the same as an un-annotated token inside a genuine combo,
+triggering random severity resolution instead of defaulting to `"high"`.
+New test `test_build_stage_a_dataset_severity_default_off_is_always_high`
+caught it; fixed with an `is_combo = len(tokens) > 1` check in
+`_combo_from_kind` (single-token kinds default straight to `"high"`).
+
+### Phase 11 -- CLI flags + per-severity evaluation breakdown
+
+`--include-severity` on both `build_stage_a_dataset.py` /
+`build_stage_b_dataset.py` (mirrors `--include-combos`). New
+`src/eval/severity.py`: `compute_metrics_by_severity` groups samples (or,
+for Stage B, tiles -- via `broadcast_rows_to_tiles`, repeating each
+image-level row `grid_h * grid_w` times in the same order
+`flatten_tiles` uses) by their `f"{class}_severity"` value and reuses
+`compute_metrics` unchanged per group, pooling in genuine negatives (a
+level is omitted only if it has zero *positives*, not zero total rows,
+since precision/recall/AP need a negative population to compare
+against). `--by-severity` added to both `evaluate_stage_a.py` /
+`evaluate_stage_b.py`.
+
+### Phase 12 -- Rebuild both datasets (HPC)
+
+Straight to HPC from the start (learned from Round 2: the local build of
+the smaller 8000-image combo dataset would have taken hours). New
+`scripts/hpc/build_stage_a_severity.slurm` / `build_stage_b_severity.slurm`
+(`--variants 14 --include-combos --include-severity`, Stage B also
+carrying forward Round 2's recalibrated thresholds). Jobs `1822266`
+(Stage A) / `1822268` (Stage B), both on `a100`, ~2h each -- **14000
+images**, severity landed close to the exact 1/3-1/3-1/3 target per
+class:
+
+| class | low | medium | high |
+|---|---|---|---|
+| dirt | 1975 | 1982 | 2043 |
+| water | 2011 | 1989 | 2000 |
+| scratch | 2006 | 1997 | 1997 |
+
+Retrieved via the established tar+scp pattern, synced locally overwriting
+`data/processed/stage_a` / `data/processed/stage_b_scratch15` in place
+(irreversible, pre-approved). Full test suite (180 tests) passed with no
+regressions after the sync. The two follow-up asks below (Phases 13-14)
+were done while these jobs were running on HPC.
+
+### Phase 13 -- Violin+box probability-by-severity plot
+
+Supervisor also asked for a violin+box plot, x=severity level, y=predicted
+probability, per class. `scripts/visualize_stage_a_results.py::
+group_probs_by_severity` + `plot_probability_by_severity` (matplotlib
+`violinplot` + `boxplot` overlay, no seaborn dependency); `_row_severity`
+falls back to inferring `"high"`/`"none"` from the plain 0/1 class column
+when the `f"{class}_severity"` key is absent entirely (needed for the
+currently-on-disk pre-severity datasets, hit immediately during smoke
+testing -- `KeyError: 'dirt_severity'`). Stage B reuses the same plot via
+`max_prob_per_image` (reduces `(N,C,H,W)` to `(N,C)` via max over `H,W`,
+since severity is an image-level property even in the tile dataset).
+
+### Phase 14 -- Per-sample report figure grows 5->7->8 columns
+
+Separate supervisor follow-up on the existing 5-column Stage B report
+(§4a in `stage_b_final_report.md`, added Round 2): instead of only
+showing the dominant class's predicted-probability tile, show all three
+classes' tile-wise probability side by side -- grew the figure to 7
+columns (`plot_stage_b_five_column_report` -> `plot_stage_b_
+seven_column_report`, columns 4-6 now one raw probability panel per
+class, dominant one labeled). User then asked that these 3 probability
+columns always be shown **raw** (ungated), regardless of whether the
+image was gated out, so the figure stays a diagnostic view of what Stage
+B's own head predicted -- separate from a NEW 8th column added right
+after, showing the **gated** probability for the dominant class, so raw
+and gated are directly comparable in the same figure
+(`plot_stage_b_seven_column_report` -> `plot_stage_b_eight_column_report`).
+`main()` now keeps both `raw_probs` (used for columns 4-7) and the
+possibly-gated `probs` (used everywhere else in the script -- metrics
+table, severity plot, overlay grid -- unchanged from Round 2's scoping
+decision) as separate arrays, since `apply_gate` returns a new array
+rather than mutating in place.
+
+Visually verified against the real (pre-severity, Round-2) checkpoints
+while the HPC jobs above were still running: a clean image showed a
+noisy but nonzero raw probability in column 4, fully suppressed (all-
+zero) in the new column 8 -- confirms the raw/gated separation renders
+as intended.
+
+### Phase 15 -- Retrain Stage A, Stage B, and the impaired-gate head
+
+Same canonical hyperparameters as each model's prior best config, dataset
+only variable. `rtx3080` was fully allocated at submission time -- raced
+duplicate jobs onto `a100` (several nodes showed free GPU slots via
+`sinfo.tinygpu -p a100 -N`) and cancelled the `rtx3080` originals once the
+`a100` copies started running (same racing pattern as Round 2's Phase 8).
+All three converged cleanly and fast on `a100` (~27-42 min each): Stage A
+job `1822358` (val_loss 0.356->0.352), Stage B job `1822359` (val_loss
+0.027->0.027, effectively flat by epoch 35), impaired-gate job `1822360`
+(val_loss 0.360->0.334). New checkpoint dirs (`checkpoints/
+stage_a_severity`, `stage_b_severity`, `impaired_gate_severity`) --
+nothing existing overwritten.
+
+### Phase 16 -- Evaluation: the headline result
+
+Both `evaluate_stage_a.py --by-severity` and `evaluate_stage_b.py
+--by-severity` run against the retrained checkpoints -- this is what the
+whole rebuild was actually for: **does the model do worse on subtle
+distortions than obvious ones?**
+
+**Stage A (image-level), AP by severity:**
+
+| class | low | medium | high |
+|---|---|---|---|
+| dirt | 0.702 | 0.934 | 0.972 |
+| water | 0.773 | 0.960 | 0.975 |
+| scratch | 0.666 | 0.850 | 0.928 |
+
+**Stage B (tile-level), AP by severity:**
+
+| class | low | medium | high |
+|---|---|---|---|
+| dirt | 0.196 | 0.596 | 0.791 |
+| water | 0.043 | 0.415 | 0.789 |
+| scratch | 0.143 | 0.343 | 0.449 |
+
+**Yes, clearly, for every class at both stages** -- a monotonic,
+physically sensible trend. Stage B's gap is far more pronounced than
+Stage A's (water: 18x AP difference low-to-high, vs. ~1.3x at Stage A) --
+consistent with per-tile localization being the strictly harder task,
+doubly exposed since the same `alpha` that fades a low-severity effect's
+visual signal also shrinks its ground-truth tile coverage. Confirmed
+visually in the new violin+box plots
+(`docs/images/stage_a_probability_by_severity_severity.jpg`,
+`docs/images/stage_b_probability_by_severity_severity.jpg`) -- each
+class's predicted-probability distribution visibly shifts up and tightens
+from low to high severity.
+
+Regenerated the per-sample report figure too (grew 5->7->8 columns this
+round, see Phase 14) against the severity checkpoint + gate --
+`docs/images/stage_b_full_report_severity_page*.jpg` -- visually confirms
+the gate still correctly suppresses clean/low-confidence rows while
+leaving genuinely-impaired rows' predictions untouched.
+
+The impaired-gate head itself (`evaluate_impaired_gate.py`, no
+`--by-severity` support -- its label is a derived binary "any distortion"
+call, not a per-class one) still performs well but shows the same
+pattern indirectly: F1=0.964, AP=0.994, but **ROC-AUC drops from Round
+2's 0.983 to 0.927** -- the severity-balanced test split now includes
+many low-severity images, which are inherently harder to confidently call
+"impaired," so the gate's ranking quality takes a real hit even at an
+unchanged default-cutoff F1.
+
+Both final reports (`stage_a_final_report.md` §8 new,
+`stage_b_final_report.md` §4/§4a/§4c/§5/§6 updated) and this entry written
+up same-session. `checkpoints/stage_a_severity/stage_a_head.pt`,
+`checkpoints/stage_b_severity/stage_b_head.pt`, and
+`checkpoints/impaired_gate_severity/impaired_gate_head.pt` are the new
+canonical trio; the Round 2 checkpoints are kept for comparison.

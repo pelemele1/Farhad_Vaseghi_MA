@@ -27,6 +27,14 @@ what actually answers "predict clean easily": clean-image false-positive rate do
 ROC-AUC (−0.040). Also new this round: a 5-column per-sample report figure with 0-1 colorbars
 (§4a) and a derived (not trained) general/any-distortion tile channel (§4b).
 
+**Session 20, Round 3 (2026-09-26):** the dataset was rebuilt again to add balanced
+low/medium/high **severity** levels per class (see
+[`stage_a_final_report.md`](stage_a_final_report.md) §8 for the mechanism) and the model
+retrained on it — **`checkpoints/stage_b_severity/stage_b_head.pt` is now canonical** (§4c).
+The per-sample report figure also grew from 5 to 8 columns this round (§4a): all three
+classes' raw predicted probability tiles are now shown (not just the dominant class), plus a
+dedicated gated-probability column for direct raw-vs-gated comparison.
+
 This is a standalone summary of Part 2, Stage B — distinct from
 [`development_log.md`](development_log.md)'s chronological session-by-session record. See
 the log (Sessions 15-18) for the full narrative; this document is the result, updated as it
@@ -577,30 +585,40 @@ test-split images:
 
 ---
 
-## 4a. 5-column report figure (Session 20, supervisor item 1)
+## 4a. 8-column report figure (Session 20, supervisor items 1 and 4; grew 5→7→8 columns)
 
 The sample-prediction overlay above (green/red alpha-blended on the real photo) is a good
 qualitative check but has no way to show an actual probability *value* per tile — color is a
 blend of two channels, not a single legible scalar. A second, complementary figure was added
 specifically for quantitative per-tile reading:
-`scripts/visualize_stage_b_results.py::plot_stage_b_five_column_report`, one row per sample,
-5 columns:
+`scripts/visualize_stage_b_results.py::plot_stage_b_eight_column_report`, one row per sample.
+Originally 5 columns (original/distorted/GT/dominant-class-probability/PR-curve); grew to 7
+when the supervisor asked to see all three classes' tile-wise probability instead of just the
+dominant class, then to 8 when a dedicated gated-probability column was added for direct
+comparison against the raw columns. Final layout:
 
 1. **Original** — the clean (undistorted) variant of the same source image.
 2. **Distorted** — the actual model input.
-3. **GT tiles** — the ground-truth tile grid for that sample's class, `imshow(cmap="viridis",
-   vmin=0, vmax=1)` with a colorbar (binary: dark purple = 0, yellow = 1).
-4. **Predicted probability** — the model's raw, unthresholded per-tile probability for that
-   class, same colormap and 0-1 colorbar — so a tile's exact confidence is directly readable,
-   not just "red enough to look positive."
-5. **PR curve (AUC-PR)** — that class's precision-recall curve, computed once over the whole
-   flattened test split and reused for every row of that class (AUC-PR is a whole-split
-   statistic, not a per-sample one — recomputing an identical curve per row would be
-   pointless), with the AP value annotated.
+3. **GT tiles** — the ground-truth tile grid for the sample's dominant class, `imshow(cmap=
+   "viridis", vmin=0, vmax=1)` with a colorbar (binary: dark purple = 0, yellow = 1).
+4-6. **Predicted probability (dirt/water/scratch)** — the model's raw, unthresholded per-tile
+   probability for **each** class (not just the dominant one), same colormap and 0-1 colorbar,
+   the dominant class's panel labeled "(dominant)". Always raw/ungated, regardless of whether
+   `--gate-checkpoint` is given — this is the diagnostic view of what Stage B's own head
+   actually predicted before any gating is applied, generated for every sample regardless of
+   whether the image was ultimately judged impaired.
+7. **PR curve (AUC-PR)** — the dominant class's precision-recall curve, computed once over the
+   whole flattened test split and reused for every row of that class, with the AP value
+   annotated. Always uses raw predictions too, for the same reason as columns 4-6.
+8. **Gated probability** — the dominant class's **gated** tile probability (post-`apply_gate`)
+   when `--gate-checkpoint` is given, so raw (columns 4-6) and gated (column 8) are directly
+   comparable in the same figure. Falls back to showing the raw grid again, labeled "(no gate
+   applied)", when no gate checkpoint is passed.
 
 Paginated at `--rows-per-page` (default 6) rows per file:
 `stage_b_full_report{tag}_page{N}.jpg`. See §4b below for how this figure looks once the
-impaired-gate head (§ Post-decision follow-ups, option 8) is wired in as `--gate-checkpoint`.
+impaired-gate head (§ Post-decision follow-ups, option 8) is wired in as `--gate-checkpoint`,
+and §4c for the current (severity-retrain) version.
 
 ## 4b. General/any-distortion tile channel (Session 20, supervisor item 3)
 
@@ -624,15 +642,115 @@ pos_weight/alpha tuning problem. Kept out of scope unless the derived version tu
 disagree with the per-class predictions by more than noise (`general_channel_consistency`
 exists specifically to check that).
 
+## 4c. Balanced severity levels (Session 20, Round 3)
+
+Same rebuild and mechanism as [`stage_a_final_report.md`](stage_a_final_report.md) §8 — a
+universal post-hoc alpha-blend (`SEVERITY_ALPHA = {"low": 0.3, "medium": 0.6, "high": 1.0}`)
+applied to each active effect, scaling both the distorted image and that effect's tile-coverage
+mask by the same factor, so a low-severity patch legitimately covers fewer/lighter tiles too.
+Exact 1/3-1/3-1/3 balance guaranteed for single-effect kinds; combo kinds get a pseudo-random
+(deterministically seeded) severity per active effect.
+
+### Dataset and retrain
+
+Rebuilt on HPC (`scripts/hpc/build_stage_b_severity.slurm`, job `1822268`/`1822359`), carrying
+forward Round 2's recalibrated tile thresholds (dirt 0.20, water 0.25, scratch 0.015): **14000
+images**, `--variants 14 --include-combos --include-severity`, same near-exact severity balance
+as Stage A's rebuild (§8 there). Retrained the same canonical config (focal, α=0.75, γ=2.0, 40
+epochs) — HPC job `1822359`, `checkpoints/stage_b_severity/stage_b_head.pt`. Train loss
+converged to 0.026, matching the shape of every prior focal-loss run.
+
+![Stage B training curve, severity dataset (job 1822359)](images/stage_b_training_curve_severity.jpg)
+
+**Per-class metrics (held-out test split, 1400 images, 358400 tiles, tuned thresholds)**
+
+![Stage B per-tile metrics, severity dataset](images/stage_b_test_metrics_severity.jpg)
+
+| class | threshold | precision | recall | F1 | AP | ROC-AUC | support | gated F1 | gated AP | gated ROC-AUC |
+|---|---|---|---|---|---|---|---|---|---|---|
+| dirt | 0.569 | 0.651 | 0.611 | 0.631 | 0.706 | 0.893 | 53940 | 0.635 | 0.711 | 0.892 |
+| water | 0.511 | 0.568 | 0.637 | 0.601 | 0.651 | 0.871 | 54739 | 0.604 | 0.653 | 0.869 |
+| scratch | 0.467 | 0.499 | 0.417 | 0.454 | 0.392 | 0.909 | 6796 | 0.441 | 0.360 | 0.793 |
+
+Roughly in line with Round 2's `stage_b_recal` numbers (dirt/water F1 in the low-to-mid 0.60s,
+scratch the weakest class) — the severity rebuild's headline result isn't in this table, it's
+the per-severity breakdown below. The gate has only a small effect either way here, consistent
+with most of the test split being genuinely impaired.
+
+**Per-severity breakdown** (`evaluate_stage_b.py --by-severity`, ungated, per tile) — same
+question as Stage A §8: does localization degrade from high to low severity?
+
+| class | severity | precision | recall | F1 | AP | ROC-AUC | support |
+|---|---|---|---|---|---|---|---|
+| dirt | low | 0.244 | 0.282 | 0.262 | 0.196 | 0.805 | 12058 |
+| dirt | medium | 0.496 | 0.619 | 0.551 | 0.596 | 0.909 | 18535 |
+| dirt | high | 0.608 | 0.774 | 0.681 | 0.791 | 0.946 | 23347 |
+| water | low | 0.059 | 0.116 | 0.078 | 0.043 | 0.660 | 6255 |
+| water | medium | 0.415 | 0.518 | 0.461 | 0.415 | 0.878 | 19859 |
+| water | high | 0.609 | 0.832 | 0.703 | 0.789 | 0.952 | 28625 |
+| scratch | low | 0.226 | 0.226 | 0.226 | 0.143 | 0.860 | 1326 |
+| scratch | medium | 0.402 | 0.420 | 0.411 | 0.343 | 0.921 | 2395 |
+| scratch | high | 0.502 | 0.497 | 0.500 | 0.449 | 0.939 | 3075 |
+
+**A far more pronounced version of Stage A's trend** — at the *tile* level, low-severity
+detection is dramatically weaker than high, most starkly for water (AP 0.043 at low vs. 0.789
+at high — an 18x difference). This makes sense: Stage B's task is strictly harder than Stage
+A's (per-tile localization vs. whole-image classification), so it's more exposed to a
+low-severity patch shrinking both its visual signal *and* its ground-truth tile coverage (the
+same `alpha` scales both, by design — see the mechanism above). Visualized as a violin+box plot
+of each image's max tile probability per class, grouped by severity
+(`scripts/visualize_stage_b_results.py` reuses
+`visualize_stage_a_results.py::plot_probability_by_severity` via `max_prob_per_image`):
+
+![Stage B predicted probability by ground-truth severity (max per image)](images/stage_b_probability_by_severity_severity.jpg)
+
+![Stage B ROC and precision-recall curves, severity dataset](images/stage_b_roc_pr_curves_severity.jpg)
+![Stage B sample predictions, severity dataset](images/stage_b_sample_predictions_severity.jpg)
+
+### 8-column report figure, current version
+
+![Stage B 8-column report, severity checkpoint + gate, page 1](images/stage_b_full_report_severity_page1.jpg)
+
+Confirms the design intent from §4a directly: rows 1-3 (clean or low-confidence) show the
+gated column (8) fully suppressed (dark purple) even where the raw dominant-class column (4)
+still shows some background noise, while genuinely dirt-impaired rows (4-6) show matching
+raw/gated signal, correctly gated "impaired."
+
+### Reproduction
+
+```bash
+python scripts/build_stage_b_dataset.py --source data/raw/mio_tcd/images \
+    --out data/processed/stage_b_scratch15 --variants 14 --include-combos --include-severity \
+    --dirt-threshold 0.20 --water-threshold 0.25 --scratch-threshold 0.015
+python scripts/evaluate_stage_b.py --checkpoint checkpoints/stage_b_severity/stage_b_head.pt \
+    --data data/processed/stage_b_scratch15 --split test --tune-thresholds --by-severity \
+    --gate-checkpoint checkpoints/impaired_gate_severity/impaired_gate_head.pt
+python scripts/visualize_stage_b_results.py --checkpoint checkpoints/stage_b_severity/stage_b_head.pt \
+    --data data/processed/stage_b_scratch15 --split test --log-file stage_b_severity_1822359.out \
+    --tag _severity --out-dir docs/images \
+    --gate-checkpoint checkpoints/impaired_gate_severity/impaired_gate_head.pt
+```
+
+`build_b_severity_1822268.out` (dataset rebuild) and `stage_b_severity_1822359.out` (training)
+are the raw stdout of the actual TinyGPU jobs.
+
 ---
 
 ## 5. Known limitations
 
 - **Scratch localization improved a lot over the original dataset but dirt/water paid a small
   price**, and the Round 2 threshold recalibration cost water a further, real chunk of F1/AP
-  (§4 option 7) — current: dirt F1 0.749, water F1 0.769, scratch F1 0.624 (all tuned
-  thresholds, `stage_b_recal`, ungated). Still a coarse signal, not a pixel-precise localizer
-  for any class.
+  (§4 option 7). Current (Round 3, severity dataset): dirt F1 0.631, water F1 0.601, scratch
+  F1 0.454 (all tuned thresholds, `stage_b_severity`, ungated) — lower than Round 2's numbers
+  in absolute terms, but not a regression in the same-dataset sense: the severity rebuild added
+  6000 new (mostly harder, lower-severity) images to the test population itself (§4c), so this
+  isn't a like-for-like comparison. Still a coarse signal, not a pixel-precise localizer for
+  any class.
+- **Low-severity tiles are dramatically harder to localize than high** (§4c) — up to an 18x AP
+  gap (water: 0.043 at low vs. 0.789 at high). More pronounced than Stage A's equivalent
+  image-level gap, consistent with per-tile localization being a strictly harder task that's
+  more exposed to a low-severity patch shrinking both its visual signal and its ground-truth
+  tile coverage at once.
 - **The gate fixes clean-image false positives but couples the two heads' error rates** (§4
   option 8) — a gate false negative silently zeroes a genuinely correct Stage B detection.
   Measured cost: scratch's gated ROC-AUC drops 0.955→0.915 on the full test split. Not a
@@ -648,36 +766,34 @@ exists specifically to check that).
   [`stage_a_final_report.md`](stage_a_final_report.md) §5, unchanged here since Stage B reuses
   the same backbone and dataset-generation pipeline.
 - **Final configuration:** focal loss, α=0.75, γ=2.0, trained on the combo-inclusive,
-  recalibrated-threshold dataset (`checkpoints/stage_b_recal/stage_b_head.pt`,
-  `data/processed/stage_b_scratch15`, dirt/water/scratch thresholds 0.20/0.25/0.015), gated at
-  inference time by `checkpoints/impaired_gate/impaired_gate_head.pt`
-  (`src/eval/gate.py::apply_gate`, threshold 0.5).
+  recalibrated-threshold, severity-balanced dataset (`checkpoints/stage_b_severity/
+  stage_b_head.pt`, `data/processed/stage_b_scratch15`, dirt/water/scratch thresholds
+  0.20/0.25/0.015, 14000 images), gated at inference time by
+  `checkpoints/impaired_gate_severity/impaired_gate_head.pt` (`src/eval/gate.py::apply_gate`,
+  threshold 0.5).
 
 ---
 
 ## 6. Reproducing this report
 
 ```bash
-# canonical (Session 20 Round 2: recalibrated thresholds, focal alpha=0.75, gated at eval time)
+# canonical (Session 20 Round 3: severity-balanced dataset, focal alpha=0.75, gated at eval time)
 python scripts/build_stage_b_dataset.py --source data/raw/mio_tcd/images \
-    --out data/processed/stage_b_scratch15 --variants 8 --include-combos \
+    --out data/processed/stage_b_scratch15 --variants 14 --include-combos --include-severity \
     --dirt-threshold 0.20 --water-threshold 0.25 --scratch-threshold 0.015
-python scripts/evaluate_stage_b.py --checkpoint checkpoints/stage_b_recal/stage_b_head.pt \
-    --data data/processed/stage_b_scratch15 --split test --tune-thresholds \
-    --gate-checkpoint checkpoints/impaired_gate/impaired_gate_head.pt
-python scripts/diagnose_clean_false_positives.py --checkpoint checkpoints/stage_b_recal/stage_b_head.pt \
-    --data data/processed/stage_b_scratch15 --split test --tune-thresholds \
-    --gate-checkpoint checkpoints/impaired_gate/impaired_gate_head.pt
-python scripts/visualize_stage_b_results.py --checkpoint checkpoints/stage_b_recal/stage_b_head.pt \
-    --data data/processed/stage_b_scratch15 --split test --log-file stage_b_recal_1821754.out \
-    --gate-checkpoint checkpoints/impaired_gate/impaired_gate_head.pt --tag _recal --out-dir docs/images
-
-# threshold diagnostics that motivated the recalibration above
-python scripts/diagnose_tile_thresholds.py --effect dirt --n 30
-python scripts/diagnose_tile_thresholds.py --effect water --n 30
+python scripts/evaluate_stage_b.py --checkpoint checkpoints/stage_b_severity/stage_b_head.pt \
+    --data data/processed/stage_b_scratch15 --split test --tune-thresholds --by-severity \
+    --gate-checkpoint checkpoints/impaired_gate_severity/impaired_gate_head.pt
+python scripts/visualize_stage_b_results.py --checkpoint checkpoints/stage_b_severity/stage_b_head.pt \
+    --data data/processed/stage_b_scratch15 --split test --log-file stage_b_severity_1822359.out \
+    --gate-checkpoint checkpoints/impaired_gate_severity/impaired_gate_head.pt --tag _severity --out-dir docs/images
 
 # earlier loss/dataset comparisons (superseded, kept for reference -- their datasets no longer
-# exist locally since data/processed/stage_b_scratch15 was replaced in place by both rebuilds)
+# exist locally since data/processed/stage_b_scratch15 was replaced in place by every rebuild)
+python scripts/evaluate_stage_b.py --checkpoint checkpoints/stage_b_recal/stage_b_head.pt \
+    --data data/processed/stage_b_scratch15 --split test --tune-thresholds   # pre-severity dataset originally
+python scripts/diagnose_tile_thresholds.py --effect dirt --n 30   # threshold diagnostics that motivated Round 2's recalibration
+python scripts/diagnose_tile_thresholds.py --effect water --n 30
 python scripts/evaluate_stage_b.py --checkpoint checkpoints/stage_b_combo/stage_b_head.pt \
     --data data/processed/stage_b_scratch15 --split test --tune-thresholds   # pre-recalibration dataset originally
 python scripts/evaluate_stage_b.py --checkpoint checkpoints/stage_b_ssd/stage_b_head.pt \
@@ -691,11 +807,13 @@ python scripts/threshold_sweep_stage_b.py --checkpoint checkpoints/stage_b/stage
 All checkpoints (`stage_b_head_bce_baseline.pt`, `stage_b_head_focal.pt`,
 `stage_b_alpha75/stage_b_head.pt`, `stage_b_scratch15/stage_b_head.pt`,
 `stage_b_ssd/stage_b_head.pt`, `stage_b_combo/stage_b_head.pt`,
-`stage_b_recal/stage_b_head.pt`, `impaired_gate/impaired_gate_head.pt`) and the raw job logs
-(`stage_b_1799124.out`, `stage_b_1799134_focal.out`, `stage_b_s15_1802973.out`,
+`stage_b_recal/stage_b_head.pt`, `stage_b_severity/stage_b_head.pt`,
+`impaired_gate/impaired_gate_head.pt`, `impaired_gate_severity/impaired_gate_head.pt`) and the
+raw job logs (`stage_b_1799124.out`, `stage_b_1799134_focal.out`, `stage_b_s15_1802973.out`,
 `eval_s15_1802985.out`, `stage_b_ssd_1815542.out`, `eval_ssd_1815558.out`,
 `stage_b_combo_1815701.out`, `eval_b_combo_1815738.out`, `build_b_recal_1821713.out`,
-`stage_b_recal_1821754.out`, `impaired_gate_1821693.out`) exist locally and (job logs and
+`stage_b_recal_1821754.out`, `impaired_gate_1821693.out`, `build_b_severity_1822268.out`,
+`stage_b_severity_1822359.out`) exist locally and (job logs and
 checkpoints, not the now-replaced dataset) on the FAU HPC `$WORK`. `data/processed/stage_b`
 (the original 3%-threshold, single-distortion dataset) is the only dataset still unchanged from
 Session 16 — every other Stage B dataset generation since has written to
