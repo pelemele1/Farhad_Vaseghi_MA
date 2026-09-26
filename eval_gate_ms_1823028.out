@@ -1,0 +1,58 @@
+### Starting TaskPrologue of job 1823028 on tg096 at Sat Sep 26 07:07:05 PM CEST 2026
+Running on cores 64-71,104-127 with governor ondemand
+Sat Sep 26 19:07:05 2026       
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 610.57.04              KMD Version: 610.57.04     CUDA UMD Version: 13.3     |
++-----------------------------------------+------------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  NVIDIA A100-SXM4-40GB          On  |   00000000:81:00.0 Off |                    0 |
+| N/A   43C    P0             78W /  400W |       0MiB /  40960MiB |      0%      Default |
+|                                         |                        |             Disabled |
++-----------------------------------------+------------------------+----------------------+
+
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
+|        ID   ID                                                               Usage      |
+|=========================================================================================|
+|  No running processes found                                                             |
++-----------------------------------------------------------------------------------------+
+### Finished TaskPrologue
+
+/home/woody/iwnt/iwnt196h/software/private/conda/envs/stage_a/lib/python3.11/site-packages/pythonperlin/__init__.py:4: UserWarning: pkg_resources is deprecated as an API. See https://setuptools.pypa.io/en/latest/pkg_resources.html. The pkg_resources package is slated for removal as early as 2025-11-30. Refrain from using this package or pin to Setuptools<81.
+  from pkg_resources import get_distribution
+Tuned threshold (best-F1 on val split):
+  impaired  0.109
+Evaluated 1400 images from split='test', threshold=tuned
+class      threshold precision    recall        f1        AP   ROC-AUC   support
+impaired       0.109     0.964     0.965     0.964     0.997     0.956      1300
+
+Gate threshold for recall >= 0.95 (tuned on val): 0.140
+  val:  impaired kept=0.950  clean passed=0.320
+  test: impaired kept=0.953  clean passed=0.310
+=== JOB_STATISTICS ===
+=== current date     : Sat Sep 26 07:07:34 PM CEST 2026
+= Job-ID             : 1823028 on tinygpu
+= Job-Name           : eval_gate_ms
+= Job-Command        : /home/woody/iwnt/iwnt196h/Farhad_Vaseghi_MA/scripts/hpc/run_python.slurm
+= Initial workdir    : /home/woody/iwnt/iwnt196h/Farhad_Vaseghi_MA
+= Queue/Partition    : a100
+= Slurm account      : iwnt with QOS=normal
+= Requested resources:  for 01:00:00
+= Elapsed runtime    : 00:00:30
+= Total RAM usage    : 1.7 GiB of requested  GiB (%)   
+= Node list          : tg096
+= Subm/Elig/Start/End: 2026-09-26T18:59:22 / 2026-09-26T19:07:04 / 2026-09-26T19:07:04 / 2026-09-26T19:07:34
+======================
+=== Quota infos ======
+    Path                 Used     SoftQ    HardQ    Gracetime  Filec    FileQ    FiHaQ    FileGrace    
+    /home/hpc               6.0G   104.9G   209.7G        N/A   1,449      500K   1,000K        N/A    
+    /home/woody            11.9G  1000.0G  1500.0G        N/A     119K   5,000K   7,500K        N/A    
+    /home/vault             0.0K  1048.6G  2097.2G        N/A       1      200K     400K        N/A    
+======================
+=== GPU utilization ==
+gpu_name, gpu_bus_id, pid, gpu_utilization [%], mem_utilization [%], max_memory_usage [MiB], time [ms]
+NVIDIA A100-SXM4-40GB, 00000000:81:00.0, 3316934, 15 %, 10 %, 3758 MiB, 19988 ms

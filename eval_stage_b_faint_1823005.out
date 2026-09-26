@@ -1,0 +1,75 @@
+### Starting TaskPrologue of job 1823005 on tg095 at Sat Sep 26 06:35:24 PM CEST 2026
+Running on cores 0-31 with governor ondemand
+Sat Sep 26 18:35:24 2026       
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 610.57.04              KMD Version: 610.57.04     CUDA UMD Version: 13.3     |
++-----------------------------------------+------------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  NVIDIA A100-SXM4-40GB          On  |   00000000:01:00.0 Off |                    0 |
+| N/A   43C    P0             54W /  400W |       0MiB /  40960MiB |      0%      Default |
+|                                         |                        |             Disabled |
++-----------------------------------------+------------------------+----------------------+
+
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
+|        ID   ID                                                               Usage      |
+|=========================================================================================|
+|  No running processes found                                                             |
++-----------------------------------------------------------------------------------------+
+### Finished TaskPrologue
+
+checkpoint=checkpoints/stage_b_faint/stage_b_head.pt data=data/processed/stage_b_gtfix gate_threshold=0.159
+Tuned per-class thresholds (best-F1 on val split):
+  dirt      0.534
+  water     0.536
+  scratch   0.473
+[ungated] Evaluated 1400 images (358400 tiles) from split='test', threshold=tuned per-class
+class      threshold precision    recall        f1        AP   ROC-AUC   support
+dirt           0.534     0.593     0.605     0.599     0.674     0.843     72748
+water          0.536     0.528     0.673     0.592     0.637     0.827     82441
+scratch        0.473     0.492     0.399     0.441     0.386     0.879      9019
+
+[gated] Evaluated 1400 images (358400 tiles) from split='test', threshold=tuned per-class
+class      threshold precision    recall        f1        AP   ROC-AUC   support
+dirt           0.534     0.598     0.603     0.601     0.675     0.844     72748
+water          0.536     0.535     0.671     0.595     0.641     0.831     82441
+scratch        0.473     0.498     0.393     0.439     0.381     0.848      9019
+
+Per-severity breakdown (ungated, per tile):
+class     severity   threshold precision    recall        f1        AP   ROC-AUC   support
+dirt      low            0.534     0.300     0.346     0.321     0.267     0.745     25387
+dirt      medium         0.534     0.409     0.665     0.507     0.572     0.879     23960
+dirt      high           0.534     0.454     0.826     0.586     0.769     0.936     23401
+water     low            0.536     0.269     0.393     0.319     0.234     0.737     27252
+water     medium         0.536     0.368     0.747     0.493     0.525     0.882     26524
+water     high           0.536     0.419     0.872     0.566     0.726     0.931     28665
+scratch   low            0.473     0.315     0.227     0.264     0.202     0.820      2769
+scratch   medium         0.473     0.398     0.421     0.409     0.364     0.906      3178
+scratch   high           0.473     0.428     0.532     0.474     0.423     0.935      3072
+=== JOB_STATISTICS ===
+=== current date     : Sat Sep 26 06:36:07 PM CEST 2026
+= Job-ID             : 1823005 on tinygpu
+= Job-Name           : eval_stage_b_faint
+= Job-Command        : /home/woody/iwnt/iwnt196h/Farhad_Vaseghi_MA/scripts/hpc/evaluate_stage_b.slurm
+= Initial workdir    : /home/woody/iwnt/iwnt196h/Farhad_Vaseghi_MA
+= Queue/Partition    : a100
+= Slurm account      : iwnt with QOS=normal
+= Requested resources:  for 01:00:00
+= Elapsed runtime    : 00:00:45
+= Total RAM usage    : 1.8 GiB of requested  GiB (%)   
+= Node list          : tg095
+= Subm/Elig/Start/End: 2026-09-26T18:28:04 / 2026-09-26T18:35:22 / 2026-09-26T18:35:22 / 2026-09-26T18:36:07
+======================
+=== Quota infos ======
+    Path                 Used     SoftQ    HardQ    Gracetime  Filec    FileQ    FiHaQ    FileGrace    
+    /home/woody            11.9G  1000.0G  1500.0G        N/A     119K   5,000K   7,500K        N/A    
+    /home/hpc               6.0G   104.9G   209.7G        N/A   1,449      500K   1,000K        N/A    
+    /home/vault             0.0K  1048.6G  2097.2G        N/A       1      200K     400K        N/A    
+======================
+=== GPU utilization ==
+gpu_name, gpu_bus_id, pid, gpu_utilization [%], mem_utilization [%], max_memory_usage [MiB], time [ms]
+NVIDIA A100-SXM4-40GB, 00000000:01:00.0, 2491395, 14 %, 10 %, 6964 MiB, 35743 ms

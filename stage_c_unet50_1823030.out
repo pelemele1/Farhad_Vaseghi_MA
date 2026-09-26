@@ -1,0 +1,101 @@
+### Starting TaskPrologue of job 1823030 on tg096 at Sat Sep 26 07:07:35 PM CEST 2026
+Running on cores 64-71,104-127 with governor ondemand
+Sat Sep 26 19:07:35 2026       
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 610.57.04              KMD Version: 610.57.04     CUDA UMD Version: 13.3     |
++-----------------------------------------+------------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  NVIDIA A100-SXM4-40GB          On  |   00000000:81:00.0 Off |                    0 |
+| N/A   38C    P0             76W /  400W |       0MiB /  40960MiB |      0%      Default |
+|                                         |                        |             Disabled |
++-----------------------------------------+------------------------+----------------------+
+
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
+|        ID   ID                                                               Usage      |
+|=========================================================================================|
+|  No running processes found                                                             |
++-----------------------------------------------------------------------------------------+
+### Finished TaskPrologue
+
+/home/woody/iwnt/iwnt196h/software/private/conda/envs/stage_a/lib/python3.11/site-packages/pythonperlin/__init__.py:4: UserWarning: pkg_resources is deprecated as an API. See https://setuptools.pypa.io/en/latest/pkg_resources.html. The pkg_resources package is slated for removal as early as 2025-11-30. Refrain from using this package or pin to Setuptools<81.
+  from pkg_resources import get_distribution
+train=11200 val=1400 arch=unet loss=dice_bce bce_weight=0.5
+epoch 1/50  train_loss=0.3953  val_loss=0.3125  (52.9s)  *saved
+epoch 2/50  train_loss=0.3074  val_loss=0.2920  (46.6s)  *saved
+epoch 3/50  train_loss=0.2956  val_loss=0.2911  (46.5s)  *saved
+epoch 4/50  train_loss=0.2874  val_loss=0.2837  (46.8s)  *saved
+epoch 5/50  train_loss=0.2816  val_loss=0.2803  (46.7s)  *saved
+epoch 6/50  train_loss=0.2780  val_loss=0.2817  (48.8s)
+epoch 7/50  train_loss=0.2736  val_loss=0.2734  (50.7s)  *saved
+epoch 8/50  train_loss=0.2707  val_loss=0.2728  (49.3s)  *saved
+epoch 9/50  train_loss=0.2681  val_loss=0.2733  (47.1s)
+epoch 10/50  train_loss=0.2661  val_loss=0.2773  (49.3s)
+epoch 11/50  train_loss=0.2640  val_loss=0.2738  (48.2s)
+epoch 12/50  train_loss=0.2631  val_loss=0.2702  (46.8s)  *saved
+epoch 13/50  train_loss=0.2611  val_loss=0.2756  (47.2s)
+epoch 14/50  train_loss=0.2594  val_loss=0.2708  (48.2s)
+epoch 15/50  train_loss=0.2581  val_loss=0.2693  (49.7s)  *saved
+epoch 16/50  train_loss=0.2565  val_loss=0.2694  (47.8s)
+epoch 17/50  train_loss=0.2556  val_loss=0.2681  (49.3s)  *saved
+epoch 18/50  train_loss=0.2549  val_loss=0.2697  (50.4s)
+epoch 19/50  train_loss=0.2530  val_loss=0.2681  (48.5s)  *saved
+epoch 20/50  train_loss=0.2515  val_loss=0.2685  (48.8s)
+epoch 21/50  train_loss=0.2515  val_loss=0.2706  (48.5s)
+epoch 22/50  train_loss=0.2514  val_loss=0.2682  (48.5s)
+epoch 23/50  train_loss=0.2499  val_loss=0.2720  (48.3s)
+epoch 24/50  train_loss=0.2485  val_loss=0.2693  (48.3s)
+epoch 25/50  train_loss=0.2478  val_loss=0.2662  (48.5s)  *saved
+epoch 26/50  train_loss=0.2471  val_loss=0.2664  (48.7s)
+epoch 27/50  train_loss=0.2467  val_loss=0.2661  (48.3s)  *saved
+epoch 28/50  train_loss=0.2457  val_loss=0.2671  (48.2s)
+epoch 29/50  train_loss=0.2449  val_loss=0.2670  (48.3s)
+epoch 30/50  train_loss=0.2452  val_loss=0.2671  (48.3s)
+epoch 31/50  train_loss=0.2452  val_loss=0.2684  (49.3s)
+epoch 32/50  train_loss=0.2431  val_loss=0.2686  (48.5s)
+epoch 33/50  train_loss=0.2431  val_loss=0.2653  (48.7s)  *saved
+epoch 34/50  train_loss=0.2423  val_loss=0.2686  (48.8s)
+epoch 35/50  train_loss=0.2414  val_loss=0.2675  (48.0s)
+epoch 36/50  train_loss=0.2418  val_loss=0.2653  (48.5s)
+epoch 37/50  train_loss=0.2416  val_loss=0.2672  (47.8s)
+epoch 38/50  train_loss=0.2399  val_loss=0.2688  (47.8s)
+epoch 39/50  train_loss=0.2408  val_loss=0.2663  (48.8s)
+epoch 40/50  train_loss=0.2393  val_loss=0.2675  (48.4s)
+epoch 41/50  train_loss=0.2398  val_loss=0.2690  (48.3s)
+epoch 42/50  train_loss=0.2389  val_loss=0.2691  (47.9s)
+epoch 43/50  train_loss=0.2389  val_loss=0.2696  (48.8s)
+epoch 44/50  train_loss=0.2378  val_loss=0.2708  (48.5s)
+epoch 45/50  train_loss=0.2377  val_loss=0.2695  (48.7s)
+epoch 46/50  train_loss=0.2384  val_loss=0.2674  (49.2s)
+epoch 47/50  train_loss=0.2375  val_loss=0.2676  (48.7s)
+epoch 48/50  train_loss=0.2373  val_loss=0.2669  (51.3s)
+epoch 49/50  train_loss=0.2368  val_loss=0.2661  (49.4s)
+epoch 50/50  train_loss=0.2363  val_loss=0.2685  (49.2s)
+wrote checkpoints/stage_c_unet50/stage_c_head.pt (best val_loss=0.2653)
+=== JOB_STATISTICS ===
+=== current date     : Sat Sep 26 07:48:18 PM CEST 2026
+= Job-ID             : 1823030 on tinygpu
+= Job-Name           : stage_c_unet50
+= Job-Command        : /home/woody/iwnt/iwnt196h/Farhad_Vaseghi_MA/scripts/hpc/train_stage_c_unet.slurm
+= Initial workdir    : /home/woody/iwnt/iwnt196h/Farhad_Vaseghi_MA
+= Queue/Partition    : a100
+= Slurm account      : iwnt with QOS=normal
+= Requested resources:  for 06:00:00
+= Elapsed runtime    : 00:40:44
+= Total RAM usage    : 6.3 GiB of requested  GiB (%)   
+= Node list          : tg096
+= Subm/Elig/Start/End: 2026-09-26T19:00:33 / 2026-09-26T19:00:33 / 2026-09-26T19:07:34 / 2026-09-26T19:48:18
+======================
+=== Quota infos ======
+    Path                 Used     SoftQ    HardQ    Gracetime  Filec    FileQ    FiHaQ    FileGrace    
+    /home/hpc               6.0G   104.9G   209.7G        N/A   1,449      500K   1,000K        N/A    
+    /home/woody            11.9G  1000.0G  1500.0G        N/A     119K   5,000K   7,500K        N/A    
+    /home/vault             0.0K  1048.6G  2097.2G        N/A       1      200K     400K        N/A    
+======================
+=== GPU utilization ==
+gpu_name, gpu_bus_id, pid, gpu_utilization [%], mem_utilization [%], max_memory_usage [MiB], time [ms]
+NVIDIA A100-SXM4-40GB, 00000000:81:00.0, 3317304, 50 %, 30 %, 4306 MiB, 2433683 ms

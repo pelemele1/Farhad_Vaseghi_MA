@@ -1,25 +1,13 @@
 # Stage A Final Report — Image-Level Distortion Classification
 
-**Status:** complete, then extended (Session 19+, supervisor item 5): the dataset was rebuilt to
-also include multi-distortion (combo) variants and the model retrained on it — **the current
-canonical result is the combo-dataset retrain** (`data/processed/stage_a`,
-`checkpoints/stage_a_combo/stage_a_head.pt`). The original single-distortion-only result is kept
-below as a historical reference (§4). **Session 20:** a new, separate image-level binary
-"impaired/not impaired" gate head was added on top of this (§7) — trained on the same combo
-dataset, evaluates very well standalone, and (as of Session 20 Round 2) is used as a real
-inference-time filter on Stage B's own tile predictions — see
-[`stage_b_final_report.md`](stage_b_final_report.md). **Session 20, Round 3 (2026-09-26):** the
-dataset was rebuilt again to add balanced low/medium/high **severity** levels per class (§8) —
-supervisor request that distortion samples of each class be evenly split across severity, not
-just present/absent — and all three heads (Stage A, Stage B, impaired-gate) retrained on it.
-**The severity-balanced retrain is now canonical** (`data/processed/stage_a`,
-`checkpoints/stage_a_severity/stage_a_head.pt`); the combo-only checkpoint above is kept for
-comparison. **Date:** 2026-09-18, gate head added 2026-09-25, severity added 2026-09-26.
-
-This is a standalone summary of Part 2, Stage A — distinct from
-[`development_log.md`](development_log.md)'s chronological session-by-session record. See
-the log for the full narrative (decisions, dead ends, exact bugs and fixes); this document
-is the result.
+**Status:** complete. Canonical checkpoint: `checkpoints/stage_a_severity/stage_a_head.pt`,
+trained on `data/processed/stage_a` (14000 images, combo-inclusive, severity-balanced). A
+companion image-level "impaired/not impaired" gate head (§5) is trained alongside it and used
+as a real inference-time filter on Stage B's tile predictions — see
+[`stage_b_final_report.md`](stage_b_final_report.md). For the full session-by-session history
+of how this pipeline got here (design decisions, dead ends, superseded intermediate results),
+see [`development_log.md`](development_log.md); this document reports only the current,
+final result.
 
 ---
 
@@ -34,7 +22,8 @@ cheaply before any heavier investment (Stage B tile classification, Stage C pixe
 segmentation, or unfreezing the backbone).
 
 Concretely, this phase had to answer: **given a single traffic-camera image, can a
-lightweight model reliably say whether the lens shows dirt, water, and/or a scratch?**
+lightweight model reliably say whether the lens shows dirt, water, and/or a scratch — and how
+does that reliability change with how severe the distortion is?**
 
 ---
 
@@ -42,473 +31,188 @@ lightweight model reliably say whether the lens shows dirt, water, and/or a scra
 
 | Step | What | Where |
 |---|---|---|
-| 0 | Scratch-effect method decision | `src/soiling/effects.py` |
 | 1 | MIO-TCD pilot subset (1000 images) | `src/data/mio_tcd.py`, `scripts/sample_mio_tcd.py` |
-| 2 | Distortion synthesis (dirt/water vendored, scratch custom) | `src/soiling/effects.py`, `third_party/physical_lens_soiling/` |
-| 3 | Stage A dataset builder (balanced variants, optionally including multi-distortion combos) | `src/soiling/dataset_builder.py`, `scripts/build_stage_a_dataset.py` |
+| 2 | Distortion synthesis (dirt/water vendored, scratch custom, severity-scaled) | `src/soiling/effects.py`, `third_party/physical_lens_soiling/` |
+| 3 | Dataset builder (balanced kinds: clean/combos/severity levels) | `src/soiling/dataset_builder.py`, `scripts/build_stage_a_dataset.py` |
 | 4 | Model: frozen backbone + distortion head + loss | `src/models/backbone.py`, `distortion_head.py`, `losses.py` |
-| 5 | Training script | `scripts/train_stage_a.py` |
-| 6 | FAU HPC (TinyGPU) setup/submission | `scripts/hpc/`, `docs/hpc_stage_a.md` |
-| 7 | Evaluation (precision/recall/F1/AP/ROC-AUC, scalar or per-class tuned thresholds) | `scripts/evaluate_stage_a.py`, `src/eval/metrics.py`, `src/eval/thresholds.py` |
-| 8 | Qualitative clean-vs-distorted examples | `scripts/visualize_stage_a_class_examples.py` |
-| 9 | Test coverage audit | `tests/` (51 tests) |
+| 5 | Training | `scripts/train_stage_a.py` |
+| 6 | FAU HPC (TinyGPU) submission | `scripts/hpc/`, `docs/hpc_stage_a.md` |
+| 7 | Evaluation (precision/recall/F1/AP/ROC-AUC, tuned thresholds, per-severity breakdown) | `scripts/evaluate_stage_a.py`, `src/eval/` |
+| 8 | Visualization | `scripts/visualize_stage_a_results.py`, `visualize_stage_a_class_examples.py` |
+| 9 | Test coverage | `tests/` |
 
 ---
 
-## 3. Key details per section
+## 3. Key details
 
 ### Distortion synthesis
 
 - **`dirt`** and **`water`** (three mechanisms: thick stain, thin stain, droplet refraction)
-  come directly from `physical_lens_soiling` (github.com/JannLi/physical_lens_soiling),
-  vendored into `third_party/` with the supervisor's explicit permission — not
-  reimplemented, only wired into a consistent interface.
-- **`scratch`** has no equivalent in that repo. After comparing it against two external
-  candidates (FilmDamageSimulator, ScratchSim — neither transferred cleanly to a flat lens
-  scratch), a custom procedural generator was built instead: broken/discontinuous streaks
-  (validated against a real photo of a scratched camera lens) with width that meanders
-  between thin and thick along each streak, rather than a single uniform stroke.
-- All three effects share one interface — `add_dirt(image, seed=None)`,
-  `add_water(image, seed=None)`, `add_scratch(image, seed=None)` — each returning
-  `(distorted_image, mask)`, with severity randomized internally rather than as call-time
-  parameters.
+  come from `physical_lens_soiling` (github.com/JannLi/physical_lens_soiling), vendored into
+  `third_party/` with the supervisor's explicit permission.
+- **`scratch`** has no equivalent in that repo — a custom procedural generator instead:
+  broken/discontinuous streaks (validated against a real photo of a scratched camera lens)
+  with width that meanders between thin and thick along each streak.
+- All three share one interface — `add_dirt(image, seed=None)`, `add_water(...)`,
+  `add_scratch(...)` — each returning `(distorted_image, mask)`.
+- **Severity**: a single, universal post-hoc alpha-blend (`SEVERITY_ALPHA = {"low": 0.3,
+  "medium": 0.6, "high": 1.0}`) applied identically to all three effects, blending the
+  full-strength output back toward the clean image and scaling the mask by the same factor —
+  so a low-severity patch legitimately covers less/lighter ground truth too, not just looks
+  fainter.
 
 ### Dataset
 
-- 1000 MIO-TCD traffic-camera frames (reproducibly sampled from the official
-  `MIO-TCD-Localization` archive, seed=0). **Originally** (Sessions 1-18): exactly 4 variants
-  per source photo — one clean + one each of dirt/water/scratch, never combined on the same
-  image (an explicit design requirement at the time) — 4000 images, exact 25% positive rate
-  per class.
-- **Session 19+ (current, supervisor item 5):** rebuilt with `--include-combos` — 8 variants
-  per source photo (clean, 3 single effects, the 3 pairwise combos, and the full triple) —
-  **8000 images total**, split **6400 / 800 / 800**, exact **50%** positive rate per class
-  (each class appears in exactly 4 of the 8 kinds). Same source photos, same
-  source-photo-level split (no leakage) as before.
-
-**Distribution by kind (exact, by construction):**
-
-| kind | images | % of dataset |
-|---|---|---|
-| clean (no distortion) | 1000 | 12.5% |
-| dirt only | 1000 | 12.5% |
-| water only | 1000 | 12.5% |
-| scratch only | 1000 | 12.5% |
-| dirt + water | 1000 | 12.5% |
-| dirt + scratch | 1000 | 12.5% |
-| water + scratch | 1000 | 12.5% |
-| dirt + water + scratch | 1000 | 12.5% |
-| **total** | **8000** | **100%** |
-
-Each class (dirt/water/scratch) is therefore *present* — alone or combined with another — in
-exactly 4000/8000 images (50%), since it appears in 4 of the 8 kinds above.
+1000 MIO-TCD traffic-camera frames (reproducibly sampled, seed=0), **14000 images total**:
+14 balanced kinds per source photo — clean, 9 single-effect×severity combinations
+(`dirt:low`/`medium`/`high`, same for water/scratch), and 4 multi-distortion combos
+(dirt+water, dirt+scratch, water+scratch, all three). Split by source photo (no leakage),
+**11200 / 1400 / 1400** (train/val/test). Each class is present (alone or combined, any
+severity) in exactly 6000/14000 images (42.9%); combo kinds get a severity per active effect
+too, picked pseudo-randomly (deterministically seeded) rather than balanced, to avoid a
+combinatorial explosion (3 effects × 3 levels for the triple-effect kind).
 
 ### Model
 
-- **Backbone:** Ultralytics YOLOv11-m, COCO-pretrained, entirely frozen (`requires_grad =
-  False` on every parameter, permanently kept in `eval()`). Traced its internal layer graph
-  to confirm the true P5 tap: layer 10 (`C2PSA`) is the last purely-sequential layer before
-  the FPN/PAN neck begins — 512 channels, stride 32.
-- **Head:** GAP → FC(512→64) → ReLU → FC(64→3), returning raw logits (architecture.md §6:
-  "GAP + 2× FC + sigmoid" — the sigmoid is applied by the loss function during training and
-  explicitly at inference, not as a layer in the head, since `BCEWithLogitsLoss` needs
-  logits for numerical stability).
-- **Loss:** `BCEWithLogitsLoss` with `pos_weight` computed directly from the training
-  split's own class frequencies (came out to `[3.0, 3.0, 3.0]`, matching the exact 25%
-  positive rate per class).
-- Only the head's parameters are ever passed to the optimizer.
+- **Backbone:** Ultralytics YOLOv11-m, COCO-pretrained, entirely frozen. Taps P5 (the last
+  purely-sequential layer before the FPN/PAN neck, layer 10/`C2PSA`) — 512 channels, stride 32.
+- **Head:** GAP → FC(512→64) → ReLU → FC(64→3), raw logits (sigmoid applied by the loss /
+  at inference, not as a layer).
+- **Loss:** `BCEWithLogitsLoss` with `pos_weight` from the training split's own class
+  frequencies. Only the head's parameters are ever optimized.
 
-### Decision threshold (per class, no retraining)
+### Decision threshold
 
-The model outputs a probability per class; a **decision threshold** is the cutoff above which
-that probability counts as "yes, this image has this distortion" — precision/recall/F1 depend
-on where that cutoff sits, while AP and ROC-AUC don't (they rank probabilities, not compare
-them against a cutoff). Rather than one shared threshold (0.5) for all three classes, **each
-class gets its own**: swept on the **val** split (never test, which is only evaluated once the
-threshold is fixed) for the highest-F1 cutoff, then applied to **test**. Implemented in
-`src/eval/thresholds.py::tune_per_class_thresholds`, exposed as `evaluate_stage_a.py
---tune-thresholds` (added Session 19+, shared with Stage B's evaluator). The actual tuned
-values are in the `threshold` column of §4's results table below, alongside the plain
-0.5-threshold row for comparison.
-
-### Training
-
-- Ran for real on the user's NHR@FAU TinyGPU allocation (account `iwnt196h`), one RTX3080
-  GPU, 20 epochs, **12 minutes** wall-clock, 2.9 GB / 10 GB peak GPU memory.
-- Train loss: **0.653 → 0.146** (smooth, monotonic). Val loss: **0.431 → 0.205** (noisy
-  epoch-to-epoch but no runaway overfitting).
-- Three real environment bugs were found and fixed only by actually running on the cluster
-  (not reproducible locally) — a `--smoke-test` flag silently forcing CPU even with
-  `--device cuda`, a missing `setuptools` pin (`pythonperlin` needs `pkg_resources`, which
-  newer `setuptools` releases have removed entirely), and an `a100`-partition job that sat
-  pending forever because this account's allocation has no GPU quota there. All three are
-  documented in `development_log.md` Session 10.
+Each class gets its **own** decision threshold rather than one shared 0.5: swept on the val
+split for the highest-F1 cutoff (`src/eval/thresholds.py::tune_per_class_thresholds`, exposed
+as `evaluate_stage_a.py --tune-thresholds`), then applied once to test.
 
 ---
 
 ## 4. Results
 
-### Canonical result (Session 19+): combo dataset retrain
+HPC job `1822358` (a100), 20 epochs, `checkpoints/stage_a_severity/stage_a_head.pt`. Train
+loss converged to 0.317, no overfitting.
 
-![Stage A train/val loss, combo dataset (job 1815700)](images/stage_a_training_curve_combo.jpg)
+![Stage A train/val loss](images/stage_a_training_curve_severity.jpg)
 
-Train loss: 0.391 → 0.128, smooth and monotonic. Val loss: 0.281 → 0.153, noisy but no
-runaway overfitting — same qualitative shape as the original run, just over 20 epochs on 8000
-images instead of 4000.
+**Per-class metrics (held-out test split, 1400 images, tuned per-class thresholds)**
 
-**Per-class metrics (held-out test split, 800 images, 400 positive per class)**
-
-![Stage A per-class precision/recall/F1/AP/ROC-AUC, combo dataset](images/stage_a_test_metrics_combo.jpg)
+![Stage A per-class precision/recall/F1/AP/ROC-AUC](images/stage_a_test_metrics_severity.jpg)
 
 | class | threshold | precision | recall | F1 | AP | ROC-AUC | support |
 |---|---|---|---|---|---|---|---|
-| dirt | 0.5 (default) | 0.928 | 0.968 | 0.947 | 0.990 | 0.990 | 400 |
-| water | 0.5 (default) | 0.975 | 0.965 | 0.970 | 0.993 | 0.991 | 400 |
-| scratch | 0.5 (default) | 0.985 | 0.848 | 0.911 | 0.978 | 0.973 | 400 |
-| dirt | 0.438 (tuned) | 0.909 | 0.970 | 0.938 | 0.990 | 0.990 | 400 |
-| water | 0.814 (tuned) | 0.995 | 0.945 | 0.969 | 0.993 | 0.991 | 400 |
-| scratch | 0.220 (tuned) | 0.929 | 0.912 | 0.921 | 0.978 | 0.973 | 400 |
+| dirt | 0.445 | 0.824 | 0.875 | 0.849 | 0.940 | 0.943 | 600 |
+| water | 0.547 | 0.914 | 0.835 | 0.873 | 0.958 | 0.959 | 600 |
+| scratch | 0.540 | 0.811 | 0.813 | 0.812 | 0.913 | 0.916 | 600 |
 
-![Stage A ROC and precision-recall curves, combo dataset](images/stage_a_roc_pr_curves_combo.jpg)
+![Stage A ROC and precision-recall curves](images/stage_a_roc_pr_curves_severity.jpg)
 
-The curves behind the AP/ROC-AUC numbers above: every class hugs the top-left corner of the ROC
-panel (far from the diagonal "random guessing" line) and stays near the top of the PR panel
-across nearly the whole recall range, confirming these are high scores because the ranking is
-genuinely good, not an artifact of an easy default threshold.
+**Per-severity breakdown** (`evaluate_stage_a.py --by-severity`) — the headline question this
+dataset was built to answer: does the model do worse on subtle distortions than obvious ones?
 
-**Noticeably stronger across the board than the original single-distortion result** (§4
-"Pre-combo result" below) — scratch F1 rose from 0.784 to 0.911-0.921, dirt/water both landed
-above 0.94. The most likely driver isn't the combos themselves teaching anything new about
-*localizing* a distortion (Stage A has no spatial output to begin with) — it's that each class's
-positive rate doubled (25%→50%), giving the small head roughly twice the positive training
-signal per class to learn from. This is a real, useful result either way (more usable at
-default threshold, AUC-ROC in the high 0.97-0.99 range for every class), but the *why* is worth
-being explicit about in case it comes up.
+| class | severity | precision | recall | F1 | AP | ROC-AUC | support |
+|---|---|---|---|---|---|---|---|
+| dirt | low | 0.564 | 0.694 | 0.622 | 0.702 | 0.869 | 209 |
+| dirt | medium | 0.628 | 0.955 | 0.758 | 0.934 | 0.976 | 198 |
+| dirt | high | 0.630 | 0.990 | 0.770 | 0.972 | 0.989 | 193 |
+| water | low | 0.730 | 0.629 | 0.676 | 0.773 | 0.907 | 202 |
+| water | medium | 0.790 | 0.917 | 0.849 | 0.960 | 0.983 | 193 |
+| water | high | 0.807 | 0.961 | 0.878 | 0.975 | 0.989 | 205 |
+| scratch | low | 0.521 | 0.670 | 0.586 | 0.665 | 0.846 | 185 |
+| scratch | medium | 0.611 | 0.825 | 0.702 | 0.850 | 0.929 | 217 |
+| scratch | high | 0.619 | 0.934 | 0.744 | 0.928 | 0.968 | 198 |
+
+**Yes, clearly — a monotonic, physically sensible trend for all three classes.** AP drops
+20-30 points from high to low severity (dirt 0.972→0.702, water 0.975→0.773, scratch
+0.928→0.665). Visualized as a violin+box plot of predicted probability grouped by
+ground-truth severity:
+
+![Stage A predicted probability by ground-truth severity](images/stage_a_probability_by_severity_severity.jpg)
 
 **Predictions on real test images**
 
-![Real Stage A predictions, combo dataset](images/stage_a_sample_predictions_combo.jpg)
-
-Sampled by "first active class" per row (a combo row like dirt+water is bucketed under
-"dirt") — see `scripts/visualize_stage_a_results.py::select_diverse_sample_indices`; the
-combo-specific visual proof (multiple classes lighting up on one image) lives in the Stage B
-report instead, since Stage A has no spatial grid to show it on.
-
-<details>
-<summary>Pre-combo result (original single-distortion-only dataset, superseded — kept for reference)</summary>
-
-### Training curve (real TinyGPU run, job 1791674)
-
-![Stage A train/val loss over 20 epochs on the RTX3080 TinyGPU run](images/stage_a_training_curve.jpg)
-
-Train loss drops smoothly and monotonically throughout (0.653 → 0.146). Val loss drops
-sharply for the first ~7 epochs (0.431 → 0.229), then plateaus around 0.20-0.24 with
-epoch-to-epoch noise rather than continuing to fall or turning upward — the head has
-essentially converged by epoch ~10-14, and the remaining epochs mostly fine-tune within that
-band rather than overfitting. There's no held-out **test**-split curve during training by
-design (standard practice: the test split is only touched once, for the final evaluation
-below, not monitored during training where it could otherwise influence decisions).
-
-### Per-class metrics (held-out test split, 400 images, 100 positive per class)
-
-![Stage A per-class precision/recall/F1/AP on the held-out test split](images/stage_a_test_metrics.jpg)
-
-| class | precision | recall | F1 | AP | support |
-|---|---|---|---|---|---|
-| dirt | 0.943 | 1.000 | 0.971 | 1.000 | 100 |
-| water | 0.884 | 0.990 | 0.934 | 0.996 | 100 |
-| scratch | 0.713 | 0.870 | 0.784 | 0.920 | 100 |
-
-**dirt** and **water** are effectively solved by this frozen-backbone + tiny-head setup.
-**scratch** is measurably weaker — plausible, since it's both the subtlest visual signal of
-the three (thin lines vs. large textured regions) and the one custom-built effect rather
-than the paper's validated code.
-
-### Predictions on real test images
-
-12 test-split images the model never saw during training, 3 per label (clean/dirt/water/
-scratch), each captioned with its ground-truth label, the model's prediction at threshold
-0.5, and the raw per-class probabilities:
-
-![Real Stage A predictions on 12 held-out test images, 3 per class](images/stage_a_sample_predictions.jpg)
-
-All 12 are classified correctly, most with high-confidence probabilities near 0.0 or 1.0.
-
-</details>
+![Stage A sample predictions](images/stage_a_sample_predictions_severity.jpg)
 
 ### Qualitative examples: clean vs. distorted, per class
 
-For each class, one source photo that has both a clean variant and a variant positive for
-exactly that class (same underlying scene, only the synthetic distortion differs) — clean and
-distorted image side by side, each with the model's per-class predicted probability underneath.
-Bars are colored against ground truth at threshold 0.5: green = hit, gray = correct reject,
-orange = false alarm, red = miss.
+For each class, one source photo with both a clean variant and a variant positive for exactly
+that class — clean/distorted side by side, model's predicted probability underneath (green =
+hit, gray = correct reject, orange = false alarm, red = miss, at threshold 0.5):
 
 ![Stage A qualitative example — dirt](images/stage_a_example_dirt.jpg)
 ![Stage A qualitative example — water](images/stage_a_example_water.jpg)
 ![Stage A qualitative example — scratch](images/stage_a_example_scratch.jpg)
 
-All three pairs happen to reuse the same clean source photo (deterministic seed=0 picks the
-first source in the test split that has variants for all three classes) — this is incidental,
-not a limitation of the method. Regenerated against the current combo checkpoint/dataset
-(Session 19+); regenerate with a different `--seed` for different examples:
-
 ```bash
 python scripts/visualize_stage_a_class_examples.py \
-    --checkpoint checkpoints/stage_a_combo/stage_a_head.pt \
-    --data data/processed/stage_a --split test --device cpu \
-    --out-dir docs/images
-```
-
----
-
-## 5. Known limitations
-
-- **The backbone was never fine-tuned.** All learning happened in a ~33k-parameter head on
-  top of frozen COCO features — the strong scores say those generic features already
-  separate these distortion types well, not that the backbone understands lens soiling.
-- **Combos now included, but untested against real multi-distortion photos.** As of Session
-  19+, training does include multi-distortion (combo) variants (dirt+water, dirt+scratch,
-  water+scratch, all three) — the "untested territory" caveat from earlier sessions is
-  resolved for *synthetic* combos. What's still untested is how this generalizes to a real
-  photo with two distortions at once, since all training data remains synthetic (next point).
-- **Purely synthetic distortions.** `physical_lens_soiling`'s renders (and this project's
-  own scratch generator) are a physics-inspired approximation, not real camera captures.
-  There's an unmeasured domain gap between this and an actual soiled lens.
-- **Small pilot dataset.** 1000 source photos, 14000 total training images (Session 20, Round
-  3) — enough to validate the pipeline, well short of the scale a production model would use.
-- **Low-severity distortions are measurably harder to detect than high** (§8) — AP drops
-  20-30 points from high to low severity across all three classes. Not a limitation of the
-  balancing itself (that's the point of measuring it), but a real, quantified gap in the
-  model's current sensitivity to subtle distortions.
-
----
-
-## 6. Reproducing this report
-
-```bash
-# canonical (severity-balanced dataset, Session 20 Round 3)
-python scripts/build_stage_a_dataset.py --source data/raw/mio_tcd/images \
-    --out data/processed/stage_a --variants 14 --include-combos --include-severity
-python scripts/evaluate_stage_a.py --checkpoint checkpoints/stage_a_severity/stage_a_head.pt \
-    --data data/processed/stage_a --split test --tune-thresholds --by-severity
-python scripts/visualize_stage_a_results.py --checkpoint checkpoints/stage_a_severity/stage_a_head.pt \
-    --data data/processed/stage_a --split test --log-file stage_a_severity_1822358.out --tag _severity
-python scripts/visualize_stage_a_class_examples.py --checkpoint checkpoints/stage_a_severity/stage_a_head.pt \
+    --checkpoint checkpoints/stage_a_severity/stage_a_head.pt \
     --data data/processed/stage_a --split test --device cpu --out-dir docs/images
-
-# pre-severity combo result (superseded, kept for reference)
-python scripts/evaluate_stage_a.py --checkpoint checkpoints/stage_a_combo/stage_a_head.pt \
-    --data data/processed/stage_a --split test --tune-thresholds   # NOTE: data/processed/stage_a
-    # was replaced in place by the severity rebuild -- this checkpoint can no longer be
-    # re-evaluated against its original dataset locally; the numbers in §4 are from before the
-    # rebuild.
-
-# pre-combo result (original single-distortion-only dataset, superseded, kept for reference)
-python scripts/evaluate_stage_a.py --checkpoint checkpoints/stage_a/stage_a_head.pt \
-    --data data/processed/stage_a --split test   # NOTE: same caveat, an even earlier rebuild.
 ```
-
-`stage_a_1791674.out` (original run), `stage_a_combo_1815700.out` (combo-dataset run), and
-`stage_a_severity_1822358.out` (severity-dataset run, current canonical) are the raw stdout of
-the actual TinyGPU training jobs; `eval_a_combo_1815727.out` is the combo checkpoint's
-evaluation job output; `build_a_severity_1822266.out` is the severity dataset rebuild. All exist
-locally and (job logs only, not the now-replaced dataset) on the FAU HPC `$WORK` — see
-`docs/hpc_stage_a.md` for cluster paths.
 
 ---
 
-## 7. Impaired/not-impaired gate (Session 20)
+## 5. Impaired/not-impaired gate
 
-Supervisor feedback item 3: the pipeline should first be able to say **whether an image is
-impaired at all**, as a genuine binary decision, separate from *which* class(es) are present.
-This is distinct from Stage A's own 3-class head above (which already implies "impaired" as
-"any of the 3 probabilities is high") — the gate is a dedicated 2-class classifier, trained
-with its own loss, whose only job is that one yes/no call.
+Supervisor feedback: the pipeline should first be able to say **whether an image is impaired
+at all**, as a genuine binary decision, separate from *which* class(es) are present.
 
-### Architecture
+**Architecture:** `ImpairedGateHead` (`src/models/distortion_head.py`) — global average pooling
++ 2×FC with 2 mutually-exclusive logits (`not_impaired`, `impaired`), trained with **softmax +
+class-weighted `nn.CrossEntropyLoss`** rather than sigmoid/BCE. Label (`impaired = 1` if any
+of dirt/water/scratch is 1) is derived on the fly — no dataset rebuild needed. Unlike the
+Stage A head above (which follows `architecture.md`'s "GAP over P5" literally), the canonical
+gate pools **four backbone depths** (stride 4/8/16 and P5) and concatenates them, so it also
+sees the finer layers where faint texture changes survive. It is trained at 512 px on the
+Stage B/C dataset's images — the resolution it is applied at — from the same 1000 source
+photos and splits.
 
-`ImpairedGateHead` (`src/models/distortion_head.py`): same GAP + 2×FC shape as
-`StageADistortionHead` above, but 2 output logits (`not_impaired`, `impaired`) instead of 3,
-and kept as its own class specifically so its different loss family is visible at the type
-level — everywhere else in this project uses sigmoid/BCE-family losses on independent
-per-class outputs; this head's 2 logits are mutually exclusive, so it uses **softmax +
-`nn.CrossEntropyLoss`** instead (supervisor item 2's Cross-Entropy request). Label
-(`impaired = 1` if any of dirt/water/scratch is 1, else 0) is derived on the fly from the
-existing 3-class labels (`src/data/stage_a_dataset.py::ImpairedGateDataset`) — no dataset
-rebuild or new `metadata.csv` column needed.
+**Training:** HPC job `1823027`, 20 epochs, best-validation epoch kept —
+`checkpoints/impaired_gate_multiscale/impaired_gate_head.pt`.
 
-### Training
-
-Trained on the same combo dataset as Stage A's canonical result (`data/processed/stage_a`,
-8000 images), same 20-epoch/lr-1e-3 recipe. HPC job `1821693`: train_loss 0.303 → 0.136,
-val_loss converged to ~0.15-0.18 (noisy but stable), 23:52 elapsed.
-`checkpoints/impaired_gate/impaired_gate_head.pt`.
-
-### Results (held-out test split, 800 images, 700 impaired / 100 clean)
-
-| class | threshold | precision | recall | F1 | AP | ROC-AUC | support |
-|---|---|---|---|---|---|---|---|
-| impaired | 0.289 (tuned) | 0.975 | 0.966 | 0.971 | 0.998 | 0.983 | 700 |
-
-A near-solved binary problem on synthetic data — every metric above 0.96. This is expected:
-distinguishing "any distortion at all" from "clean" is a much coarser signal than telling
-dirt/water/scratch apart, and Stage A's own per-class results (§4) already show the underlying
-3-class problem is close to solved too.
-
-### Use as a real inference-time gate (Session 20, Round 2)
-
-Originally this head was wired as reporting-only (annotates Stage B's results figure, never
-touches its predictions) — a deliberate choice to avoid coupling the two heads' error rates.
-That decision was reversed after reviewing the new 5-column Stage B figure (see
-[`stage_b_final_report.md`](stage_b_final_report.md)): clean images were still visibly
-predicting non-trivial distortion probability. The gate is now used as a real filter —
-`src/eval/gate.py::apply_gate` zeroes Stage B's tile predictions for any image this head calls
-"not impaired" — with the tradeoff spelled out there (a gate false negative now silently
-suppresses genuine Stage B detections too).
-
-### Retrained on the severity-balanced dataset (Session 20, Round 3)
-
-Same recipe, retrained on the severity-balanced `data/processed/stage_a` (§8) — HPC job
-`1822360`, `checkpoints/impaired_gate_severity/impaired_gate_head.pt`. Train_loss 0.317 →
-final; val_loss converged similarly to the Round 2 run.
+**Choosing the threshold.** The gate is a filter: it should drop clean images without
+discarding real distortions. Best-F1 is the wrong criterion here (with ~93% impaired images it
+picks a near-zero threshold that lets almost every clean image through), so the threshold is
+the highest one that keeps **≥95% of impaired val images**
+(`evaluate_impaired_gate.py --recall-target 0.95`): **0.140**.
 
 **Results (held-out test split, 1400 images, 1300 impaired / 100 clean)**
 
-| class | threshold | precision | recall | F1 | AP | ROC-AUC | support |
-|---|---|---|---|---|---|---|---|
-| impaired | 0.037 (tuned) | 0.934 | 0.996 | 0.964 | 0.994 | 0.927 | 1300 |
+| gate | ROC-AUC | AP | threshold | impaired kept | clean passed |
+|---|---|---|---|---|---|
+| P5 only (earlier version, 640 px) | 0.927 | 0.994 | 0.159 | 94.6% | 48% |
+| **multi-scale (canonical, 512 px)** | **0.956** | **0.997** | **0.140** | **95.3%** | **31%** |
 
-Still a strong result (F1=0.964, AP=0.994), but **ROC-AUC drops noticeably (0.983→0.927)** —
-the same severity-driven effect seen throughout this round: the dataset now includes many
-low-severity images, which are inherently harder to call "impaired" with full confidence, so
-the gate's *ranking* quality (what ROC-AUC measures) takes a real hit even though its
-default-cutoff F1 stays high. Consistent with §8's finding that low-severity samples are harder
-across the board, not specific to this head. `checkpoints/impaired_gate_severity/
-impaired_gate_head.pt` is now the canonical gate checkpoint, used with `checkpoints/
-stage_b_severity/stage_b_head.pt` (see [`stage_b_final_report.md`](stage_b_final_report.md)
-§4c).
+Separating "any distortion" from "clean" is hard mainly because of faint, low-severity images;
+the finer layers cut the clean images that slip through from about half to under a third.
 
-### Reproduction
+**Used as a real inference-time gate:** `src/eval/gate.py::apply_gate` zeroes Stage B/C
+predictions for any image this head calls "not impaired" — see
+[`stage_b_final_report.md`](stage_b_final_report.md) for the measured effect and the tradeoff
+(a gate false negative silently suppresses a genuine detection too).
 
 ```bash
-# canonical (severity-balanced dataset, Session 20 Round 3)
-python scripts/train_impaired_gate.py --data data/processed/stage_a --epochs 20 --device cuda \
-    --out checkpoints/impaired_gate_severity
-python scripts/evaluate_impaired_gate.py --checkpoint checkpoints/impaired_gate_severity/impaired_gate_head.pt \
-    --data data/processed/stage_a --split test --tune-thresholds
-
-# pre-severity result (superseded, kept for reference)
-python scripts/evaluate_impaired_gate.py --checkpoint checkpoints/impaired_gate/impaired_gate_head.pt \
-    --data data/processed/stage_a --split test --tune-thresholds   # NOTE: data/processed/stage_a
-    # was replaced in place by the severity rebuild -- this checkpoint can no longer be
-    # re-evaluated against its original dataset locally.
+python scripts/train_impaired_gate.py --data data/processed/stage_b_scratch15 --arch multiscale     --img-size 512 --epochs 20 --device cuda --out checkpoints/impaired_gate_multiscale
+python scripts/evaluate_impaired_gate.py --checkpoint checkpoints/impaired_gate_multiscale/impaired_gate_head.pt     --data data/processed/stage_b_scratch15 --split test --tune-thresholds --recall-target 0.95
 ```
-
-`impaired_gate_1821693.out` (Round 2 run) and `impaired_gate_severity_1822360.out` (Round 3
-run, current canonical) are the raw stdout of the actual TinyGPU training jobs.
 
 ---
 
-## 8. Balanced severity levels (Session 20, Round 3)
+## 6. Known limitations
 
-Supervisor feedback: the dataset must have **equal representation of distortion severity**
-within each class — e.g. of the images distorted by dirt, roughly a third should be low
-severity, a third medium, a third high — not just an equal count of present/absent per class
-(already true since Session 19+). Applies to **all three classes** (dirt, water, scratch).
+- **The backbone was never fine-tuned.** All learning happened in a ~33k-parameter head on
+  top of frozen COCO features.
+- **Low-severity distortions are measurably harder to detect than high** (§4) — AP drops
+  20-30 points from high to low severity across all three classes. A real, quantified gap in
+  the model's sensitivity to subtle distortions, not a limitation of the balancing itself.
+- **Purely synthetic distortions**, untested against real multi-distortion photos — an
+  unmeasured domain gap between this and an actual soiled lens remains.
+- **Small pilot dataset.** 1000 source photos, 14000 total training images — enough to
+  validate the pipeline, well short of production scale.
 
-### Mechanism
+---
 
-A single, universal post-hoc alpha-blend, applied identically to all three effects (including
-scratch — its mask already encodes per-streak brightness, so scaling it further by a severity
-factor composes correctly with no special-casing):
-
-```python
-SEVERITY_ALPHA = {"low": 0.3, "medium": 0.6, "high": 1.0}
-
-def apply_severity(image, out, mask, severity):
-    alpha = SEVERITY_ALPHA[severity]
-    if alpha >= 1.0:
-        return out, mask          # "high" == the original, unparametrized full-strength output
-    blended = image.astype(np.float32) + alpha * (out.astype(np.float32) - image.astype(np.float32))
-    return np.clip(blended, 0, 255).astype(np.uint8), mask * alpha
-```
-
-Scaling the mask by the same `alpha` means a low-severity patch legitimately covers
-fewer/lighter Stage B tiles too, not just looks fainter in the image while reporting the same
-ground-truth coverage. Exact 1/3-1/3-1/3 balance is guaranteed for **single-effect kinds only**
-(dirt-only, water-only, scratch-only); combo kinds (dirt+water, etc.) still get a severity per
-active effect, but picked pseudo-randomly (deterministically seeded via
-`derive_seed(base_seed, source_id, variant_idx, effect_name, "severity")`), avoiding a
-combinatorial explosion (3 effects × 3 levels = 27 combinations for the triple-effect kind
-alone).
-
-### Dataset
-
-Rebuilt on HPC (`scripts/hpc/build_stage_a_severity.slurm`, job `1822266`/`1822358` — see
-below): **14000 images** (up from 8000), `--variants 14 --include-combos --include-severity`.
-Severity landed close to the exact 1/3-1/3-1/3 target for each class's single-effect kind:
-
-| class | low | medium | high |
-|---|---|---|---|
-| dirt | 1975 | 1982 | 2043 |
-| water | 2011 | 1989 | 2000 |
-| scratch | 2006 | 1997 | 1997 |
-
-(Small deviations from an exact 2000/2000/2000 come from combo kinds' pseudo-random severity
-draws landing unevenly across levels — expected, since only single-effect kinds are exactly
-balanced by construction.)
-
-### Retrain and results
-
-Same canonical recipe as the combo-dataset result above (20 epochs, `BCEWithLogitsLoss`,
-frozen backbone) — HPC job `1822358` (raced onto `a100` after `rtx3080` was fully allocated),
-`checkpoints/stage_a_severity/stage_a_head.pt`. Train loss 0.317 final; converged cleanly, no
-overfitting.
-
-![Stage A train/val loss, severity dataset (job 1822358)](images/stage_a_training_curve_severity.jpg)
-
-**Per-class metrics (held-out test split, 1400 images, tuned per-class thresholds)**
-
-![Stage A per-class precision/recall/F1/AP/ROC-AUC, severity dataset](images/stage_a_test_metrics_severity.jpg)
-
-| class | threshold | precision | recall | F1 | AP | ROC-AUC | support |
-|---|---|---|---|---|---|---|---|
-| dirt | 0.461 | 0.832 | 0.868 | 0.850 | 0.940 | 0.943 | 600 |
-| water | 0.547 | 0.914 | 0.835 | 0.873 | 0.958 | 0.959 | 600 |
-| scratch | 0.548 | 0.816 | 0.812 | 0.814 | 0.913 | 0.916 | 600 |
-
-**Per-severity breakdown** (`evaluate_stage_a.py --by-severity`, `src/eval/severity.py`) — this
-is the headline result the rebuild was actually for: does the model do worse on subtle
-distortions than obvious ones?
-
-| class | severity | precision | recall | F1 | AP | ROC-AUC | support |
-|---|---|---|---|---|---|---|---|
-| dirt | low | 0.573 | 0.675 | 0.620 | 0.702 | 0.869 | 209 |
-| dirt | medium | 0.643 | 0.955 | 0.768 | 0.934 | 0.976 | 198 |
-| dirt | high | 0.645 | 0.990 | 0.781 | 0.972 | 0.989 | 193 |
-| water | low | 0.730 | 0.629 | 0.676 | 0.773 | 0.907 | 202 |
-| water | medium | 0.790 | 0.917 | 0.849 | 0.960 | 0.983 | 193 |
-| water | high | 0.807 | 0.961 | 0.878 | 0.975 | 0.989 | 205 |
-| scratch | low | 0.530 | 0.670 | 0.592 | 0.666 | 0.846 | 185 |
-| scratch | medium | 0.618 | 0.820 | 0.705 | 0.850 | 0.929 | 217 |
-| scratch | high | 0.627 | 0.934 | 0.751 | 0.928 | 0.969 | 198 |
-
-**Yes, clearly — a monotonic, physically sensible trend for all three classes.** AP drops
-20-30 points from high to low severity (dirt 0.972→0.702, water 0.975→0.773, scratch
-0.928→0.666) — subtle distortions are genuinely harder to detect, not an artifact of how the
-dataset was built. Visualized directly as a violin+box plot of predicted probability grouped by
-ground-truth severity (`scripts/visualize_stage_a_results.py::plot_probability_by_severity`):
-
-![Stage A predicted probability by ground-truth severity](images/stage_a_probability_by_severity_severity.jpg)
-
-Each class's distribution shifts up and tightens as severity increases — visible confirmation
-of the same trend the metrics table shows numerically.
-
-![Stage A ROC and precision-recall curves, severity dataset](images/stage_a_roc_pr_curves_severity.jpg)
-![Stage A sample predictions, severity dataset](images/stage_a_sample_predictions_severity.jpg)
-
-### Reproduction
+## 7. Reproducing this report
 
 ```bash
 python scripts/build_stage_a_dataset.py --source data/raw/mio_tcd/images \
@@ -520,5 +224,9 @@ python scripts/visualize_stage_a_results.py --checkpoint checkpoints/stage_a_sev
     --tag _severity --out-dir docs/images
 ```
 
-`build_a_severity_1822266.out` (dataset rebuild) and `stage_a_severity_1822358.out` (training)
-are the raw stdout of the actual TinyGPU jobs.
+`stage_a_severity_1822358.out` (training), `build_a_severity_1822266.out` (dataset rebuild)
+and `eval_stage_a_1823040.out` (the evaluation above, run on a GPU) are the raw stdout of the
+actual TinyGPU jobs; both exist locally and (job logs only) on the
+FAU HPC `$WORK` — see `docs/hpc_stage_a.md` for cluster paths. Earlier intermediate datasets/
+checkpoints (pre-combo, combo-only pre-severity) are superseded and no longer on disk — their
+numbers are preserved in `docs/development_log.md`, not reproducible locally anymore.

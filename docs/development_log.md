@@ -1881,3 +1881,211 @@ up same-session. `checkpoints/stage_a_severity/stage_a_head.pt`,
 `checkpoints/stage_b_severity/stage_b_head.pt`, and
 `checkpoints/impaired_gate_severity/impaired_gate_head.pt` are the new
 canonical trio; the Round 2 checkpoints are kept for comparison.
+
+---
+
+## Session 21 — Stage C: pixel-level segmentation (v1)
+
+**Date:** 2026-09-26
+
+Third distortion-head stage from `architecture.md` §2 ("Small FCN/UNet-style decoder ->
+per-pixel classes", loss "Dice + BCE" per §4). Planned before implementation
+(`C:\Users\farha\.claude\plans\majestic-conjuring-shell.md`), then built in the same
+build -> train -> evaluate -> visualize shape as Stages A/B.
+
+### Phase 1 -- Pixel masks from the existing Stage B build
+
+`add_dirt`/`add_water`/`add_scratch` already return the exact per-pixel mask behind each
+distorted image, and `build_stage_b_dataset` already computed it -- it just downsampled it to
+the 16x16 tile grid and discarded it. New opt-in `save_pixel_masks=True`
+(`--save-pixel-masks`) writes it as `masks/{source_id}_vNN.png` (3 channels = dirt/water/
+scratch, uint8 = round(mask * 255), same native 720x480 as the image) and records
+`has_pixel_masks` in `stage_b_meta.json`. Reusing Stage B's directory instead of a parallel
+Stage C dataset means both stages train/evaluate on exactly the same samples and needed only
+one more HPC synthesis pass (job `1822558`, `data/processed/stage_b_scratch15` rebuilt in
+place). Masks are kept continuous; the decision threshold is chosen at evaluation time, as
+in the other stages.
+
+A first test compared the saved PNG against a *recomputed* mask and failed -- `add_dirt`/
+`add_water` are only label-reproducible across separate calls (pythonperlin reseeds
+`np.random` internally, see `tile_labels.py`). Replaced by a consistency check between the
+saved PNG and the saved tile labels, which come from the same in-call mask.
+
+### Phase 2 -- Dataset class, head, loss
+
+`src/data/stage_c_dataset.py::StageCDataset` (image + 3-channel mask, both resized to
+`img_size`; the mask is read with `IMREAD_UNCHANGED`, never colour-converted).
+`StageCDistortionHead`: a plain FCN on P5 -- 5 x (bilinear 2x upsample -> 3x3 conv -> ReLU),
+32x total back to input resolution, 1x1 conv to 3 logits. `DiceBCELoss` (bce_weight 0.5,
+soft Dice with smooth=1).
+
+### Phase 3-4 -- Training, evaluation, visualization scripts
+
+`scripts/train_stage_c.py` (reuses `train_stage_a.run_epoch`), `scripts/evaluate_stage_c.py`,
+`scripts/visualize_stage_c_results.py`. Evaluation pools both the probability map and the
+mask to a 64x64 grid (`pool_to_grid`, area average) before the shared
+`compute_metrics`/threshold tuning -- the raw 512x512 pixels of a 1400-image split are ~367M
+rows, far too many for sklearn's sort-based AP/ROC-AUC. Training still supervises full
+resolution.
+
+### Phase 5 -- v1 training (HPC)
+
+Job `1822831` (rtx3080), 20 epochs, ~270 s/epoch at ~35-44% GPU utilization (single-threaded
+image loading), val loss 0.440 -> 0.424, flat after a few epochs. The cluster was fully
+allocated for ~9 h before it started. Its evaluation is recorded in Session 22 (Phase 6),
+since by then the audit had changed both the ground truth and the evaluation code.
+
+---
+
+## Session 22 — Full audit: ground-truth fix, multi-scale heads, gate fixes
+
+**Date:** 2026-09-26
+
+User request: check everything implemented so far for anything wrong or illogical, fix it,
+and improve the results where possible. The user also stated an explicit goal: **the system
+must detect faint (low-severity) distortions too**.
+
+### Phase 1 -- Findings
+
+1. **Ground truth shrank with severity (the main bug).** `apply_effect_combo_with_masks`
+   stored `mask * alpha` (the Session 20 Round 3 design). Distortion regions have the same
+   size at every severity; only their visibility changes. Scaled masks cleared thresholds
+   calibrated on full-strength masks (dirt 0.20 / water 0.25 / scratch 0.015) in far fewer
+   tiles: mean positive tiles per image, low vs. high severity -- dirt 58 vs 122, water 35 vs
+   138, scratch 7.4 vs 15.3. Most of a faint patch was labeled clean, contradicting Stage A's
+   image label (positive at any severity). For Stage C, low-severity pixels (at most 0.3) could
+   never reach the 0.5 evaluation cutoff at all.
+2. **Gate threshold and resolution mismatch.** The gate's tuned (best-F1) threshold was
+   0.037, but Stage B/C applied it at 0.5, and at 512 px although it was trained at 640 px.
+   Measured on the Stage A test split: at 0.5 the gate kept only 81% of impaired images (58%
+   of low-severity ones); at 512 px its ROC-AUC fell 0.927 -> 0.914. This is what cost
+   Stage B's scratch class its gated ROC-AUC (0.909 -> 0.793).
+3. **Stage C evaluation memory.** `collect_predictions` held full-resolution probabilities
+   and masks (~4.4 GB each for 1400 images), for both val and test -- more than the 24 GB
+   local machine.
+4. **Figures vs. tables.** The visualize scripts drew metric bar charts at a fixed 0.5
+   threshold while the reports' tables used tuned thresholds. `stage_b_final_report.md` still
+   quoted numbers from the older `stage_b_recal` checkpoint (clean-FP 6-7% vs 19-29%, scratch
+   0.955 -> 0.915). `stage_a_final_report.md` referenced the gate as §6 (it is §5).
+5. **Stage C evaluation cutoff.** A single 0.5 cell cutoff counted only 6% of scratch-touched
+   64x64 cells (thin lines rarely cover half of an 8x8-pixel cell).
+6. **Per-sample Dice.** Soft Dice summed per (sample, class); ~57% of those pairs have an
+   empty target, where Dice stays ~1 unless every pixel is ~0 -- a push toward
+   under-prediction.
+7. **Training loop.** Saved the last epoch, not the best-validation one; DataLoader had no
+   workers (GPU ~35% busy); no seed; Python stdout buffered, so HPC logs stayed empty for
+   hours.
+8. Smaller: gate verdicts in figure titles hard-coded 0.5; stale docstrings; unused imports.
+
+### Phase 2 -- Fixes
+
+- **Severity-independent ground truth.** `apply_effect_combo_with_masks` now returns the
+  full-strength mask; severity only changes the image. `stage_b_meta.json` records
+  `severity_independent_gt`. New `scripts/make_gt_severity_independent.py` converts an
+  existing dataset in place, without re-synthesis: each saved mask channel is divided by its
+  row's own alpha (uint8 rounding error at most ~1.7/255) and `tile_labels.npy` is
+  re-rasterized. Positive tiles: dirt 550602 -> 726207, water 550304 -> 825126, scratch
+  68778 -> 92466; per-severity means are now equal (e.g. water 137 / 138 / 138), and the
+  high-severity counts are unchanged, confirming the conversion. Old labels backed up next to
+  the dataset (`*_severity_scaled.*.bak`). On HPC the conversion ran on a copy,
+  `data/processed/stage_b_gtfix` (images symlinked), so the running v1 job kept its inputs.
+- **Gate.** `src/eval/gate.py::load_gate` reads the gate's training resolution from the
+  checkpoint (default 640 for older ones), and `collect_gate_probs` resizes inputs to it.
+  New `threshold_for_recall` + `evaluate_impaired_gate.py --recall-target`: the gate
+  threshold is the highest one keeping >= 95% of impaired val images -- best-F1 is the wrong
+  criterion for a filter over ~93% positives (it lands near 0 and lets 92% of clean images
+  through).
+- **Stage C evaluation** pools each batch on the fly (`collect_pooled_predictions`); the
+  visualizer computes full-resolution maps only for the report's handful of samples. The
+  default cell cutoff is now the dataset's own per-class tile thresholds -- the same
+  "distorted" criterion as a Stage B tile, at 4x finer resolution.
+- **Batch-level Dice** (sums over batch + space per class).
+- **Training loop** (`train_stage_a.py::fit`/`make_loaders`, used by all four training
+  scripts): best-val checkpoint (with epoch/val_loss in it), `--num-workers` (default 4),
+  `--seed`, flushed output, `python3 -u` in new slurm scripts.
+- **Figures** get `--tune-thresholds` (Stage A/B/C) so charts match the tables.
+- New tests: migration, severity-independent GT, gate resize/load/recall threshold, batch
+  Dice, multi-scale backbone/heads, pooled collection, arch round-trips.
+
+### Phase 3 -- Stage C v2: U-Net-style decoder
+
+`FrozenYOLOBackbone(return_layers=...)` returns several layers at once (`STRIDE_TAPS`:
+stride 4 = layer 2, 256 ch; stride 8 = layer 4; stride 16 = layer 6; stride 32 = layer 10,
+512 ch each). `StageCUNetHead` -- 1x1 laterals to 64 ch, coarse-to-fine upsample + concat +
+3x3 conv-BN-ReLU, logits at stride 4, bilinear 4x to input size -- is the "UNet-style"
+option `architecture.md` §2 names. `train_stage_c.py --arch unet|fcn`; checkpoints store
+`arch` (older ones load as `fcn`). Job `1822980` (a100), 25 epochs, ~50 s/epoch (vs ~270 s
+for v1: data-loader workers plus no full-resolution convolutions).
+
+### Phase 4 -- Stage B retrain on the corrected labels, and a faint-weighted variant
+
+Both with the canonical focal α=0.75, γ=2.0, 40 epochs, P5 1x1-conv head. To compare fairly,
+the old `stage_b_severity` checkpoint was also scored against the corrected labels
+(dirt / water / scratch):
+
+| checkpoint | overall AP | low-severity AP |
+|---|---|---|
+| `stage_b_severity` (old labels) | 0.679 / 0.641 / 0.397 | 0.261 / 0.206 / 0.191 |
+| `stage_b_gtfix` (job `1822979`) | 0.680 / 0.646 / 0.391 | 0.272 / 0.240 / 0.199 |
+| `stage_b_faint` (job `1822993`, `--low-severity-weight 3.0`) | 0.674 / 0.637 / 0.386 | 0.267 / 0.234 / 0.202 |
+
+Two findings. (a) Most of the old report's "18x" low-vs-high gap was an artifact of the
+scaled labels: scored correctly, the *old* model's faint water AP is 0.206, not 0.043.
+(b) Neither the corrected labels nor oversampling faint images (new `--low-severity-weight`,
+`WeightedRandomSampler`) moved faint detection much: a 1x1 conv on P5 is the bottleneck.
+The faint-weighted variant was dropped.
+
+### Phase 5 -- Stage B v2: multi-scale tile head
+
+`StageBMultiScaleHead` (`--arch multiscale`): the same four backbone taps, each reduced to
+64 ch and area-pooled to the 16x16 P5 grid, concatenated, 3x3 conv-BN-ReLU, 1x1 to 3 logits
+-- still exactly one output per tile, as `architecture.md` §2 describes. Job `1823015`
+(a100), best epoch 23/40 (val loss 0.0160 vs 0.0344 for the P5 head). Test split, ungated:
+
+| | overall AP | low-severity AP | high-severity AP |
+|---|---|---|---|
+| P5 head (`stage_b_gtfix`) | 0.680 / 0.646 / 0.391 | 0.272 / 0.240 / 0.199 | 0.786 / 0.757 / 0.439 |
+| multi-scale (`stage_b_multiscale`) | **0.934 / 0.916 / 0.820** | **0.808 / 0.758 / 0.651** | 0.968 / 0.956 / 0.891 |
+
+Faint-distortion AP roughly triples. New canonical Stage B.
+
+### Phase 6 -- Stage C results
+
+Same test split, 64x64 pooled cells, per-class cell cutoffs 0.20/0.25/0.015, tuned
+thresholds, ungated (dirt / water / scratch):
+
+| | overall AP | low-severity AP | high-severity AP |
+|---|---|---|---|
+| v1 FCN on P5 (job `1822831`) | 0.749 / 0.738 / 0.169 | 0.368 / 0.306 / 0.075 | 0.846 / 0.880 / 0.212 |
+| v2 U-Net, 25 epochs (job `1822980`) | 0.898 / 0.878 / 0.756 | 0.728 / 0.664 / 0.544 | 0.917 / 0.906 / 0.835 |
+
+(v1 was trained on the old scaled masks with per-sample Dice, so it is a baseline for the
+whole v2 package rather than for the decoder alone.) v2's best epoch was its last, so it was
+retrained for 50 epochs (Phase 8).
+
+### Phase 7 -- Impaired gate v2: multi-scale
+
+With the gate at its val-tuned 95%-recall threshold (0.159), the P5 gate still let 48% of
+clean test images through. `ImpairedGateHead` now also accepts a list of feature maps (GAP of
+each, concatenated); `train_impaired_gate.py --arch multiscale`, trained at 512 px on the
+Stage B/C dataset's own images (job `1823027`, 20 epochs; the v1 gate was trained at 640 px
+on `data/processed/stage_a`, same source photos and splits). `load_gate` refuses to pair a
+multi-scale gate with a P5-only backbone.
+
+| gate | ROC-AUC | AP | threshold for >= 95% recall | impaired kept | clean passed |
+|---|---|---|---|---|---|
+| v1 P5 (640 px) | 0.927 | 0.994 | 0.159 | 94.6% | 48% |
+| v2 multi-scale (512 px) | **0.956** | **0.997** | 0.140 | 95.3% | **31%** |
+
+Stage B multi-scale with the v2 gate at 0.140: clean-image false positives (any tile of a
+clean image above threshold) 26/46/27% ungated -> **8/14/10%** gated (14/24/19% with the v1
+gate); gated AP 0.932 / 0.917 / 0.782.
+
+### Phase 8 -- Stage C v2, 50 epochs
+
+Job `1823030` (a100, 50 epochs, best epoch 33, val loss 0.2653 vs 0.2667 at 25 epochs).
+Ungated AP dirt / water / scratch 0.905 / 0.878 / 0.744 (25 epochs: 0.898 / 0.878 / 0.756);
+low-severity AP 0.744 / 0.679 / 0.519 (25 epochs: 0.728 / 0.664 / 0.544) -- a tie (mean
+low-severity AP 0.647 vs 0.645), slightly better on dirt/water and worse on scratch, the
+hardest class. The 25-epoch `checkpoints/stage_c_unet` stays canonical;
+`checkpoints/stage_c_unet50` is kept for comparison.

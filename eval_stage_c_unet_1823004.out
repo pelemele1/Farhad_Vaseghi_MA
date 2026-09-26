@@ -1,0 +1,78 @@
+### Starting TaskPrologue of job 1823004 on tg095 at Sat Sep 26 06:32:31 PM CEST 2026
+Running on cores 96-127 with governor ondemand
+Sat Sep 26 18:32:31 2026       
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 610.57.04              KMD Version: 610.57.04     CUDA UMD Version: 13.3     |
++-----------------------------------------+------------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  NVIDIA A100-SXM4-40GB          On  |   00000000:C1:00.0 Off |                    0 |
+| N/A   35C    P0             51W /  400W |       0MiB /  40960MiB |      0%      Default |
+|                                         |                        |             Disabled |
++-----------------------------------------+------------------------+----------------------+
+
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
+|        ID   ID                                                               Usage      |
+|=========================================================================================|
+|  No running processes found                                                             |
++-----------------------------------------------------------------------------------------+
+### Finished TaskPrologue
+
+checkpoint=checkpoints/stage_c_unet/stage_c_head.pt data=data/processed/stage_b_gtfix gate_threshold=0.159
+/home/woody/iwnt/iwnt196h/software/private/conda/envs/stage_a/lib/python3.11/site-packages/pythonperlin/__init__.py:4: UserWarning: pkg_resources is deprecated as an API. See https://setuptools.pypa.io/en/latest/pkg_resources.html. The pkg_resources package is slated for removal as early as 2025-11-30. Refrain from using this package or pin to Setuptools<81.
+  from pkg_resources import get_distribution
+Tuned per-class thresholds (best-F1 on val split):
+  dirt      0.121
+  water     0.260
+  scratch   0.002
+ground-truth cell threshold: {'dirt': 0.2, 'water': 0.25, 'scratch': 0.015}
+[ungated] Evaluated 1400 images (5734400 tiles) from split='test', threshold=tuned per-class
+class      threshold precision    recall        f1        AP   ROC-AUC   support
+dirt           0.121     0.849     0.794     0.821     0.898     0.961   1137437
+water          0.260     0.771     0.831     0.800     0.878     0.954   1286477
+scratch        0.002     0.866     0.702     0.775     0.756     0.947     53245
+
+[gated] Evaluated 1400 images (5734400 tiles) from split='test', threshold=tuned per-class
+class      threshold precision    recall        f1        AP   ROC-AUC   support
+dirt           0.121     0.857     0.784     0.819     0.892     0.950   1137437
+water          0.260     0.779     0.823     0.800     0.875     0.946   1286477
+scratch        0.002     0.869     0.677     0.761     0.727     0.902     53245
+
+Per-severity breakdown (ungated, pooled to 64x64):
+class     severity   threshold precision    recall        f1        AP   ROC-AUC   support
+dirt      low            0.121     0.718     0.621     0.666     0.728     0.933    397373
+dirt      medium         0.121     0.747     0.857     0.798     0.882     0.981    373754
+dirt      high           0.121     0.764     0.917     0.834     0.917     0.990    366310
+water     low            0.260     0.596     0.683     0.637     0.664     0.930    425232
+water     medium         0.260     0.656     0.903     0.760     0.856     0.978    414043
+water     high           0.260     0.714     0.906     0.798     0.906     0.985    447202
+scratch   low            0.002     0.751     0.528     0.620     0.544     0.892     16323
+scratch   medium         0.002     0.809     0.729     0.767     0.750     0.960     18841
+scratch   high           0.002     0.820     0.831     0.826     0.835     0.981     18081
+=== JOB_STATISTICS ===
+=== current date     : Sat Sep 26 06:34:41 PM CEST 2026
+= Job-ID             : 1823004 on tinygpu
+= Job-Name           : eval_stage_c_unet
+= Job-Command        : /home/woody/iwnt/iwnt196h/Farhad_Vaseghi_MA/scripts/hpc/evaluate_stage_c.slurm
+= Initial workdir    : /home/woody/iwnt/iwnt196h/Farhad_Vaseghi_MA
+= Queue/Partition    : a100
+= Slurm account      : iwnt with QOS=normal
+= Requested resources:  for 01:00:00
+= Elapsed runtime    : 00:02:12
+= Total RAM usage    : 2.2 GiB of requested  GiB (%)   
+= Node list          : tg095
+= Subm/Elig/Start/End: 2026-09-26T18:27:57 / 2026-09-26T18:31:11 / 2026-09-26T18:32:29 / 2026-09-26T18:34:41
+======================
+=== Quota infos ======
+    Path                 Used     SoftQ    HardQ    Gracetime  Filec    FileQ    FiHaQ    FileGrace    
+    /home/woody            11.9G  1000.0G  1500.0G        N/A     119K   5,000K   7,500K        N/A    
+    /home/hpc               6.0G   104.9G   209.7G        N/A   1,449      500K   1,000K        N/A    
+    /home/vault             0.0K  1048.6G  2097.2G        N/A       1      200K     400K        N/A    
+======================
+=== GPU utilization ==
+gpu_name, gpu_bus_id, pid, gpu_utilization [%], mem_utilization [%], max_memory_usage [MiB], time [ms]
+NVIDIA A100-SXM4-40GB, 00000000:C1:00.0, 2489951, 5 %, 3 %, 3786 MiB, 121886 ms
