@@ -1,0 +1,71 @@
+### Starting TaskPrologue of job 1822360 on tg095 at Sat Sep 26 12:39:07 AM CEST 2026
+Running on cores 64-95 with governor ondemand
+Sat Sep 26 00:39:07 2026       
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 610.57.04              KMD Version: 610.57.04     CUDA UMD Version: 13.3     |
++-----------------------------------------+------------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  NVIDIA A100-SXM4-40GB          On  |   00000000:81:00.0 Off |                    0 |
+| N/A   33C    P0             54W /  400W |       0MiB /  40960MiB |      0%      Default |
+|                                         |                        |             Disabled |
++-----------------------------------------+------------------------+----------------------+
+
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
+|        ID   ID                                                               Usage      |
+|=========================================================================================|
+|  No running processes found                                                             |
++-----------------------------------------------------------------------------------------+
+### Finished TaskPrologue
+
+/home/woody/iwnt/iwnt196h/software/private/conda/envs/stage_a/lib/python3.11/site-packages/pythonperlin/__init__.py:4: UserWarning: pkg_resources is deprecated as an API. See https://setuptools.pypa.io/en/latest/pkg_resources.html. The pkg_resources package is slated for removal as early as 2025-11-30. Refrain from using this package or pin to Setuptools<81.
+  from pkg_resources import get_distribution
+train=11200 val=1400 class_weight=[14.0, 1.076923131942749]
+epoch 1/20  train_loss=0.5245  val_loss=0.4804  (95.6s)
+epoch 2/20  train_loss=0.4562  val_loss=0.5150  (85.5s)
+epoch 3/20  train_loss=0.4252  val_loss=0.4318  (82.6s)
+epoch 4/20  train_loss=0.4096  val_loss=0.5670  (79.3s)
+epoch 5/20  train_loss=0.3993  val_loss=0.4279  (79.9s)
+epoch 6/20  train_loss=0.3915  val_loss=0.3927  (79.9s)
+epoch 7/20  train_loss=0.3808  val_loss=0.3939  (79.8s)
+epoch 8/20  train_loss=0.3741  val_loss=0.4067  (79.7s)
+epoch 9/20  train_loss=0.3649  val_loss=0.3825  (79.9s)
+epoch 10/20  train_loss=0.3563  val_loss=0.3857  (79.5s)
+epoch 11/20  train_loss=0.3587  val_loss=0.4271  (79.7s)
+epoch 12/20  train_loss=0.3509  val_loss=0.3759  (79.8s)
+epoch 13/20  train_loss=0.3454  val_loss=0.3629  (79.5s)
+epoch 14/20  train_loss=0.3333  val_loss=0.3851  (80.0s)
+epoch 15/20  train_loss=0.3469  val_loss=0.3599  (80.2s)
+epoch 16/20  train_loss=0.3321  val_loss=0.3867  (79.5s)
+epoch 17/20  train_loss=0.3251  val_loss=0.3496  (84.2s)
+epoch 18/20  train_loss=0.3344  val_loss=0.3744  (79.8s)
+epoch 19/20  train_loss=0.3359  val_loss=0.3566  (80.4s)
+epoch 20/20  train_loss=0.3174  val_loss=0.3344  (80.4s)
+wrote checkpoints/impaired_gate_severity/impaired_gate_head.pt
+=== JOB_STATISTICS ===
+=== current date     : Sat Sep 26 01:06:28 AM CEST 2026
+= Job-ID             : 1822360 on tinygpu
+= Job-Name           : impaired_gate_severity
+= Job-Command        : /home/woody/iwnt/iwnt196h/Farhad_Vaseghi_MA/scripts/hpc/train_impaired_gate_severity_a100.slurm
+= Initial workdir    : /home/woody/iwnt/iwnt196h/Farhad_Vaseghi_MA
+= Queue/Partition    : a100
+= Slurm account      : iwnt with QOS=normal
+= Requested resources:  for 06:00:00
+= Elapsed runtime    : 00:27:21
+= Total RAM usage    : 2.6 GiB of requested  GiB (%)   
+= Node list          : tg095
+= Subm/Elig/Start/End: 2026-09-26T00:39:05 / 2026-09-26T00:39:05 / 2026-09-26T00:39:06 / 2026-09-26T01:06:27
+======================
+=== Quota infos ======
+    Path                 Used     SoftQ    HardQ    Gracetime  Filec    FileQ    FiHaQ    FileGrace    
+    /home/woody             9.4G  1000.0G  1500.0G        N/A      91K   5,000K   7,500K        N/A    
+    /home/hpc               6.0G   104.9G   209.7G        N/A   1,449      500K   1,000K        N/A    
+    /home/vault             0.0K  1048.6G  2097.2G        N/A       1      200K     400K        N/A    
+======================
+=== GPU utilization ==
+gpu_name, gpu_bus_id, pid, gpu_utilization [%], mem_utilization [%], max_memory_usage [MiB], time [ms]
+NVIDIA A100-SXM4-40GB, 00000000:81:00.0, 2351111, 27 %, 17 %, 3098 MiB, 1630409 ms
