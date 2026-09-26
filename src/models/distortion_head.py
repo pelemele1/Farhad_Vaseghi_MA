@@ -23,15 +23,23 @@ class StageADistortionHead(nn.Module):
     def __init__(self, in_channels, hidden_dim=64, class_names=("dirt", "water", "scratch")):
         super().__init__()
         self.class_names = tuple(class_names)
+        # A list of in_channels (a multi-scale backbone) pools each map
+        # separately and concatenates them; [512] (P5 only) is exactly the
+        # architecture.md design above, with identical parameter shapes.
+        self.multiscale = isinstance(in_channels, (list, tuple))
+        total = sum(in_channels) if self.multiscale else in_channels
         self.pool = nn.AdaptiveAvgPool2d(1)
         self.fc = nn.Sequential(
-            nn.Linear(in_channels, hidden_dim),
+            nn.Linear(total, hidden_dim),
             nn.ReLU(inplace=True),
             nn.Linear(hidden_dim, len(self.class_names)),
         )
 
     def forward(self, features):
-        pooled = self.pool(features).flatten(1)
+        if self.multiscale:
+            pooled = torch.cat([self.pool(f).flatten(1) for f in features], dim=1)
+        else:
+            pooled = self.pool(features).flatten(1)
         return self.fc(pooled)
 
 
@@ -115,18 +123,20 @@ class StageCUNetHead(nn.Module):
     grid alone -- hopeless for 1-7px scratches; the earlier layers still carry
     that fine spatial detail.
 
-    features: list ordered fine -> coarse, [s4, s8, s16, s32]. Each is
-    reduced to `hidden_dim` channels by a 1x1 lateral conv; the decoder walks
-    coarse -> fine (upsample 2x, concat the lateral skip, 3x3 conv-BN-ReLU),
-    predicts logits at stride 4, and bilinearly upsamples those logits 4x to
-    the input resolution (cheaper than running full-resolution convs, and
-    stride 4 is already far finer than the 64x64 evaluation grid).
+    features: list ordered fine -> coarse (e.g. [s4, s8, s16, s32]). Each
+    is reduced to `hidden_dim` channels by a 1x1 lateral conv; the decoder
+    walks coarse -> fine (upsample to the next map's size, concat the
+    lateral skip, 3x3 conv-BN-ReLU), predicts logits at the finest tap's
+    stride, and bilinearly upsamples them by `out_stride` (that stride) to
+    the input resolution.
 
-    Returns raw logits, shape (B, num_classes, 4*H_s4, 4*W_s4)."""
+    Returns raw logits, shape (B, num_classes, out_stride*H_finest, out_stride*W_finest)."""
 
-    def __init__(self, in_channels_list, class_names=("dirt", "water", "scratch"), hidden_dim=64):
+    def __init__(self, in_channels_list, class_names=("dirt", "water", "scratch"), hidden_dim=64,
+                 out_stride=4):
         super().__init__()
         self.class_names = tuple(class_names)
+        self.out_stride = out_stride  # stride of the finest tap; logits are upsampled by it
         self.laterals = nn.ModuleList(_conv_bn_relu(c, hidden_dim, kernel_size=1) for c in in_channels_list)
         self.fuse = nn.ModuleList(
             _conv_bn_relu(2 * hidden_dim, hidden_dim) for _ in range(len(in_channels_list) - 1)
@@ -141,7 +151,7 @@ class StageCUNetHead(nn.Module):
             x = F.interpolate(x, size=skip.shape[-2:], mode="bilinear", align_corners=False)
             x = fuse(torch.cat([x, skip], dim=1))
         logits = self.out_conv(self.refine(x))
-        return F.interpolate(logits, scale_factor=4, mode="bilinear", align_corners=False)
+        return F.interpolate(logits, scale_factor=self.out_stride, mode="bilinear", align_corners=False)
 
 
 class StageBMultiScaleHead(nn.Module):

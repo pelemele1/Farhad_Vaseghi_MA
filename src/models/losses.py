@@ -115,6 +115,13 @@ def build_stage_b_loss(pos_weight=None):
     return nn.BCEWithLogitsLoss(pos_weight=pos_weight)
 
 
+def _normalized(class_weights, like):
+    """(C,) class weights scaled to mean 1 -- they shift emphasis between
+    classes without changing the overall loss scale."""
+    w = torch.as_tensor(class_weights, dtype=like.dtype, device=like.device)
+    return w / w.mean()
+
+
 def _align_per_class(vec, ndim):
     """Reshapes a (C,) tensor to broadcast against the channel dim (dim 1)
     of an (B, C) or (B, C, H, W) tensor -- (1, C) or (1, C, 1, 1). Same
@@ -152,10 +159,11 @@ class FocalLossWithLogits(nn.Module):
     plain alpha-weighted BCE, no focusing effect).
     """
 
-    def __init__(self, alpha=0.25, gamma=2.0):
+    def __init__(self, alpha=0.25, gamma=2.0, class_weights=None):
         super().__init__()
         self.alpha = alpha
         self.gamma = gamma
+        self.class_weights = class_weights
 
     def forward(self, logits, targets):
         bce = F.binary_cross_entropy_with_logits(logits, targets, reduction="none")
@@ -168,11 +176,13 @@ class FocalLossWithLogits(nn.Module):
         alpha_t = alpha * targets + (1 - alpha) * (1 - targets)
 
         loss = alpha_t * (1 - p_t) ** self.gamma * bce
+        if self.class_weights is not None:
+            loss = loss * _align_per_class(_normalized(self.class_weights, logits), logits.dim())
         return loss.mean()
 
 
-def build_stage_b_focal_loss(alpha=0.25, gamma=2.0):
-    return FocalLossWithLogits(alpha=alpha, gamma=gamma)
+def build_stage_b_focal_loss(alpha=0.25, gamma=2.0, class_weights=None):
+    return FocalLossWithLogits(alpha=alpha, gamma=gamma, class_weights=class_weights)
 
 
 class LocalizedSSDLoss(nn.Module):
@@ -229,22 +239,26 @@ class DiceBCELoss(nn.Module):
     up, not preemptively.
     """
 
-    def __init__(self, bce_weight=0.5, smooth=1.0):
+    def __init__(self, bce_weight=0.5, smooth=1.0, class_weights=None):
         super().__init__()
         self.bce_weight = bce_weight
         self.smooth = smooth
+        self.class_weights = class_weights
 
     def forward(self, logits, targets):
-        bce = F.binary_cross_entropy_with_logits(logits, targets)
+        dims = (0,) + tuple(range(2, logits.dim()))  # reduce over batch + spatial, keep (C,)
+        bce = F.binary_cross_entropy_with_logits(logits, targets, reduction="none").mean(dim=dims)
 
         probs = torch.sigmoid(logits)
-        dims = (0,) + tuple(range(2, logits.dim()))  # sum over batch + spatial, keep (C,)
         intersection = (probs * targets).sum(dim=dims)
         union = probs.sum(dim=dims) + targets.sum(dim=dims)
         dice_loss = 1 - (2 * intersection + self.smooth) / (union + self.smooth)
 
-        return self.bce_weight * bce + (1 - self.bce_weight) * dice_loss.mean()
+        per_class = self.bce_weight * bce + (1 - self.bce_weight) * dice_loss
+        if self.class_weights is not None:
+            per_class = per_class * _normalized(self.class_weights, logits)
+        return per_class.mean()
 
 
-def build_stage_c_loss(bce_weight=0.5):
-    return DiceBCELoss(bce_weight=bce_weight)
+def build_stage_c_loss(bce_weight=0.5, class_weights=None):
+    return DiceBCELoss(bce_weight=bce_weight, class_weights=class_weights)

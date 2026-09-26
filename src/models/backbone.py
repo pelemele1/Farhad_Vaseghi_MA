@@ -18,9 +18,26 @@ from ultralytics import YOLO
 # begins. Layer 10 (C2PSA)'s output is therefore the last single-scale
 # feature map before any multi-scale fusion -- i.e. P5.
 BACKBONE_END = 10
-# Last layer at each stride (yolo11m @512: 2 -> 256ch/128px, 4 -> 512ch/64px,
-# 6 -> 512ch/32px, 10 -> 512ch/16px) -- the skip taps for Stage C's decoder.
-STRIDE_TAPS = {4: 2, 8: 4, 16: 6, 32: BACKBONE_END}
+# Last layer at each stride (yolo11m @512: layer 0 -> 64ch/256px, 2 ->
+# 256ch/128px, 4 -> 512ch/64px, 6 -> 512ch/32px, 10 -> 512ch/16px) -- the
+# multi-scale taps the heads can choose from (see parse_taps).
+STRIDE_TAPS = {2: 0, 4: 2, 8: 4, 16: 6, 32: BACKBONE_END}
+
+
+def parse_taps(text):
+    """'4,8,16,32' -> (4, 8, 16, 32): strides, fine -> coarse. Must end at 32
+    (P5) -- every head's output grid / pooling is defined relative to it."""
+    taps = tuple(sorted(int(t) for t in str(text).split(",")))
+    unknown = [t for t in taps if t not in STRIDE_TAPS]
+    if unknown or not taps or taps[-1] != 32:
+        raise ValueError(f"taps must be strides from {sorted(STRIDE_TAPS)} ending at 32, got {text!r}")
+    return taps
+
+
+def build_multiscale_backbone(weights, taps):
+    """FrozenYOLOBackbone returning a list of feature maps, one per stride
+    in `taps` (fine -> coarse) -- even for taps=(32,)."""
+    return FrozenYOLOBackbone(weights, return_layers=[STRIDE_TAPS[t] for t in taps])
 
 
 class FrozenYOLOBackbone(nn.Module):

@@ -473,8 +473,8 @@ def main():
 
     gate_probs = None
     if args.gate_checkpoint:
-        gate_head, gate_img_size = load_gate(args.gate_checkpoint, backbone.out_channels, device)
-        gate_probs = collect_gate_probs(backbone, gate_head, loader, device, img_size=gate_img_size)
+        gate_backbone, gate_head, gate_img_size = load_gate(args.gate_checkpoint, args.weights, device)
+        gate_probs = collect_gate_probs(gate_backbone, gate_head, loader, device, img_size=gate_img_size)
         # Real inference-time gate (Session 20, Round 2): the metrics table,
         # ROC/PR curves file, overlay grid, and severity plot below all see
         # the GATED probs -- `apply_gate` returns a new array, so `raw_probs`

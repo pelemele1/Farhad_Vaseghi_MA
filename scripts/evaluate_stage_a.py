@@ -20,8 +20,7 @@ from src.data.stage_a_dataset import StageADataset
 from src.eval.metrics import collect_predictions, compute_metrics  # noqa: F401 (re-exported for tests/callers)
 from src.eval.severity import compute_metrics_by_severity
 from src.eval.thresholds import tune_per_class_thresholds
-from src.models.backbone import FrozenYOLOBackbone
-from src.models.distortion_head import StageADistortionHead
+from scripts.train_stage_a import load_stage_a
 
 
 def main():
@@ -48,13 +47,7 @@ def main():
 
     device = torch.device(args.device)
 
-    ckpt = torch.load(args.checkpoint, map_location=device, weights_only=False)
-    class_names = ckpt["class_names"]
-
-    backbone = FrozenYOLOBackbone(args.weights).to(device)
-    head = StageADistortionHead(in_channels=backbone.out_channels, class_names=class_names).to(device)
-    head.load_state_dict(ckpt["head_state_dict"])
-    head.eval()
+    backbone, head, class_names = load_stage_a(args.checkpoint, args.weights, device)
 
     threshold = args.threshold
     if args.tune_thresholds:

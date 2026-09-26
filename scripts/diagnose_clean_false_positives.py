@@ -119,8 +119,8 @@ def main():
     _print_rates(rates, label="ungated" if args.gate_checkpoint else None)
 
     if args.gate_checkpoint:
-        gate_head, gate_img_size = load_gate(args.gate_checkpoint, backbone.out_channels, device)
-        gate_probs = collect_gate_probs(backbone, gate_head, loader, device, img_size=gate_img_size)
+        gate_backbone, gate_head, gate_img_size = load_gate(args.gate_checkpoint, args.weights, device)
+        gate_probs = collect_gate_probs(gate_backbone, gate_head, loader, device, img_size=gate_img_size)
         gated_probs = apply_gate(probs, gate_probs, threshold=args.gate_threshold)
 
         gated_rates = clean_false_positive_rates(gated_probs, labels, dataset.rows, class_names, threshold)

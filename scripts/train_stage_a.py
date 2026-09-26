@@ -24,10 +24,30 @@ import torch
 from torch.utils.data import DataLoader, WeightedRandomSampler
 
 from src.data.stage_a_dataset import StageADataset
-from src.models.backbone import FrozenYOLOBackbone
+from src.models.backbone import build_multiscale_backbone, parse_taps
 from src.models.distortion_head import StageADistortionHead
 from src.models.losses import build_stage_a_loss, compute_pos_weight
 from src.soiling.dataset_builder import EFFECT_NAMES
+
+
+def build_stage_a_model(weights, class_names, device, taps=(32,)):
+    """(backbone, head): GAP over the backbone layers at the strides in
+    `taps`, concatenated, then 2xFC. taps=(32,) is exactly architecture.md's
+    "global average pooling over the P5 feature map" design."""
+    backbone = build_multiscale_backbone(weights, taps)
+    head = StageADistortionHead(in_channels=backbone.out_channels, class_names=class_names)
+    return backbone.to(device), head.to(device)
+
+
+def load_stage_a(checkpoint, weights, device):
+    """(backbone, head, class_names) from a Stage A checkpoint, head in eval
+    mode. Checkpoints without a taps field are P5-only."""
+    ckpt = torch.load(checkpoint, map_location=device, weights_only=False)
+    class_names = ckpt["class_names"]
+    backbone, head = build_stage_a_model(weights, class_names, device, taps=tuple(ckpt.get("taps", (32,))))
+    head.load_state_dict(ckpt["head_state_dict"])
+    head.eval()
+    return backbone, head, class_names
 
 
 def run_epoch(backbone, head, loader, device, loss_fn, optimizer=None):
@@ -104,6 +124,14 @@ def make_loaders(train_set, val_set, batch_size, num_workers, low_severity_weigh
     return train_loader, DataLoader(val_set, batch_size=batch_size, shuffle=False, **kwargs)
 
 
+def parse_class_weights(text):
+    """'1,1,3' -> [1.0, 1.0, 3.0] (one per class, in dirt/water/scratch order)."""
+    weights = [float(w) for w in text.split(",")]
+    if len(weights) != len(EFFECT_NAMES) or min(weights) <= 0:
+        raise ValueError(f"expected {len(EFFECT_NAMES)} positive weights, got {text!r}")
+    return weights
+
+
 def add_common_args(parser):
     parser.add_argument("--num-workers", type=int, default=4, help="DataLoader worker processes")
     parser.add_argument("--seed", type=int, default=0, help="torch seed (head init + shuffling)")
@@ -126,6 +154,9 @@ def main():
         "--smoke-test", action="store_true",
         help="Tiny subset, 1 epoch, CPU, no checkpoint written -- pipeline correctness only",
     )
+    parser.add_argument("--taps", default="32", type=parse_taps,
+                        help="Backbone strides to pool, e.g. '32' (P5 only, the architecture.md design) or "
+                        "'2,4,8,16,32' (must include 32)")
     add_common_args(parser)
     args = parser.parse_args()
 
@@ -144,17 +175,17 @@ def main():
     train_loader, val_loader = make_loaders(train_set, val_set, args.batch_size, args.num_workers,
                                             low_severity_weight=args.low_severity_weight)
 
-    backbone = FrozenYOLOBackbone(args.weights).to(device)
-    head = StageADistortionHead(in_channels=backbone.out_channels).to(device)
+    backbone, head = build_stage_a_model(args.weights, EFFECT_NAMES, device, taps=args.taps)
 
     pos_weight = compute_pos_weight(Path(args.data) / "metadata.csv", split="train").to(device)
     loss_fn = build_stage_a_loss(pos_weight)
     optimizer = torch.optim.Adam(head.parameters(), lr=args.lr)
 
-    print(f"train={len(train_set)} val={len(val_set)} pos_weight={pos_weight.tolist()}", flush=True)
+    print(f"train={len(train_set)} val={len(val_set)} taps={args.taps} pos_weight={pos_weight.tolist()}", flush=True)
 
     ckpt_path = None if args.smoke_test else Path(args.out) / "stage_a_head.pt"
-    fit(backbone, head, train_loader, val_loader, device, loss_fn, optimizer, args.epochs, ckpt_path)
+    fit(backbone, head, train_loader, val_loader, device, loss_fn, optimizer, args.epochs, ckpt_path,
+        extra_ckpt={"taps": list(args.taps)})
 
 
 if __name__ == "__main__":

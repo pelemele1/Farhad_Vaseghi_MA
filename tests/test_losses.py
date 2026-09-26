@@ -403,3 +403,22 @@ def test_dice_bce_loss_single_optimizer_step_decreases_loss():
 
     assert torch.isfinite(loss_before)
     assert loss_after.item() < loss_before.item()
+
+
+def test_class_weights_default_to_unweighted_and_shift_emphasis():
+    torch.manual_seed(0)
+    logits = torch.randn(2, 3, 8, 8)
+    targets = (torch.rand(2, 3, 8, 8) > 0.7).float()
+
+    assert torch.allclose(DiceBCELoss(class_weights=[1, 1, 1])(logits, targets), DiceBCELoss()(logits, targets))
+    focal = build_stage_b_focal_loss(alpha=0.75)
+    focal_w = build_stage_b_focal_loss(alpha=0.75, class_weights=[1, 1, 1])
+    assert torch.allclose(focal(logits, targets), focal_w(logits, targets))
+
+    # A wrong prediction only on the scratch channel costs more when scratch is up-weighted.
+    targets = torch.zeros(1, 3, 4, 4)
+    targets[0, 2] = 1.0
+    logits = torch.full((1, 3, 4, 4), -5.0)
+    base = DiceBCELoss()(logits, targets)
+    heavy = DiceBCELoss(class_weights=[1, 1, 3])(logits, targets)
+    assert heavy > base

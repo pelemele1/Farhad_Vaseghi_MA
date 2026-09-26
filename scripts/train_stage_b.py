@@ -22,9 +22,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import torch
 
-from scripts.train_stage_a import add_common_args, fit, make_loaders
+from scripts.train_stage_a import add_common_args, fit, make_loaders, parse_class_weights
 from src.data.stage_b_dataset import StageBDataset
-from src.models.backbone import STRIDE_TAPS, FrozenYOLOBackbone
+from src.models.backbone import FrozenYOLOBackbone, build_multiscale_backbone, parse_taps
 from src.models.distortion_head import StageBDistortionHead, StageBMultiScaleHead
 from src.models.losses import (
     build_stage_b_focal_loss,
@@ -36,12 +36,16 @@ from src.models.losses import (
 STAGE_B_ARCHS = ("conv1x1", "multiscale")
 
 
-def build_stage_b_model(arch, weights, class_names, device):
+DEFAULT_TAPS = (4, 8, 16, 32)
+
+
+def build_stage_b_model(arch, weights, class_names, device, taps=DEFAULT_TAPS):
     """(backbone, head) for a Stage B architecture: "conv1x1" (v1, one 1x1
-    conv on P5) or "multiscale" (v2, stride-4/8/16 + P5 features pooled to
-    the P5 tile grid). Checkpoints without an arch field are v1."""
+    conv on P5) or "multiscale" (v2, the backbone layers at the strides in
+    `taps` pooled to the P5 tile grid). Checkpoints without an arch field
+    are v1; multiscale ones without a taps field used DEFAULT_TAPS."""
     if arch == "multiscale":
-        backbone = FrozenYOLOBackbone(weights, return_layers=[STRIDE_TAPS[s] for s in (4, 8, 16, 32)])
+        backbone = build_multiscale_backbone(weights, taps)
         head = StageBMultiScaleHead(backbone.out_channels, class_names=class_names)
     elif arch == "conv1x1":
         backbone = FrozenYOLOBackbone(weights)
@@ -55,7 +59,8 @@ def load_stage_b(checkpoint, weights, device):
     """(backbone, head, class_names) from a Stage B checkpoint, head in eval mode."""
     ckpt = torch.load(checkpoint, map_location=device, weights_only=False)
     class_names = ckpt["class_names"]
-    backbone, head = build_stage_b_model(ckpt.get("arch", "conv1x1"), weights, class_names, device)
+    backbone, head = build_stage_b_model(ckpt.get("arch", "conv1x1"), weights, class_names, device,
+                                         taps=tuple(ckpt.get("taps", DEFAULT_TAPS)))
     head.load_state_dict(ckpt["head_state_dict"])
     head.eval()
     return backbone, head, class_names
@@ -96,6 +101,11 @@ def main():
     parser.add_argument("--arch", default="conv1x1", choices=STAGE_B_ARCHS,
                         help="'conv1x1': one 1x1 conv on P5 (v1). 'multiscale': stride-4/8/16 + P5 "
                         "features pooled to the tile grid (v2).")
+    parser.add_argument("--class-weights", default=None, type=parse_class_weights,
+                        help="--loss focal only: per-class loss multipliers in class order, e.g. '1,1,3' to "
+                        "weight scratch 3x (normalized to mean 1)")
+    parser.add_argument("--taps", default="4,8,16,32", type=parse_taps,
+                        help="--arch multiscale only: backbone strides to use, e.g. '2,4,8,16,32' (must include 32)")
     add_common_args(parser)
     args = parser.parse_args()
 
@@ -114,8 +124,8 @@ def main():
     train_loader, val_loader = make_loaders(train_set, val_set, args.batch_size, args.num_workers,
                                             low_severity_weight=args.low_severity_weight)
 
-    backbone, head = build_stage_b_model(args.arch, args.weights, train_set.class_names, device)
-    print(f"arch={args.arch}", flush=True)
+    backbone, head = build_stage_b_model(args.arch, args.weights, train_set.class_names, device, taps=args.taps)
+    print(f"arch={args.arch} taps={args.taps if args.arch == 'multiscale' else '-'}", flush=True)
 
     if args.loss == "focal":
         alpha_parts = [p.strip() for p in args.focal_alpha.split(",")]
@@ -127,9 +137,9 @@ def main():
                 f"{len(train_set.class_names)} classes {train_set.class_names} -- must match 1:1"
             )
             alpha = torch.tensor([float(p) for p in alpha_parts])
-        loss_fn = build_stage_b_focal_loss(alpha=alpha, gamma=args.focal_gamma)
+        loss_fn = build_stage_b_focal_loss(alpha=alpha, gamma=args.focal_gamma, class_weights=args.class_weights)
         alpha_str = alpha.tolist() if isinstance(alpha, torch.Tensor) else alpha
-        print(f"train={len(train_set)} val={len(val_set)} loss=focal alpha={alpha_str} gamma={args.focal_gamma}")
+        print(f"train={len(train_set)} val={len(val_set)} loss=focal alpha={alpha_str} gamma={args.focal_gamma} class_weights={args.class_weights}")
     elif args.loss == "ssd":
         loss_fn = build_stage_b_ssd_loss()
         print(f"train={len(train_set)} val={len(val_set)} loss=ssd (localized sum of squared differences)")
@@ -144,7 +154,7 @@ def main():
 
     ckpt_path = None if args.smoke_test else Path(args.out) / "stage_b_head.pt"
     fit(backbone, head, train_loader, val_loader, device, loss_fn, optimizer, args.epochs, ckpt_path,
-        extra_ckpt={"arch": args.arch})
+        extra_ckpt={"arch": args.arch, "taps": list(args.taps), "class_weights": args.class_weights})
 
 
 if __name__ == "__main__":

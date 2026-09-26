@@ -21,22 +21,26 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import torch
 
-from scripts.train_stage_a import add_common_args, fit, make_loaders
+from scripts.train_stage_a import add_common_args, fit, make_loaders, parse_class_weights
 from src.data.stage_c_dataset import StageCDataset
-from src.models.backbone import STRIDE_TAPS, FrozenYOLOBackbone
+from src.models.backbone import FrozenYOLOBackbone, build_multiscale_backbone, parse_taps
 from src.models.distortion_head import StageCDistortionHead, StageCUNetHead
 from src.models.losses import build_stage_c_loss
 
 STAGE_C_ARCHS = ("unet", "fcn")
 
 
-def build_stage_c_model(arch, weights, class_names, device):
+DEFAULT_TAPS = (4, 8, 16, 32)
+
+
+def build_stage_c_model(arch, weights, class_names, device, taps=DEFAULT_TAPS):
     """(backbone, head) for a Stage C architecture: "unet" (v2, skip
-    connections from stride 4/8/16 + P5) or "fcn" (v1, P5 only). Checkpoints
-    written before the arch field existed are v1 -- load them with "fcn"."""
+    connections from the backbone layers at the strides in `taps`) or "fcn"
+    (v1, P5 only). Checkpoints written before the arch field existed are v1
+    -- load them with "fcn"; unet ones without a taps field used DEFAULT_TAPS."""
     if arch == "unet":
-        backbone = FrozenYOLOBackbone(weights, return_layers=[STRIDE_TAPS[s] for s in (4, 8, 16, 32)])
-        head = StageCUNetHead(backbone.out_channels, class_names=class_names)
+        backbone = build_multiscale_backbone(weights, taps)
+        head = StageCUNetHead(backbone.out_channels, class_names=class_names, out_stride=taps[0])
     elif arch == "fcn":
         backbone = FrozenYOLOBackbone(weights)
         head = StageCDistortionHead(in_channels=backbone.out_channels, class_names=class_names)
@@ -65,6 +69,12 @@ def main():
     parser.add_argument("--arch", default="unet", choices=STAGE_C_ARCHS,
                          help="'unet': skip connections from stride 4/8/16 + P5 (v2). 'fcn': P5-only "
                          "5x upsample stack (v1).")
+    parser.add_argument("--class-weights", default=None, type=parse_class_weights,
+                         help="Per-class loss multipliers in class order, e.g. '1,1,3' to weight scratch 3x "
+                         "(normalized to mean 1)")
+    parser.add_argument("--taps", default="4,8,16,32", type=parse_taps,
+                         help="--arch unet only: backbone strides for the skip connections, e.g. "
+                         "'2,4,8,16,32' (must include 32; the finest sets the logit resolution)")
     add_common_args(parser)
     args = parser.parse_args()
 
@@ -83,17 +93,17 @@ def main():
     train_loader, val_loader = make_loaders(train_set, val_set, args.batch_size, args.num_workers,
                                             low_severity_weight=args.low_severity_weight)
 
-    backbone, head = build_stage_c_model(args.arch, args.weights, train_set.class_names, device)
+    backbone, head = build_stage_c_model(args.arch, args.weights, train_set.class_names, device, taps=args.taps)
 
-    loss_fn = build_stage_c_loss(bce_weight=args.bce_weight)
-    print(f"train={len(train_set)} val={len(val_set)} arch={args.arch} loss=dice_bce "
-          f"bce_weight={args.bce_weight}", flush=True)
+    loss_fn = build_stage_c_loss(bce_weight=args.bce_weight, class_weights=args.class_weights)
+    print(f"train={len(train_set)} val={len(val_set)} arch={args.arch} taps={args.taps} loss=dice_bce "
+          f"bce_weight={args.bce_weight} class_weights={args.class_weights}", flush=True)
 
     optimizer = torch.optim.Adam(head.parameters(), lr=args.lr)
 
     ckpt_path = None if args.smoke_test else Path(args.out) / "stage_c_head.pt"
     fit(backbone, head, train_loader, val_loader, device, loss_fn, optimizer, args.epochs, ckpt_path,
-        extra_ckpt={"arch": args.arch})
+        extra_ckpt={"arch": args.arch, "taps": list(args.taps), "class_weights": args.class_weights})
 
 
 if __name__ == "__main__":

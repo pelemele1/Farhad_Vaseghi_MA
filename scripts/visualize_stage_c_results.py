@@ -237,8 +237,8 @@ def main():
 
     gate_probs = None
     if args.gate_checkpoint:
-        gate_head, gate_img_size = load_gate(args.gate_checkpoint, backbone.out_channels, device)
-        gate_probs = collect_gate_probs(backbone, gate_head, loader, device, img_size=gate_img_size)
+        gate_backbone, gate_head, gate_img_size = load_gate(args.gate_checkpoint, args.weights, device)
+        gate_probs = collect_gate_probs(gate_backbone, gate_head, loader, device, img_size=gate_img_size)
         probs_pooled = apply_gate(probs_pooled, gate_probs, threshold=args.gate_threshold)
         max_probs = apply_gate(raw_max_probs, gate_probs, threshold=args.gate_threshold)
 

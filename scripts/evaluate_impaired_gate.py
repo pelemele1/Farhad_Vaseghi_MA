@@ -22,8 +22,7 @@ from torch.utils.data import DataLoader
 from src.data.stage_a_dataset import ImpairedGateDataset
 from src.eval.metrics import compute_metrics
 from src.eval.thresholds import threshold_for_recall, tune_per_class_thresholds
-from scripts.train_impaired_gate import build_gate_model
-from src.eval.gate import DEFAULT_GATE_IMG_SIZE
+from src.eval.gate import load_gate
 
 
 @torch.no_grad()
@@ -71,12 +70,9 @@ def main():
     device = torch.device(args.device)
     class_names = ["impaired"]
 
-    ckpt = torch.load(args.checkpoint, map_location=device, weights_only=False)
-    backbone, head = build_gate_model(ckpt.get("arch", "p5"), args.weights, device)
-    head.load_state_dict(ckpt["head_state_dict"])
-    head.eval()
+    backbone, head, gate_img_size = load_gate(args.checkpoint, args.weights, device)
     if args.img_size is None:
-        args.img_size = ckpt.get("img_size", DEFAULT_GATE_IMG_SIZE)
+        args.img_size = gate_img_size
 
     threshold = args.threshold
     if args.tune_thresholds or args.recall_target is not None:

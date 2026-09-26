@@ -52,3 +52,32 @@ def test_low_severity_sample_weights_upweights_rows_with_any_low_effect():
         {"dirt_severity": "medium", "water_severity": "none", "scratch_severity": "high"},
     ]
     assert low_severity_sample_weights(rows, 3.0) == [3.0, 3.0, 1.0, 1.0]
+
+
+def test_multiscale_taps_train_and_evaluate(tmp_path):
+    import torch
+
+    source_dir = tmp_path / "source"
+    source_dir.mkdir()
+    rng = np.random.default_rng(0)
+    for i in range(4):
+        cv.imwrite(str(source_dir / f"{i:08d}.jpg"), rng.integers(0, 255, size=(96, 128, 3), dtype=np.uint8))
+    data_dir = tmp_path / "data"
+    build_stage_a_dataset(source_dir, data_dir, variants_per_image=4, seed=0, ratios=(0.5, 0.25, 0.25))
+
+    out_dir = tmp_path / "ckpt"
+    train = subprocess.run(
+        [sys.executable, "scripts/train_stage_a.py", "--taps", "2,8,32", "--num-workers", "0",
+         "--data", str(data_dir), "--weights", str(_WEIGHTS), "--img-size", "64",
+         "--epochs", "1", "--batch-size", "2", "--out", str(out_dir)],
+        capture_output=True, text=True, timeout=300,
+    )
+    assert train.returncode == 0, train.stdout + train.stderr
+    assert torch.load(out_dir / "stage_a_head.pt", weights_only=False)["taps"] == [2, 8, 32]
+
+    evaluate = subprocess.run(
+        [sys.executable, "scripts/evaluate_stage_a.py", "--checkpoint", str(out_dir / "stage_a_head.pt"),
+         "--data", str(data_dir), "--weights", str(_WEIGHTS), "--split", "test", "--img-size", "64"],
+        capture_output=True, text=True, timeout=300,
+    )
+    assert evaluate.returncode == 0, evaluate.stdout + evaluate.stderr

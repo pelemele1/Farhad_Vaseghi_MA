@@ -23,22 +23,9 @@ import torch
 
 from scripts.train_stage_a import add_common_args, fit, make_loaders
 from src.data.stage_a_dataset import ImpairedGateDataset
-from src.models.backbone import STRIDE_TAPS, FrozenYOLOBackbone
-from src.models.distortion_head import ImpairedGateHead
+from src.eval.gate import GATE_ARCHS, build_gate
+from src.models.backbone import parse_taps
 from src.models.losses import build_impaired_gate_loss, compute_impaired_class_weight
-
-GATE_ARCHS = ("p5", "multiscale")
-
-
-def build_gate_model(arch, weights, device):
-    if arch == "multiscale":
-        backbone = FrozenYOLOBackbone(weights, return_layers=[STRIDE_TAPS[s] for s in (4, 8, 16, 32)])
-    elif arch == "p5":
-        backbone = FrozenYOLOBackbone(weights)
-    else:
-        raise ValueError(f"unknown gate arch {arch!r}, expected one of {GATE_ARCHS}")
-    return backbone.to(device), ImpairedGateHead(in_channels=backbone.out_channels).to(device)
-
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -57,6 +44,8 @@ def main():
     parser.add_argument("--arch", default="p5", choices=GATE_ARCHS,
                         help="'p5': GAP over P5 only (v1). 'multiscale': GAP over the stride-4/8/16 layers "
                         "and P5, concatenated (v2).")
+    parser.add_argument("--taps", default="4,8,16,32", type=parse_taps,
+                        help="--arch multiscale only: backbone strides to pool, e.g. '2,4,8,16,32'")
     add_common_args(parser)
     args = parser.parse_args()
 
@@ -75,7 +64,7 @@ def main():
     train_loader, val_loader = make_loaders(train_set, val_set, args.batch_size, args.num_workers,
                                             low_severity_weight=args.low_severity_weight)
 
-    backbone, head = build_gate_model(args.arch, args.weights, device)
+    backbone, head = build_gate(args.arch, args.weights, device, taps=args.taps)
     print(f"arch={args.arch} img_size={args.img_size}", flush=True)
 
     class_weight = compute_impaired_class_weight(Path(args.data) / "metadata.csv", split="train").to(device)
@@ -86,7 +75,7 @@ def main():
 
     ckpt_path = None if args.smoke_test else Path(args.out) / "impaired_gate_head.pt"
     fit(backbone, head, train_loader, val_loader, device, loss_fn, optimizer, args.epochs, ckpt_path,
-        extra_ckpt={"img_size": args.img_size, "arch": args.arch})
+        extra_ckpt={"img_size": args.img_size, "arch": args.arch, "taps": list(args.taps)})
 
 
 if __name__ == "__main__":

@@ -34,8 +34,7 @@ import numpy as np
 import torch
 
 from src.data.stage_a_dataset import StageADataset
-from src.models.backbone import FrozenYOLOBackbone
-from src.models.distortion_head import StageADistortionHead
+from scripts.train_stage_a import load_stage_a
 
 
 def find_clean_and_distorted_pair(rows, class_names, target_class, seed=0):
@@ -154,13 +153,7 @@ def main():
     args = parser.parse_args()
 
     device = torch.device(args.device)
-    ckpt = torch.load(args.checkpoint, map_location=device, weights_only=False)
-    class_names = ckpt["class_names"]
-
-    backbone = FrozenYOLOBackbone(args.weights).to(device)
-    head = StageADistortionHead(in_channels=backbone.out_channels, class_names=class_names).to(device)
-    head.load_state_dict(ckpt["head_state_dict"])
-    head.eval()
+    backbone, head, class_names = load_stage_a(args.checkpoint, args.weights, device)
 
     dataset = StageADataset(args.data, split=args.split, img_size=args.img_size)
 

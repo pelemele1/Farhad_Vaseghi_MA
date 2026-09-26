@@ -23,7 +23,7 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader
 
 from scripts.evaluate_stage_b import _print_metrics_table, flatten_tiles
-from scripts.train_stage_c import build_stage_c_model
+from scripts.train_stage_c import DEFAULT_TAPS, build_stage_c_model
 from src.data.stage_c_dataset import StageCDataset
 from src.eval.gate import apply_gate, collect_gate_probs, load_gate
 from src.eval.metrics import compute_metrics
@@ -64,7 +64,8 @@ def load_stage_c(checkpoint, weights, device):
     without an "arch" field predate the U-Net head and are the v1 FCN."""
     ckpt = torch.load(checkpoint, map_location=device, weights_only=False)
     class_names = ckpt["class_names"]
-    backbone, head = build_stage_c_model(ckpt.get("arch", "fcn"), weights, class_names, device)
+    backbone, head = build_stage_c_model(ckpt.get("arch", "fcn"), weights, class_names, device,
+                                         taps=tuple(ckpt.get("taps", DEFAULT_TAPS)))
     head.load_state_dict(ckpt["head_state_dict"])
     head.eval()
     return backbone, head, class_names
@@ -178,8 +179,8 @@ def main():
                           label="ungated" if args.gate_checkpoint else None)
 
     if args.gate_checkpoint:
-        gate_head, gate_img_size = load_gate(args.gate_checkpoint, backbone.out_channels, device)
-        gate_probs = collect_gate_probs(backbone, gate_head, loader, device, img_size=gate_img_size)
+        gate_backbone, gate_head, gate_img_size = load_gate(args.gate_checkpoint, args.weights, device)
+        gate_probs = collect_gate_probs(gate_backbone, gate_head, loader, device, img_size=gate_img_size)
         # Zeroing a whole image commutes with pooling, so gating the pooled grid is exact.
         gated_probs_pooled = apply_gate(probs_pooled, gate_probs, threshold=args.gate_threshold)
         gated_labels_flat, gated_probs_flat = flatten_tiles(labels_pooled, gated_probs_pooled)

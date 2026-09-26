@@ -191,3 +191,19 @@ def test_stage_b_multiscale_head_outputs_one_logit_per_p5_tile():
     features = [torch.randn(2, 16, 16, 16), torch.randn(2, 32, 8, 8),
                 torch.randn(2, 32, 4, 4), torch.randn(2, 32, 2, 2)]
     assert head(features).shape == (2, 3, 2, 2)
+
+
+def test_stage_c_unet_head_with_stride2_tap_still_outputs_input_resolution():
+    from src.models.distortion_head import StageCUNetHead
+
+    head = StageCUNetHead([8, 16, 32], out_stride=2)
+    features = [torch.randn(1, 8, 32, 32), torch.randn(1, 16, 16, 16), torch.randn(1, 32, 2, 2)]
+    assert head(features).shape == (1, 3, 64, 64)
+
+
+def test_stage_a_head_list_of_one_p5_map_matches_the_single_tensor_design():
+    single = StageADistortionHead(in_channels=16)
+    listed = StageADistortionHead(in_channels=[16])
+    listed.load_state_dict(single.state_dict())
+    x = torch.randn(2, 16, 4, 4)
+    assert torch.allclose(single(x), listed([x]))

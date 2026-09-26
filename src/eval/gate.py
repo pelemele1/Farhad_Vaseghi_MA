@@ -13,31 +13,40 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
+from src.models.backbone import FrozenYOLOBackbone, build_multiscale_backbone
 from src.models.distortion_head import ImpairedGateHead
 
 # Every impaired-gate checkpoint so far was trained at train_impaired_gate.py's
 # default --img-size; newer checkpoints record their own "img_size".
 DEFAULT_GATE_IMG_SIZE = 640
+DEFAULT_GATE_TAPS = (4, 8, 16, 32)
+GATE_ARCHS = ("p5", "multiscale")
 
 
-def load_gate(checkpoint, in_channels, device):
-    """Returns (gate_head, gate_img_size) -- the head in eval mode, plus the
-    input resolution it was trained at (pass to collect_gate_probs).
-    `in_channels` is the backbone's out_channels the gate will be fed from:
-    a P5-only gate (checkpoint arch "p5", the default for older ones) uses
-    just P5 (the last entry of a multi-scale list); a "multiscale" gate needs
-    the same multi-scale backbone it was trained on."""
+def build_gate(arch, weights, device, taps=DEFAULT_GATE_TAPS):
+    """(backbone, head) for a gate architecture: "p5" (GAP over P5 only) or
+    "multiscale" (GAP over the backbone layers at the strides in `taps`,
+    concatenated)."""
+    if arch == "multiscale":
+        backbone = build_multiscale_backbone(weights, taps)
+    elif arch == "p5":
+        backbone = FrozenYOLOBackbone(weights)
+    else:
+        raise ValueError(f"unknown gate arch {arch!r}, expected one of {GATE_ARCHS}")
+    return backbone.to(device), ImpairedGateHead(in_channels=backbone.out_channels).to(device)
+
+
+def load_gate(checkpoint, weights, device):
+    """Returns (gate_backbone, gate_head, gate_img_size): the gate's own
+    backbone (built for its own layers, so it never depends on which layers
+    the Stage B/C model uses), the head in eval mode, and the input
+    resolution it was trained at (pass all three to collect_gate_probs)."""
     ckpt = torch.load(checkpoint, map_location=device, weights_only=False)
-    if ckpt.get("arch", "p5") == "multiscale":
-        if not isinstance(in_channels, (list, tuple)):
-            raise ValueError("a multiscale gate needs a multi-scale backbone "
-                             "(FrozenYOLOBackbone(return_layers=...)), got a P5-only one")
-    elif isinstance(in_channels, (list, tuple)):
-        in_channels = in_channels[-1]
-    head = ImpairedGateHead(in_channels=in_channels).to(device)
+    backbone, head = build_gate(ckpt.get("arch", "p5"), weights, device,
+                                taps=tuple(ckpt.get("taps", DEFAULT_GATE_TAPS)))
     head.load_state_dict(ckpt["head_state_dict"])
     head.eval()
-    return head, ckpt.get("img_size", DEFAULT_GATE_IMG_SIZE)
+    return backbone, head, ckpt.get("img_size", DEFAULT_GATE_IMG_SIZE)
 
 
 @torch.no_grad()
@@ -52,19 +61,15 @@ def collect_gate_probs(backbone, gate_head, loader, device, img_size=None):
     backbone's GAP features shift with input scale, so feeding the gate a
     different resolution than it was trained on silently shifts its
     calibration. Images are bilinearly resized to `img_size` first when it
-    differs. A backbone returning a list of feature maps (the multi-scale
-    one) is passed whole to a multiscale gate, and reduced to its last (P5)
-    entry for a P5-only one."""
+    differs. `backbone` is the gate's own (from load_gate).
+    """
     probs = {}
     idx = 0
     for images, _ in loader:
         images = images.to(device)
         if img_size is not None and images.shape[-1] != img_size:
             images = F.interpolate(images, size=(img_size, img_size), mode="bilinear", align_corners=False)
-        features = backbone(images)
-        if isinstance(features, list) and not gate_head.multiscale:
-            features = features[-1]
-        batch_probs = torch.softmax(gate_head(features), dim=1)[:, 1].cpu().numpy()
+        batch_probs = torch.softmax(gate_head(backbone(images)), dim=1)[:, 1].cpu().numpy()
         for value in batch_probs:
             probs[idx] = float(value)
             idx += 1

@@ -1,4 +1,7 @@
+from pathlib import Path
+
 import numpy as np
+import pytest
 import torch
 
 from src.eval.gate import DEFAULT_GATE_IMG_SIZE, apply_gate, collect_gate_probs, load_gate
@@ -49,9 +52,8 @@ def test_apply_gate_custom_threshold():
 
 
 class _RecordingBackbone(torch.nn.Module):
-    """Stands in for FrozenYOLOBackbone: records input sizes, returns a
-    list of feature maps (like the multi-scale Stage C backbone) whose last
-    entry is 'P5'."""
+    """Stands in for a multi-scale FrozenYOLOBackbone: records input sizes,
+    returns a list of two feature maps."""
 
     def __init__(self):
         super().__init__()
@@ -62,9 +64,9 @@ class _RecordingBackbone(torch.nn.Module):
         return [torch.zeros(x.shape[0], 2, 4, 4), torch.ones(x.shape[0], 8, 2, 2)]
 
 
-def test_collect_gate_probs_resizes_to_gate_img_size_and_uses_p5():
+def test_collect_gate_probs_resizes_to_gate_img_size():
     backbone = _RecordingBackbone()
-    gate_head = ImpairedGateHead(in_channels=8)
+    gate_head = ImpairedGateHead(in_channels=[2, 8])
     loader = [(torch.zeros(3, 3, 32, 32), None)]
 
     probs = collect_gate_probs(backbone, gate_head, loader, torch.device("cpu"), img_size=64)
@@ -73,32 +75,23 @@ def test_collect_gate_probs_resizes_to_gate_img_size_and_uses_p5():
     assert sorted(probs) == [0, 1, 2]
 
 
-def test_load_gate_defaults_to_640_for_checkpoints_without_img_size(tmp_path):
-    head = ImpairedGateHead(in_channels=8)
+_WEIGHTS = Path("weights/yolo11m.pt")
+
+
+@pytest.mark.skipif(not _WEIGHTS.exists(), reason="requires weights/yolo11m.pt")
+def test_load_gate_builds_its_own_backbone_from_the_checkpoint(tmp_path):
+    from src.eval.gate import build_gate
+
+    _, p5_head = build_gate("p5", str(_WEIGHTS), torch.device("cpu"))
     old = tmp_path / "old.pt"
-    torch.save({"head_state_dict": head.state_dict()}, old)
+    torch.save({"head_state_dict": p5_head.state_dict()}, old)
+    backbone, head, img_size = load_gate(old, str(_WEIGHTS), torch.device("cpu"))
+    assert img_size == DEFAULT_GATE_IMG_SIZE == 640 and not head.multiscale
+
+    _, ms_head = build_gate("multiscale", str(_WEIGHTS), torch.device("cpu"), taps=(2, 32))
     new = tmp_path / "new.pt"
-    torch.save({"head_state_dict": head.state_dict(), "img_size": 512}, new)
-
-    assert load_gate(old, 8, torch.device("cpu"))[1] == DEFAULT_GATE_IMG_SIZE == 640
-    assert load_gate(new, [4, 8], torch.device("cpu"))[1] == 512
-
-
-def test_multiscale_gate_receives_every_feature_map():
-    backbone = _RecordingBackbone()
-    gate_head = ImpairedGateHead(in_channels=[2, 8])
-    loader = [(torch.zeros(2, 3, 32, 32), None)]
-    probs = collect_gate_probs(backbone, gate_head, loader, torch.device("cpu"))
-    assert sorted(probs) == [0, 1]
-
-
-def test_load_gate_multiscale_rejects_p5_only_backbone(tmp_path):
-    import pytest
-
-    head = ImpairedGateHead(in_channels=[2, 8])
-    path = tmp_path / "ms.pt"
-    torch.save({"head_state_dict": head.state_dict(), "arch": "multiscale", "img_size": 512}, path)
-    loaded, img_size = load_gate(path, [2, 8], torch.device("cpu"))
-    assert loaded.multiscale and img_size == 512
-    with pytest.raises(ValueError):
-        load_gate(path, 8, torch.device("cpu"))
+    torch.save({"head_state_dict": ms_head.state_dict(), "arch": "multiscale", "taps": [2, 32],
+                "img_size": 512}, new)
+    backbone, head, img_size = load_gate(new, str(_WEIGHTS), torch.device("cpu"))
+    assert img_size == 512 and head.multiscale
+    assert len(backbone(torch.zeros(1, 3, 64, 64))) == 2

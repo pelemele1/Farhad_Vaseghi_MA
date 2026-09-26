@@ -27,8 +27,7 @@ from torch.utils.data import DataLoader
 from scripts.evaluate_stage_a import collect_predictions, compute_metrics
 from src.data.stage_a_dataset import StageADataset
 from src.eval.thresholds import threshold_for, tune_per_class_thresholds
-from src.models.backbone import FrozenYOLOBackbone
-from src.models.distortion_head import StageADistortionHead
+from scripts.train_stage_a import load_stage_a
 
 
 def select_diverse_sample_indices(rows, class_names, per_kind=3, seed=0):
@@ -299,13 +298,7 @@ def main():
     args = parser.parse_args()
 
     device = torch.device(args.device)
-    ckpt = torch.load(args.checkpoint, map_location=device, weights_only=False)
-    class_names = ckpt["class_names"]
-
-    backbone = FrozenYOLOBackbone(args.weights).to(device)
-    head = StageADistortionHead(in_channels=backbone.out_channels, class_names=class_names).to(device)
-    head.load_state_dict(ckpt["head_state_dict"])
-    head.eval()
+    backbone, head, class_names = load_stage_a(args.checkpoint, args.weights, device)
 
     threshold = args.threshold
     if args.tune_thresholds:
