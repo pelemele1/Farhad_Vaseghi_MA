@@ -201,3 +201,46 @@ class LocalizedSSDLoss(nn.Module):
 
 def build_stage_b_ssd_loss():
     return LocalizedSSDLoss()
+
+
+class DiceBCELoss(nn.Module):
+    """Dice + BCE (architecture.md §4: "Dice + BCE (standard for
+    segmentation with small distortion regions)") -- Stage C's loss.
+
+    Soft Dice (works directly against Stage C's continuous [0,1] mask
+    targets, not just binary ones -- see src/data/stage_c_dataset.py /
+    src/soiling/dataset_builder.py's save_pixel_masks docstring for why the
+    ground truth is kept continuous): per class,
+    `1 - (2*sum(p*t) + smooth) / (sum(p) + sum(t) + smooth)`, summed over
+    every pixel of one sample+class, then averaged over classes and batch.
+    `smooth` avoids a 0/0 division when a sample+class has no positive
+    pixels at all (a genuinely clean image, or an inactive class) in either
+    the prediction or the target.
+
+    No pos_weight/imbalance correction in v1, unlike Stage B's `bce`
+    variant -- follows architecture.md's literal "Dice + BCE" spec first;
+    Stage B's own loss history (bce -> focal -> recalibration, see
+    docs/development_log.md Session 16-18) shows the pattern of adding
+    correction only once an empirical over/under-prediction problem shows
+    up, not preemptively.
+    """
+
+    def __init__(self, bce_weight=0.5, smooth=1.0):
+        super().__init__()
+        self.bce_weight = bce_weight
+        self.smooth = smooth
+
+    def forward(self, logits, targets):
+        bce = F.binary_cross_entropy_with_logits(logits, targets)
+
+        probs = torch.sigmoid(logits)
+        dims = tuple(range(2, logits.dim()))  # sum over spatial dims only, keep (B, C)
+        intersection = (probs * targets).sum(dim=dims)
+        union = probs.sum(dim=dims) + targets.sum(dim=dims)
+        dice_loss = 1 - (2 * intersection + self.smooth) / (union + self.smooth)
+
+        return self.bce_weight * bce + (1 - self.bce_weight) * dice_loss.mean()
+
+
+def build_stage_c_loss(bce_weight=0.5):
+    return DiceBCELoss(bce_weight=bce_weight)

@@ -6,6 +6,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from src.models.losses import (
+    DiceBCELoss,
     FocalLossWithLogits,
     LocalizedSSDLoss,
     build_impaired_gate_loss,
@@ -13,6 +14,7 @@ from src.models.losses import (
     build_stage_b_focal_loss,
     build_stage_b_loss,
     build_stage_b_ssd_loss,
+    build_stage_c_loss,
     compute_impaired_class_weight,
     compute_pos_weight,
     compute_tile_pos_weight,
@@ -324,6 +326,68 @@ def test_ssd_loss_single_optimizer_step_decreases_loss():
     loss_before.backward()
     opt.step()
     loss_after = loss_fn(head(features), labels)
+
+    assert torch.isfinite(loss_before)
+    assert loss_after.item() < loss_before.item()
+
+
+# --- Dice + BCE loss (Stage C, architecture.md §4) -----------------------
+
+
+def test_dice_bce_loss_is_finite_on_random_inputs():
+    loss_fn = build_stage_c_loss()
+    logits = torch.randn(2, 3, 8, 8)
+    targets = torch.rand(2, 3, 8, 8)  # continuous [0,1], Stage C's actual target dtype
+    assert torch.isfinite(loss_fn(logits, targets))
+
+
+def test_dice_bce_loss_near_zero_for_confident_correct_predictions():
+    # Every pixel confidently predicted matching its (binary) target ->
+    # both BCE and soft Dice should be near zero.
+    targets = torch.tensor([[[[1.0, 0.0], [0.0, 1.0]]]])
+    logits = torch.tensor([[[[20.0, -20.0], [-20.0, 20.0]]]])  # sigmoid ~= 1.0 / ~= 0.0
+    loss_fn = DiceBCELoss()
+    assert loss_fn(logits, targets).item() < 1e-4
+
+
+def test_dice_bce_loss_degenerate_all_zero_target_does_not_nan():
+    # A genuinely clean sample (or an inactive class): target is all-zero.
+    # The `smooth` term must prevent a 0/0 division in the Dice component.
+    targets = torch.zeros(1, 1, 4, 4)
+    logits = torch.full((1, 1, 4, 4), -10.0)  # confidently predicts "no distortion" too
+    loss_fn = DiceBCELoss()
+    loss = loss_fn(logits, targets)
+    assert torch.isfinite(loss)
+    assert loss.item() < 0.1  # correct confident prediction on an all-negative target -> small loss
+
+
+def test_dice_bce_loss_weight_interpolates_between_bce_and_dice():
+    torch.manual_seed(0)
+    logits = torch.randn(2, 3, 8, 8)
+    targets = torch.rand(2, 3, 8, 8)
+
+    only_bce = DiceBCELoss(bce_weight=1.0)(logits, targets)
+    only_dice = DiceBCELoss(bce_weight=0.0)(logits, targets)
+    half = DiceBCELoss(bce_weight=0.5)(logits, targets)
+
+    assert torch.allclose(half, 0.5 * only_bce + 0.5 * only_dice, atol=1e-5)
+
+
+def test_dice_bce_loss_single_optimizer_step_decreases_loss():
+    torch.manual_seed(0)
+    from src.models.distortion_head import StageCDistortionHead
+
+    head = StageCDistortionHead(in_channels=8)
+    features = torch.randn(2, 8, 2, 2)
+    targets = torch.rand(2, 3, 64, 64)
+    loss_fn = build_stage_c_loss()
+    opt = torch.optim.SGD(head.parameters(), lr=1.0)
+
+    loss_before = loss_fn(head(features), targets)
+    opt.zero_grad()
+    loss_before.backward()
+    opt.step()
+    loss_after = loss_fn(head(features), targets)
 
     assert torch.isfinite(loss_before)
     assert loss_after.item() < loss_before.item()
