@@ -94,7 +94,8 @@ def plot_training_curve(records, out_path, title="Stage A training curve (real T
     ax.set_xlabel("epoch")
     ax.set_ylabel(ylabel)
     ax.set_title(title)
-    ax.set_xticks(epochs)
+    # one label per epoch overlaps beyond ~20 epochs: then label epoch 1 and every 5th
+    ax.set_xticks(epochs if len(epochs) <= 20 else [e for e in epochs if e == 1 or e % 5 == 0])
     ax.legend()
     ax.grid(alpha=0.3)
     fig.tight_layout()
