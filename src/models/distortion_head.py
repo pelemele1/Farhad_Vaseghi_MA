@@ -166,17 +166,18 @@ class StageBMultiScaleHead(nn.Module):
     features: list ordered fine -> coarse, [s4, s8, s16, s32]. Returns raw
     logits, shape (B, num_classes, H_s32, W_s32)."""
 
-    def __init__(self, in_channels_list, class_names=("dirt", "water", "scratch"), hidden_dim=64):
+    def __init__(self, in_channels_list, class_names=("dirt", "water", "scratch"), hidden_dim=64, dropout=0.0):
         super().__init__()
         self.class_names = tuple(class_names)
         self.laterals = nn.ModuleList(_conv_bn_relu(c, hidden_dim, kernel_size=1) for c in in_channels_list)
         self.fuse = _conv_bn_relu(hidden_dim * len(in_channels_list), hidden_dim)
+        self.dropout = nn.Dropout2d(dropout)  # parameter-free: old checkpoints still load
         self.out_conv = nn.Conv2d(hidden_dim, len(self.class_names), kernel_size=1)
 
     def forward(self, features):
         grid = features[-1].shape[-2:]
         pooled = [F.adaptive_avg_pool2d(lat(f), grid) for lat, f in zip(self.laterals, features)]
-        return self.out_conv(self.fuse(torch.cat(pooled, dim=1)))
+        return self.out_conv(self.dropout(self.fuse(torch.cat(pooled, dim=1))))
 
 
 class ImpairedGateHead(nn.Module):

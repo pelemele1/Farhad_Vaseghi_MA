@@ -39,14 +39,14 @@ STAGE_B_ARCHS = ("conv1x1", "multiscale")
 DEFAULT_TAPS = (4, 8, 16, 32)
 
 
-def build_stage_b_model(arch, weights, class_names, device, taps=DEFAULT_TAPS):
+def build_stage_b_model(arch, weights, class_names, device, taps=DEFAULT_TAPS, dropout=0.0):
     """(backbone, head) for a Stage B architecture: "conv1x1" (v1, one 1x1
     conv on P5) or "multiscale" (v2, the backbone layers at the strides in
     `taps` pooled to the P5 tile grid). Checkpoints without an arch field
     are v1; multiscale ones without a taps field used DEFAULT_TAPS."""
     if arch == "multiscale":
         backbone = build_multiscale_backbone(weights, taps)
-        head = StageBMultiScaleHead(backbone.out_channels, class_names=class_names)
+        head = StageBMultiScaleHead(backbone.out_channels, class_names=class_names, dropout=dropout)
     elif arch == "conv1x1":
         backbone = FrozenYOLOBackbone(weights)
         head = StageBDistortionHead(in_channels=backbone.out_channels, class_names=class_names)
@@ -106,6 +106,9 @@ def main():
                         "weight scratch 3x (normalized to mean 1)")
     parser.add_argument("--taps", default="4,8,16,32", type=parse_taps,
                         help="--arch multiscale only: backbone strides to use, e.g. '2,4,8,16,32' (must include 32)")
+    parser.add_argument("--hflip", action="store_true", help="Randomly mirror training images left-right")
+    parser.add_argument("--weight-decay", type=float, default=0.0, help="> 0 switches Adam to AdamW with this decay")
+    parser.add_argument("--dropout", type=float, default=0.0, help="--arch multiscale only: Dropout2d before the output conv")
     add_common_args(parser)
     args = parser.parse_args()
 
@@ -119,13 +122,16 @@ def main():
     torch.manual_seed(args.seed)
     device = torch.device(args.device)
 
-    train_set = StageBDataset(args.data, split="train", img_size=args.img_size, max_samples=max_samples)
+    train_set = StageBDataset(args.data, split="train", img_size=args.img_size, max_samples=max_samples,
+                              hflip=args.hflip)
     val_set = StageBDataset(args.data, split="val", img_size=args.img_size, max_samples=max_samples)
     train_loader, val_loader = make_loaders(train_set, val_set, args.batch_size, args.num_workers,
                                             low_severity_weight=args.low_severity_weight)
 
-    backbone, head = build_stage_b_model(args.arch, args.weights, train_set.class_names, device, taps=args.taps)
-    print(f"arch={args.arch} taps={args.taps if args.arch == 'multiscale' else '-'}", flush=True)
+    backbone, head = build_stage_b_model(args.arch, args.weights, train_set.class_names, device, taps=args.taps,
+                                         dropout=args.dropout)
+    print(f"arch={args.arch} taps={args.taps if args.arch == 'multiscale' else '-'} hflip={args.hflip} "
+          f"weight_decay={args.weight_decay} dropout={args.dropout}", flush=True)
 
     if args.loss == "focal":
         alpha_parts = [p.strip() for p in args.focal_alpha.split(",")]
@@ -150,11 +156,15 @@ def main():
         loss_fn = build_stage_b_loss(pos_weight)
         print(f"train={len(train_set)} val={len(val_set)} loss=bce pos_weight={pos_weight.tolist()}")
 
-    optimizer = torch.optim.Adam(head.parameters(), lr=args.lr)
+    if args.weight_decay > 0:
+        optimizer = torch.optim.AdamW(head.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+    else:
+        optimizer = torch.optim.Adam(head.parameters(), lr=args.lr)
 
     ckpt_path = None if args.smoke_test else Path(args.out) / "stage_b_head.pt"
     fit(backbone, head, train_loader, val_loader, device, loss_fn, optimizer, args.epochs, ckpt_path,
-        extra_ckpt={"arch": args.arch, "taps": list(args.taps), "class_weights": args.class_weights})
+        extra_ckpt={"arch": args.arch, "taps": list(args.taps), "class_weights": args.class_weights,
+                    "hflip": args.hflip, "weight_decay": args.weight_decay, "dropout": args.dropout})
 
 
 if __name__ == "__main__":

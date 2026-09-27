@@ -110,3 +110,23 @@ def test_missing_split_raises(tmp_path):
     _write_fake_stage_b_dataset(tmp_path, [("a", "train", 0, 0, 0, None)])
     with pytest.raises(ValueError):
         StageBDataset(tmp_path, split="test")
+
+
+def test_hflip_mirrors_image_and_tile_labels_together(tmp_path):
+    grid = np.zeros((3, 2, 2), dtype=np.uint8)
+    grid[0, 0, 1] = 1  # dirt in the top-right tile
+    _write_fake_stage_b_dataset(tmp_path, [("a", "train", 1, 0, 0, grid)])
+    plain_image, plain_labels = StageBDataset(tmp_path, split="train")[0]
+    flipping = StageBDataset(tmp_path, split="train", hflip=True)
+
+    seen = set()
+    for _ in range(40):
+        image, labels = flipping[0]
+        if torch.equal(image, plain_image):
+            assert torch.equal(labels, plain_labels)
+            seen.add("plain")
+        else:
+            assert torch.equal(image, plain_image.flip(-1))
+            assert labels[0, 0, 0] == 1 and labels.sum() == 1  # moved to the top-left tile
+            seen.add("flipped")
+    assert seen == {"plain", "flipped"}

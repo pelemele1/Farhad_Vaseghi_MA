@@ -16,8 +16,11 @@ from torch.utils.data import Dataset
 
 
 class StageBDataset(Dataset):
-    def __init__(self, data_dir, split, img_size=None, max_samples=None):
+    def __init__(self, data_dir, split, img_size=None, max_samples=None, hflip=False):
+        """hflip: mirror each sample left-right with probability 0.5 (image and
+        tile labels together) -- training-time augmentation only."""
         self.data_dir = Path(data_dir)
+        self.hflip = hflip
 
         with open(self.data_dir / "stage_b_meta.json") as f:
             self.meta = json.load(f)
@@ -71,4 +74,6 @@ class StageBDataset(Dataset):
         image = cv.resize(image, (self.img_size, self.img_size))
         tensor = torch.from_numpy(image).permute(2, 0, 1).float() / 255.0
         labels = torch.from_numpy(self.tile_labels[idx]).float()
+        if self.hflip and torch.rand(1).item() < 0.5:
+            tensor, labels = tensor.flip(-1), labels.flip(-1)
         return tensor, labels

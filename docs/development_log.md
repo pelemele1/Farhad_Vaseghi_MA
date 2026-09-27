@@ -2214,3 +2214,74 @@ faint dirt drops (-0.012 to -0.022). Per the user's condition, weighting was not
 
 All three stage reports updated (Stage A §3 now explains what the strides are and why P3/P4
 help); figures regenerated for the two new canonical models.
+
+
+## Session 24 — Stage B overfitting: augmentation and regularization
+
+**Date:** 2026-09-27
+
+User question: is there overfitting in any stage? Train/val loss curves of the canonical
+models: Stage A (best epoch 20/20), Stage C (25/25) and the gate (19/20) still improve at the
+end; val and test AP agree within 0.003 for every stage. Only **Stage B** overfits mildly:
+val loss bottoms out at epoch 23 of 40 (0.0160) and climbs to 0.0173 by epoch 40, while train
+loss keeps falling (0.0121 -> 0.0104). The saved checkpoint (best val epoch) predates the
+overfitting, so no reported number was affected. The user asked to remove the Stage B
+overfitting and leave Stage A/C as they are.
+
+**Cause.** 11200 training images but only 800 distinct source photos (14 variants each), and
+no augmentation, weight decay or dropout anywhere in the project (plain Adam; only the frozen
+backbone, BatchNorm and best-val selection limit overfitting). Stage B trains longest (40
+epochs) and its fused 3x3 conv sees fine (stride-4) scene detail, so it starts memorizing
+backgrounds.
+
+### Code
+
+- `StageBDataset(hflip=...)`: mirrors image and tile labels together with probability 0.5
+  (training split only).
+- `StageBMultiScaleHead(dropout=...)`: `Dropout2d` before the output conv (parameter-free, so
+  old checkpoints load unchanged).
+- `train_stage_b.py`: `--hflip`, `--weight-decay` (> 0 switches Adam to AdamW), `--dropout`;
+  all three are stored in the checkpoint. Defaults reproduce the previous training exactly.
+- Test for the flip (image and labels flip together); 235 tests pass.
+- `scripts/hpc/stage_b_regularization.sh` (same twin a100/work submission as the layer study).
+
+Only horizontal flip was tried as augmentation: brightness/contrast/color jitter would change
+what a faint distortion looks like (label no longer matches), crops/rescale break the fixed
+16x16 tile grid, and a vertical flip is not a realistic camera view.
+
+### Results (validation split; AP / low-severity AP, dirt / water / scratch)
+
+| run | AP | mean | faint AP | mean faint | val loss best -> ep 40 | best epoch |
+|---|---|---|---|---|---|---|
+| none (previous canonical) | 0.932 / 0.921 / 0.822 | 0.892 | 0.806 / 0.775 / 0.691 | 0.757 | 0.0160 -> 0.0173 | 23 |
+| weight decay 0.05 | 0.932 / 0.921 / 0.830 | 0.894 | 0.803 / 0.775 / 0.703 | 0.760 | 0.0156 -> 0.0172 | 23 |
+| dropout 0.2 | 0.932 / 0.924 / 0.823 | 0.893 | 0.804 / 0.776 / 0.685 | 0.755 | 0.0158 -> 0.0170 | 32 |
+| **hflip** | 0.934 / 0.924 / 0.837 | **0.898** | 0.808 / 0.782 / 0.716 | **0.769** | 0.0151 -> 0.0158 | 23 |
+| hflip + weight decay | 0.933 / 0.923 / 0.841 | 0.899 | 0.806 / 0.779 / 0.722 | 0.769 | 0.0150 -> 0.0160 | 23 |
+| hflip + wd + dropout | 0.931 / 0.921 / 0.840 | 0.897 | 0.803 / 0.770 / 0.718 | 0.764 | 0.0153 -> 0.0160 | 36 |
+
+Weight decay and dropout only delay the overfitting; the flip addresses its cause (more
+distinct-looking scenes) and gives the lowest val loss and the best faint AP. Flip + weight
+decay ties with flip alone (differences within run-to-run noise); dropout costs faint
+water/dirt. **Adopted: hflip alone** -- the simplest setting with the best result, and no class
+worse than before.
+
+### New canonical Stage B: `checkpoints/stage_b_flip` (test split)
+
+Training log `stage_b_flip_1823352.out`, test evaluation + clean-image check + figures
+`final_b_1823372.out`, figures tagged `_flip`.
+
+| | previous (`stage_b_multiscale`) | `stage_b_flip` |
+|---|---|---|
+| AP dirt / water / scratch | 0.934 / 0.916 / 0.820 | 0.935 / 0.919 / 0.833 |
+| low-severity AP | 0.808 / 0.758 / 0.651 | 0.808 / 0.766 / 0.670 |
+| gated AP | 0.932 / 0.917 / 0.782 | 0.933 / 0.920 / 0.794 |
+| clean images with any false tile, ungated | 26% / 46% / 27% | 23% / 42% / 18% |
+| same, gated (0.140) | 8% / 14% / 10% | 8% / 12% / 10% |
+
+`stage_b_final_report.md` updated (new "Overfitting and augmentation" section, results,
+figures, reproduction). The old `_multiscale` Stage B figures were removed from `docs/images`;
+the checkpoint `stage_b_multiscale` is kept for comparison. HPC note: twin submissions can both
+start in the same scheduler cycle -- they then write into the same checkpoint directory, so the
+slower copy must be cancelled at once (done here for `b_reg_flip` and `b_reg_flip_wd`, whose
+a100 copies were ahead).
