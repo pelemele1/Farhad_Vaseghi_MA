@@ -166,11 +166,15 @@ class StageBMultiScaleHead(nn.Module):
     features: list ordered fine -> coarse, [s4, s8, s16, s32]. Returns raw
     logits, shape (B, num_classes, H_s32, W_s32)."""
 
-    def __init__(self, in_channels_list, class_names=("dirt", "water", "scratch"), hidden_dim=64, dropout=0.0):
+    def __init__(self, in_channels_list, class_names=("dirt", "water", "scratch"), hidden_dim=64, dropout=0.0,
+                 fuse_kernel=3):
+        """hidden_dim / fuse_kernel set the head's capacity: fewer channels and
+        a 1x1 fuse (no neighboring-tile context) leave less room to memorize
+        the training scenes (Session 25)."""
         super().__init__()
         self.class_names = tuple(class_names)
         self.laterals = nn.ModuleList(_conv_bn_relu(c, hidden_dim, kernel_size=1) for c in in_channels_list)
-        self.fuse = _conv_bn_relu(hidden_dim * len(in_channels_list), hidden_dim)
+        self.fuse = _conv_bn_relu(hidden_dim * len(in_channels_list), hidden_dim, kernel_size=fuse_kernel)
         self.dropout = nn.Dropout2d(dropout)  # parameter-free: old checkpoints still load
         self.out_conv = nn.Conv2d(hidden_dim, len(self.class_names), kernel_size=1)
 

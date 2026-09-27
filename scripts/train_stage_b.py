@@ -39,14 +39,16 @@ STAGE_B_ARCHS = ("conv1x1", "multiscale")
 DEFAULT_TAPS = (4, 8, 16, 32)
 
 
-def build_stage_b_model(arch, weights, class_names, device, taps=DEFAULT_TAPS, dropout=0.0):
+def build_stage_b_model(arch, weights, class_names, device, taps=DEFAULT_TAPS, dropout=0.0,
+                        hidden_dim=64, fuse_kernel=3):
     """(backbone, head) for a Stage B architecture: "conv1x1" (v1, one 1x1
     conv on P5) or "multiscale" (v2, the backbone layers at the strides in
     `taps` pooled to the P5 tile grid). Checkpoints without an arch field
     are v1; multiscale ones without a taps field used DEFAULT_TAPS."""
     if arch == "multiscale":
         backbone = build_multiscale_backbone(weights, taps)
-        head = StageBMultiScaleHead(backbone.out_channels, class_names=class_names, dropout=dropout)
+        head = StageBMultiScaleHead(backbone.out_channels, class_names=class_names, dropout=dropout,
+                                    hidden_dim=hidden_dim, fuse_kernel=fuse_kernel)
     elif arch == "conv1x1":
         backbone = FrozenYOLOBackbone(weights)
         head = StageBDistortionHead(in_channels=backbone.out_channels, class_names=class_names)
@@ -60,7 +62,8 @@ def load_stage_b(checkpoint, weights, device):
     ckpt = torch.load(checkpoint, map_location=device, weights_only=False)
     class_names = ckpt["class_names"]
     backbone, head = build_stage_b_model(ckpt.get("arch", "conv1x1"), weights, class_names, device,
-                                         taps=tuple(ckpt.get("taps", DEFAULT_TAPS)))
+                                         taps=tuple(ckpt.get("taps", DEFAULT_TAPS)),
+                                         hidden_dim=ckpt.get("hidden_dim", 64), fuse_kernel=ckpt.get("fuse_kernel", 3))
     head.load_state_dict(ckpt["head_state_dict"])
     head.eval()
     return backbone, head, class_names
@@ -109,6 +112,9 @@ def main():
     parser.add_argument("--hflip", action="store_true", help="Randomly mirror training images left-right")
     parser.add_argument("--weight-decay", type=float, default=0.0, help="> 0 switches Adam to AdamW with this decay")
     parser.add_argument("--dropout", type=float, default=0.0, help="--arch multiscale only: Dropout2d before the output conv")
+    parser.add_argument("--hidden-dim", type=int, default=64, help="--arch multiscale only: channels per tap and after fusion")
+    parser.add_argument("--fuse-kernel", type=int, default=3, choices=(1, 3),
+                        help="--arch multiscale only: 3 = fuse with a 3x3 conv (sees neighboring tiles), 1 = per tile only")
     add_common_args(parser)
     args = parser.parse_args()
 
@@ -129,7 +135,8 @@ def main():
                                             low_severity_weight=args.low_severity_weight)
 
     backbone, head = build_stage_b_model(args.arch, args.weights, train_set.class_names, device, taps=args.taps,
-                                         dropout=args.dropout)
+                                         dropout=args.dropout, hidden_dim=args.hidden_dim, fuse_kernel=args.fuse_kernel)
+    print(f"head parameters: {sum(p.numel() for p in head.parameters())}", flush=True)
     print(f"arch={args.arch} taps={args.taps if args.arch == 'multiscale' else '-'} hflip={args.hflip} "
           f"weight_decay={args.weight_decay} dropout={args.dropout}", flush=True)
 
@@ -164,7 +171,8 @@ def main():
     ckpt_path = None if args.smoke_test else Path(args.out) / "stage_b_head.pt"
     fit(backbone, head, train_loader, val_loader, device, loss_fn, optimizer, args.epochs, ckpt_path,
         extra_ckpt={"arch": args.arch, "taps": list(args.taps), "class_weights": args.class_weights,
-                    "hflip": args.hflip, "weight_decay": args.weight_decay, "dropout": args.dropout})
+                    "hflip": args.hflip, "weight_decay": args.weight_decay, "dropout": args.dropout,
+                    "hidden_dim": args.hidden_dim, "fuse_kernel": args.fuse_kernel})
 
 
 if __name__ == "__main__":

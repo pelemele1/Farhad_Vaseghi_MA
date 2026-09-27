@@ -193,6 +193,20 @@ def test_stage_b_multiscale_head_outputs_one_logit_per_p5_tile():
     assert head(features).shape == (2, 3, 2, 2)
 
 
+def test_stage_b_multiscale_head_smaller_capacity_keeps_output_shape():
+    from src.models.distortion_head import StageBMultiScaleHead
+
+    def n_params(m):
+        return sum(p.numel() for p in m.parameters())
+
+    default = StageBMultiScaleHead([16, 32, 32, 32])
+    small = StageBMultiScaleHead([16, 32, 32, 32], hidden_dim=16, fuse_kernel=1)
+    features = [torch.randn(2, 16, 16, 16), torch.randn(2, 32, 8, 8),
+                torch.randn(2, 32, 4, 4), torch.randn(2, 32, 2, 2)]
+    assert small(features).shape == (2, 3, 2, 2)
+    assert n_params(small) < n_params(default) / 4
+
+
 def test_stage_c_unet_head_with_stride2_tap_still_outputs_input_resolution():
     from src.models.distortion_head import StageCUNetHead
 

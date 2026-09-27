@@ -2285,3 +2285,58 @@ the checkpoint `stage_b_multiscale` is kept for comparison. HPC note: twin submi
 start in the same scheduler cycle -- they then write into the same checkpoint directory, so the
 slower copy must be cancelled at once (done here for `b_reg_flip` and `b_reg_flip_wd`, whose
 a100 copies were ahead).
+
+## Session 25 — Stage B overfitting, part 2: smaller head
+
+**Date:** 2026-09-27
+
+The user pointed out that the Session 24 flip model's loss curve still shows overfitting:
+validation loss stalls around epoch 10 while training loss keeps falling (last-10-epoch mean
+train 0.0120 vs val 0.0157). Session 24 had overstated this as "removed" -- the flip stops val
+loss from *rising* and shrinks the gap by ~40%, but does not close it. The user asked for a
+smaller head, accepting a small accuracy loss if the overfitting disappears.
+
+### Code
+
+- `StageBMultiScaleHead(hidden_dim, fuse_kernel)`: channel count and 1x1 vs 3x3 fusion;
+  `train_stage_b.py --hidden-dim / --fuse-kernel`, stored in the checkpoint and read back by
+  `load_stage_b` (older checkpoints default to 64 / 3). The training log now prints the head's
+  parameter count.
+- `visualize_stage_b_results.py`: the `--tag` file suffix no longer leaks into figure titles
+  (the flip figures read "training curve_flip").
+- Test for the smaller head; `scripts/hpc/stage_b_small_head.sh` (a100 only -- no twin copies,
+  which could start together and share a checkpoint directory).
+
+### Results (validation split, all with --hflip; gap = mean over the last 10 epochs)
+
+| head | params | AP dirt / water / scratch | mean | mean faint | train / val (gap) | best epoch |
+|---|---|---|---|---|---|---|
+| 64 ch, 3x3 (Session 24) | 263k | 0.934 / 0.924 / 0.837 | 0.898 | 0.769 | 0.0120 / 0.0157 (0.0037) | 23 |
+| **32 ch, 3x3** | 95k | 0.932 / 0.922 / 0.826 | **0.893** | **0.763** | 0.0139 / 0.0163 (0.0024) | **38** |
+| 16 ch, 3x3 | 38k | 0.924 / 0.911 / 0.781 | 0.872 | 0.717 | 0.0159 / 0.0172 (0.0013) | 33 |
+| 32 ch, 1x1 | 62k | 0.897 / 0.876 / 0.782 | 0.852 | 0.641 | 0.0189 / 0.0200 (0.0011) | 37 |
+| 16 ch, 1x1 | 30k | 0.887 / 0.863 / 0.761 | 0.837 | 0.607 | 0.0205 / 0.0207 (0.0001) | 39 |
+| 8 ch, 1x1 | 15k | 0.875 / 0.847 / 0.726 | 0.816 | 0.566 | 0.0223 / 0.0218 (none) | 38 |
+
+Only the 1x1-fusion heads close the gap, and they are clearly underfitting (-0.05 to -0.08
+mean AP, -0.13 to -0.20 faint AP) -- incompatible with the faint-distortion goal. With a
+frozen backbone and 800 training scenes, a small gap is unavoidable unless the head is too
+small to learn the task. The user chose the **32-channel, 3x3** head: -0.005 AP, validation
+loss keeps improving until epoch 38 (no upward trend), gap about a third smaller.
+
+### New canonical Stage B: `checkpoints/stage_b_h32` (test split)
+
+Training log `stage_b_h32_1823489.out`, test run `final_b_h32_1823506.out`, figures `_h32`.
+
+| | 64 ch, no flip (`stage_b_multiscale`) | 64 ch, flip (`stage_b_flip`) | **32 ch, flip (`stage_b_h32`)** |
+|---|---|---|---|
+| AP dirt / water / scratch | 0.934 / 0.916 / 0.820 | 0.935 / 0.919 / 0.833 | 0.933 / 0.921 / 0.829 |
+| low-severity AP | 0.808 / 0.758 / 0.651 | 0.808 / 0.766 / 0.670 | 0.808 / 0.774 / 0.666 |
+| gated AP | 0.932 / 0.917 / 0.782 | 0.933 / 0.920 / 0.794 | 0.931 / 0.921 / 0.789 |
+| clean images flagged, ungated | 26% / 46% / 27% | 23% / 42% / 18% | **15% / 15% / 14%** |
+| same, gated (0.140) | 8% / 14% / 10% | 8% / 12% / 10% | 9% / 10% / 6% |
+
+On test the smaller head matches the 64-channel one within noise, and it raises far fewer
+false alarms on clean images (water: 42% -> 15% ungated) -- the clearest sign that it memorizes
+less. `stage_b_final_report.md` updated (head-size table, results, figures, reproduction); the
+`_flip` figures were replaced by `_h32`.
