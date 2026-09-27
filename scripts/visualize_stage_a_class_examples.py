@@ -94,7 +94,7 @@ def plot_class_example(class_names, target_class,
                         clean_image, clean_label, clean_probs,
                         dist_image, dist_label, dist_probs,
                         threshold, out_path):
-    fig = plt.figure(figsize=(9, 6.5))
+    fig = plt.figure(figsize=(9, 7))
     gs = fig.add_gridspec(2, 2, height_ratios=[2.2, 1], hspace=0.35, wspace=0.25)
 
     ax_img_clean = fig.add_subplot(gs[0, 0])
@@ -124,7 +124,10 @@ def plot_class_example(class_names, target_class,
         ax.set_xlabel("predicted probability")
         ax.set_title(subtitle, fontsize=10)
         for yi, p in zip(y, probs):
-            ax.text(min(p + 0.02, 0.9), yi, f"{p:.2f}", va="center", fontsize=8)
+            if p > 0.85:
+                ax.text(p - 0.02, yi, f"{p:.2f}", va="center", ha="right", fontsize=8, color="white")
+            else:
+                ax.text(p + 0.02, yi, f"{p:.2f}", va="center", fontsize=8)
 
     legend_handles = [
         plt.Rectangle((0, 0), 1, 1, color="seagreen", label="hit"),
@@ -132,9 +135,10 @@ def plot_class_example(class_names, target_class,
         plt.Rectangle((0, 0), 1, 1, color="darkorange", label="false alarm"),
         plt.Rectangle((0, 0), 1, 1, color="crimson", label="miss"),
     ]
-    fig.legend(handles=legend_handles, loc="lower center", ncol=4, fontsize=9, frameon=False)
+    fig.legend(handles=legend_handles, loc="lower center", ncol=4, fontsize=9, frameon=False,
+               bbox_to_anchor=(0.5, 0.0))
     fig.suptitle(f"Stage A qualitative example — {target_class}", fontsize=13)
-    fig.tight_layout(rect=[0, 0.05, 1, 0.95])
+    fig.tight_layout(rect=[0, 0.1, 1, 0.95])
     fig.savefig(out_path, dpi=110)
     plt.close(fig)
 

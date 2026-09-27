@@ -117,9 +117,10 @@ def plot_metrics_bar_chart(metric_rows, out_path, title="Stage A test-split metr
     ax.set_ylim(0, 1.05)
     ax.set_ylabel("score")
     ax.set_title(title)
-    ax.legend(loc="lower right")
+    # below the axes, so it never covers a bar
+    ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.08), ncol=len(metrics), frameon=False)
     fig.tight_layout()
-    fig.savefig(out_path, dpi=110)
+    fig.savefig(out_path, dpi=110, bbox_inches="tight")
     plt.close(fig)
 
 
@@ -151,20 +152,25 @@ def plot_roc_pr_curves(labels, probs, class_names, out_path, title="Stage A"):
     ax_roc.plot([0, 1], [0, 1], color="gray", linestyle="--", linewidth=1, label="random")
     ax_roc.set_xlabel("false positive rate")
     ax_roc.set_ylabel("true positive rate")
-    ax_roc.set_title(f"{title}: ROC curves")
+    ax_roc.set_title("ROC curves")
     ax_roc.legend(loc="lower right", fontsize=9)
     ax_roc.set_xlim(0, 1)
     ax_roc.set_ylim(0, 1.02)
 
     ax_pr.set_xlabel("recall")
     ax_pr.set_ylabel("precision")
-    ax_pr.set_title(f"{title}: PR curves\n(dotted line = that class's positive rate, i.e. random-guessing baseline)")
-    ax_pr.legend(loc="lower left", fontsize=9)
+    ax_pr.set_title("Precision-recall curves")
+    handles, _ = ax_pr.get_legend_handles_labels()
+    handles.append(plt.Line2D([], [], color="gray", linestyle=":", label="positive rate (random baseline)"))
+    # below the axes: inside, it would cover a curve or a baseline whose height varies by stage
+    ax_pr.legend(handles=handles, loc="upper center", bbox_to_anchor=(0.5, -0.13), ncol=2, fontsize=9,
+                 frameon=False)
+    fig.suptitle(title)
     ax_pr.set_xlim(0, 1)
     ax_pr.set_ylim(0, 1.02)
 
     fig.tight_layout()
-    fig.savefig(out_path, dpi=110)
+    fig.savefig(out_path, dpi=110, bbox_inches="tight")
     plt.close(fig)
 
 
@@ -321,7 +327,7 @@ def main():
     print(f"wrote {metrics_path}")
 
     curves_path = out_dir / f"stage_a_roc_pr_curves{args.tag}.jpg"
-    plot_roc_pr_curves(labels, probs, class_names, curves_path, title=f"Stage A{args.tag}")
+    plot_roc_pr_curves(labels, probs, class_names, curves_path, title="Stage A")
     print(f"wrote {curves_path}")
 
     sample_indices = select_diverse_sample_indices(dataset.rows, class_names, per_kind=args.per_kind, seed=args.seed)
@@ -330,7 +336,7 @@ def main():
     print(f"wrote {grid_path}")
 
     severity_path = out_dir / f"stage_a_probability_by_severity{args.tag}.jpg"
-    plot_probability_by_severity(dataset.rows, probs, class_names, severity_path, title=f"Stage A{args.tag}")
+    plot_probability_by_severity(dataset.rows, probs, class_names, severity_path, title="Stage A")
     print(f"wrote {severity_path}")
 
     if args.log_file:

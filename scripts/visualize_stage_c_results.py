@@ -249,17 +249,18 @@ def main():
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    gated = " (gated)" if args.gate_checkpoint else ""
     metrics_path = out_dir / f"stage_c_test_metrics{args.tag}.jpg"
-    plot_metrics_bar_chart(metric_rows, metrics_path, title=f"Stage C pooled-pixel metrics per class{args.tag}")
+    plot_metrics_bar_chart(metric_rows, metrics_path, title=f"Stage C pooled-pixel metrics per class{gated}")
     print(f"wrote {metrics_path}")
 
     curves_path = out_dir / f"stage_c_roc_pr_curves{args.tag}.jpg"
-    plot_roc_pr_curves(labels_flat, probs_flat, class_names, curves_path, title=f"Stage C{args.tag}")
+    plot_roc_pr_curves(labels_flat, probs_flat, class_names, curves_path, title=f"Stage C{gated}")
     print(f"wrote {curves_path}")
 
     severity_path = out_dir / f"stage_c_probability_by_severity{args.tag}.jpg"
     plot_probability_by_severity(dataset.rows, max_probs, class_names, severity_path,
-                                  title=f"Stage C{args.tag} (max prob per image)")
+                                  title=f"Stage C{gated} (max prob per image)")
     print(f"wrote {severity_path}")
 
     report_rows = select_report_rows(dataset, raw_max_probs, class_names, per_class=args.per_kind, seed=args.seed)
@@ -285,7 +286,7 @@ def main():
             curve_path = out_dir / f"stage_c_training_curve{args.tag}.jpg"
             plot_training_curve(
                 records, curve_path,
-                title=f"Stage C training curve{args.tag} (real TinyGPU run)",
+                title="Stage C training curve (real TinyGPU run)",
                 ylabel="loss",
             )
             print(f"wrote {curve_path}")

@@ -190,7 +190,7 @@ def plot_combo_sample(dataset, idx, active_classes, probs, labels, class_names, 
         )
 
     fig.suptitle(f"Combo variant: {' + '.join(active_classes)} all active on the same image", fontsize=11)
-    fig.tight_layout()
+    fig.tight_layout(rect=[0, 0, 1, 0.92])
     fig.savefig(out_path, dpi=110)
     plt.close(fig)
 
@@ -493,17 +493,18 @@ def main():
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    gated = " (gated)" if args.gate_checkpoint else ""
     metrics_path = out_dir / f"stage_b_test_metrics{args.tag}.jpg"
-    plot_metrics_bar_chart(metric_rows, metrics_path, title="Stage B per-tile metrics per class")
+    plot_metrics_bar_chart(metric_rows, metrics_path, title=f"Stage B per-tile metrics per class{gated}")
     print(f"wrote {metrics_path}")
 
     curves_path = out_dir / f"stage_b_roc_pr_curves{args.tag}.jpg"
-    plot_roc_pr_curves(labels_flat, probs_flat, class_names, curves_path, title="Stage B")
+    plot_roc_pr_curves(labels_flat, probs_flat, class_names, curves_path, title=f"Stage B{gated}")
     print(f"wrote {curves_path}")
 
     severity_path = out_dir / f"stage_b_probability_by_severity{args.tag}.jpg"
     plot_probability_by_severity(dataset.rows, max_prob_per_image(probs), class_names, severity_path,
-                                  title="Stage B (max prob per image)")
+                                  title=f"Stage B{gated} (max prob per image)")
     print(f"wrote {severity_path}")
 
     sample_indices = select_diverse_sample_indices(dataset.rows, class_names, per_kind=args.per_kind, seed=args.seed)
