@@ -31,7 +31,7 @@ here that needs a second backup.
 cd $WORK
 git clone <your repo URL> Farhad_Vaseghi_MA
 cd Farhad_Vaseghi_MA
-git checkout feature/stage-a-mio-tcd
+git checkout feature/stages-a-b-c
 ```
 
 `data/`, `weights/`, and `checkpoints/` are gitignored (regenerable, not part of the repo),
