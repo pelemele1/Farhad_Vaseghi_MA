@@ -72,11 +72,11 @@ gated mask.*
 
 ```mermaid
 flowchart LR
-    I[RGB image] --> BB["YOLOv11-m backbone<br/>(COCO-pretrained, frozen)"]
-    BB -- "strides 8, 16, 32" --> A["Stage A head<br/>GAP + FC"]
-    BB -- "strides 4–32" --> G["Impaired gate<br/>GAP + FC"]
-    BB -- "strides 4–32" --> B["Stage B head<br/>tile classifier"]
-    BB -- "strides 2–32" --> C["Stage C head<br/>U-Net decoder"]
+    I[RGB image] --> BB["YOLOv11-m backbone<br/>(COCO-pretrained, frozen)<br/>layers 0–10"]
+    BB -- "layers 4, 6, 10<br/>(P3, P4, P5)" --> A["Stage A head<br/>GAP + FC"]
+    BB -- "layers 2, 4, 6, 10" --> G["Impaired gate<br/>GAP + FC"]
+    BB -- "layers 2, 4, 6, 10" --> B["Stage B head<br/>tile classifier"]
+    BB -- "layers 0, 2, 4, 6, 10" --> C["Stage C head<br/>U-Net decoder"]
     A --> AO[dirt / water / scratch<br/>per image]
     G --> GT{impaired?}
     B --> GT
@@ -84,6 +84,17 @@ flowchart LR
     GT -- yes --> BO[tile grid / pixel masks]
     GT -- no --> Z[outputs zeroed]
 ```
+
+Backbone layers the heads read (map sizes for a 512×512 input; Stage A runs at 640×640, so its
+maps are 80×80 / 40×40 / 20×20):
+
+| Layer | Module | Stride | Map size | Channels | Used by |
+|---|---|---|---|---|---|
+| 0 | `Conv` | 2 | 256×256 | 64 | Stage C |
+| 2 | `C3k2` | 4 | 128×128 | 256 | Stage B, Stage C, gate |
+| 4 | `C3k2` (P3) | 8 | 64×64 | 512 | Stage A, Stage B, Stage C, gate |
+| 6 | `C3k2` (P4) | 16 | 32×32 | 512 | Stage A, Stage B, Stage C, gate |
+| 10 | `C2PSA` (P5, end of backbone) | 32 | 16×16 | 512 | all heads |
 
 - The **backbone is never trained**; only the small heads are. This follows the "frozen
   backbone" option of [`architecture.md`](architecture.md) §3: the detection task the backbone
