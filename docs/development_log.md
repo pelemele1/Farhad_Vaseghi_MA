@@ -2428,3 +2428,129 @@ the 103 clean test images; gated the two are similar. The retrained `*_lf` model
 since they are trained on labels now verified correct. All reports, figures
 (`regenerate_report_figures.sh`) and the README are updated; the per-sample figures now give a
 multi-distortion image one row per class.
+
+## Session 27 — Visible-change labels, one class per location, gate-first pipeline
+
+**Date:** 2026-10-09
+
+**Trigger.** The user compared the Stage B report rows of a dirt + water image (one row per
+class showing the same prediction) and asked for the design as intended: the impaired /
+not-impaired decision first, Stages B and C only for impaired images, one label per location
+covering every distortion present, and a final answer naming the dominant distortion. Two
+decisions by the user:
+- output: colored class maps (one color per distortion) at tile and pixel level plus an
+  image-level answer;
+- labels: where two distortions overlap, only the one that is visible is labeled. After a
+  preview comparing the old masks (> 0.5) with labels from the actual image change, the user
+  chose the image-change labels ("column 4").
+
+### Design
+
+- **Stage A is the gate.** The separate impaired-gate head answered a question Stage A already
+  answers ("is any distortion present"), was the weakest model (35% of clean images passed at
+  94% recall, trained on 1 clean image in 14) and cost faint scratches (Stage C scratch AP
+  0.769 → 0.725 gated). The pipeline now gates on max(P(dirt), P(water), P(scratch)) of
+  Stage A, threshold set on val to keep 98% of impaired images. The gate head is kept in the
+  code, not used.
+- **Backbone once.** All heads read one 512-px backbone pass (strides 2–32); Stage A moves
+  from 640 to 512 px.
+- **Stages B and C: 4 classes, one per location** (clean / dirt / water / scratch), softmax.
+  B: focal loss (γ 2) with inverse-square-root class-frequency weights; C: class-weighted
+  cross-entropy + Dice over the three distortion classes.
+- **Answer** from the Stage C map: every class covering at least its minimum share of the image
+  (tuned on val, see below), with its share; dominant = largest share; "clean" if the gate stops
+  the image or nothing reaches its share.
+- **One dataset** (`data/processed/visible`) for all stages: same 1000 photos, splits, 14
+  variants per photo and seeds as before.
+
+### Visible-change ground truth (`src/soiling/visible_labels.py`)
+
+1. **Reproducible generator.** `pythonperlin.perlin(seed=None)` calls `np.random.seed(None)`,
+   reseeding numpy from OS entropy on every texture — the cause of the Session 6 / 26
+   "dirt/water not pixel-reproducible" notes. `effects.py` now passes a seed drawn from the
+   already-seeded numpy state; dirt and water are bit-identical for the same seed, and an
+   effect's shape no longer depends on the image it is applied to (tests).
+2. **Per-effect contribution.** For each applied effect the variant is re-rendered without it
+   (others with their recorded seeds); |final − re-render| (max over color channels, light
+   Gaussian smoothing) is that effect's visible change, restricted to its mask support (mask
+   > 0.02, dilated 7 px — excludes the thin-water renderer's faint global film).
+3. **Label.** The effect with the largest change if > 10 gray levels (the audit's visibility
+   cutoff), else clean; a visible scratch (always the top layer) wins over the layers under
+   it. Clean-up: 5-px closing per class, regions < 32 px removed, clean holes < 64 px filled.
+4. **Image level:** a class is present if ≥ 20 pixels carry it; `dominant` = largest area.
+   **Tiles:** a class's area share of the tile is compared with its cutoff (dirt 0.20, water
+   0.25, scratch 0.015); the tile takes the class exceeding its cutoff by the largest factor.
+
+Consequences: a layer hidden under a later one (dirt under thick water) disappears from the
+labels; a faint haze is labeled only where it visibly changes the image (edges, cars), not over
+flat asphalt where it changes nothing. Severity-independence (Session 22) is replaced by
+visibility: a faint distortion is labeled wherever it is visible.
+
+**Dataset** (`build_visible_1835773.out`, 58 min on 16 cores; `data/processed/visible`): 14000
+images, splits 11200 / 1400 / 1400; images with visible dirt / water / scratch: train 4797 /
+4800 / 4734 (3 dirt fully hidden under water, 66 faint scratches with < 20 visible pixels after
+the clean-up), test 600 / 600 / 597; clean (nothing visible) train 843, test 100. Training pixels:
+clean 65.6%, dirt 17.9%, water 16.3%, scratch 0.18%; tiles: 58.2 / 20.8 / 19.0 / 2.0%.
+
+### Training (TinyGPU)
+
+Twin submissions on a100 and `work`; Stage C ran on a V100 after 2 h in the queue.
+
+| stage | job | best epoch (val loss) | epoch time |
+|---|---|---|---|
+| A | `1835836` (work) | 20/20 (0.233) | 35 s |
+| B | `1835837` (work) | 32/40 (0.067) | 36 s |
+| C | `1835902` (V100) | 18/25 (0.274) | 110 s |
+
+A shows no train/val gap; B and C level off on val (B after ~20 epochs, C after ~12).
+
+**Decision settings, tuned on val** (`evaluate_visible.py`, `checkpoints/visible_pipeline.json`):
+- Gate threshold 0.278 (98% of impaired val images kept).
+- **Map offsets.** A first 300-image check showed Stage B marking a scratch tile on 57% of clean
+  images (scratch tile precision 0.62): the class weights (scratch 2.2× for tiles, 3.2× for
+  pixels, vs. 0.4 / 0.17 for clean) push the argmax toward rare classes. A per-class offset added
+  to the log-probabilities (coordinate search, best mean F1 of the distortion classes on val)
+  removes that: tiles −0.2 / 0.0 / −0.8, pixels −0.4 / −0.8 / −2.6 (dirt / water / scratch).
+  In the check, scratch tile precision rose to 0.86 and clean images with a scratch tile fell to 5%.
+- **Answer minimum shares.** Counting every pixel of the map, the first full evaluation
+  (`eval_visible_1835912.out`) answered only 33% of clean test images "clean" and got the exact
+  set of distortions right for 28% (presence precision dirt 0.56, water 0.61): small stray regions
+  added classes. A per-class minimum share of the map (best F1 per class on val) fixed it: dirt
+  10%, water 5%, scratch 0.07% (final evaluation `eval_visible_1835959.out`). The dirt value is
+  at the top of the search grid; on test, F1 falls for higher values (0.931 at 10%, 0.901 at 15%).
+
+### Results (test split)
+
+| | dirt | water | scratch |
+|---|---|---|---|
+| A: AP (faint recall) | 0.971 (0.75) | 0.978 (0.83) | 0.941 (0.78) |
+| B tiles, gated: F1 / IoU / AP | 0.859 / 0.753 / 0.933 | 0.819 / 0.694 / 0.898 | 0.782 / 0.642 / 0.845 |
+| B faint recall | 0.71 | 0.70 | 0.57 |
+| C pixels, gated: F1 / IoU / AP | 0.854 / 0.745 / 0.930 | 0.797 / 0.662 / 0.878 | 0.839 / 0.722 / 0.862 |
+| C faint recall | 0.66 | 0.60 | 0.68 |
+| answer: presence P / R | 0.99 / 0.88 | 0.97 / 0.93 | 0.97 / 0.89 |
+
+- Gate: ROC-AUC 0.938; impaired kept 98.5% (faint 97.4%), clean passed 70%. At a 95% recall target:
+  95.0% kept, faint 90.8%, clean passed 44%.
+- Answer: impaired vs. clean right for 95.5% of the 1400 images, 95% of clean images answered
+  "clean", dominant distortion right for **91.8%** of the 1300 impaired images (faint 80.9%,
+  medium 95.3%, strong 98.3%), exact set of distortions right for 85.4%.
+- Main confusions (confusion matrices in the report): distortion edges vs. clean, and dirt vs.
+  water (4–7% of their pixels / tiles). Gating changes overall B/C metrics by ≤ 0.005.
+- Not directly comparable with Sessions 21–26 (different labels, one class per location,
+  per-pixel instead of 8×8-cell scoring).
+
+Report: `docs/visible_pipeline_report.md`; README rewritten around the new pipeline.
+
+### Files
+
+- new: `src/soiling/visible_labels.py`, `src/soiling/visible_dataset.py`,
+  `scripts/build_visible_dataset.py`, `src/data/visible_dataset.py`, `scripts/train_visible.py`,
+  `src/pipeline.py`, `src/eval/class_maps.py`, `scripts/evaluate_visible.py`,
+  `scripts/visualize_visible.py`, `scripts/hpc/train_visible.sh`,
+  `scripts/hpc/evaluate_visible.sh`, `tests/test_visible_labels.py` (27 tests);
+- changed: `src/soiling/effects.py` (seeded perlin), `src/soiling/dataset_builder.py`
+  (`apply_visible_effect_with_seed`), `src/models/losses.py` (`MultiClassFocalLoss`,
+  `CEDiceLoss`, `inverse_sqrt_frequency_weights`).
+- Pitfall: importing ultralytics patches `cv2.imread` to return grayscale PNGs as (H, W, 1);
+  `read_label_map` squeezes it.

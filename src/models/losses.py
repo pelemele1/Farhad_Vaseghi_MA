@@ -262,3 +262,60 @@ class DiceBCELoss(nn.Module):
 
 def build_stage_c_loss(bce_weight=0.5, class_weights=None):
     return DiceBCELoss(bce_weight=bce_weight, class_weights=class_weights)
+
+
+# --- One class per tile / pixel (Session 27: visible-change labels) ---------
+
+
+def inverse_sqrt_frequency_weights(counts):
+    """(C,) class weights proportional to 1/sqrt(class frequency), scaled to
+    mean 1: a rare class (scratch: well under 1% of pixels) gets several times
+    the weight of 'clean' without the extreme factors plain inverse frequency
+    gives."""
+    counts = np.asarray(counts, dtype=np.float64)
+    freq = counts / counts.sum()
+    w = 1.0 / np.sqrt(np.maximum(freq, 1e-8))
+    return torch.tensor(w / w.mean(), dtype=torch.float32)
+
+
+class MultiClassFocalLoss(nn.Module):
+    """Softmax focal loss over C mutually exclusive classes (Lin et al. 2017):
+    per element -w[y] * (1 - p_y)**gamma * log(p_y), averaged. logits
+    (B, C, ...), targets (B, ...) class indices. Stage B's tile loss."""
+
+    def __init__(self, class_weights=None, gamma=2.0):
+        super().__init__()
+        self.gamma = gamma
+        self.register_buffer("class_weights", None if class_weights is None
+                             else torch.as_tensor(class_weights, dtype=torch.float32))
+
+    def forward(self, logits, targets):
+        log_p = F.log_softmax(logits, dim=1).gather(1, targets.unsqueeze(1)).squeeze(1)
+        loss = -((1 - log_p.exp()) ** self.gamma) * log_p
+        if self.class_weights is not None:
+            loss = loss * self.class_weights.to(logits.device)[targets]
+        return loss.mean()
+
+
+class CEDiceLoss(nn.Module):
+    """Class-weighted cross-entropy + soft Dice over the distortion classes
+    (every class but 0 = clean), Dice sums taken over the whole batch (see
+    DiceBCELoss for why batch-level). Stage C's pixel loss."""
+
+    def __init__(self, class_weights=None, dice_weight=0.5, smooth=1.0):
+        super().__init__()
+        self.dice_weight = dice_weight
+        self.smooth = smooth
+        self.register_buffer("class_weights", None if class_weights is None
+                             else torch.as_tensor(class_weights, dtype=torch.float32))
+
+    def forward(self, logits, targets):
+        weight = None if self.class_weights is None else self.class_weights.to(logits.device)
+        ce = F.cross_entropy(logits, targets, weight=weight)
+        probs = torch.softmax(logits, dim=1)[:, 1:]
+        onehot = F.one_hot(targets, logits.shape[1]).movedim(-1, 1)[:, 1:].to(probs.dtype)
+        dims = (0,) + tuple(range(2, probs.dim()))
+        intersection = (probs * onehot).sum(dim=dims)
+        union = probs.sum(dim=dims) + onehot.sum(dim=dims)
+        dice = 1 - (2 * intersection + self.smooth) / (union + self.smooth)
+        return (1 - self.dice_weight) * ce + self.dice_weight * dice.mean()

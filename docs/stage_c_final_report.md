@@ -1,5 +1,10 @@
 # Stage C Final Report — Pixel-Level Distortion Segmentation
 
+> **Superseded design (Session 27).** The current pipeline — gate first (Stage A), one visible
+> class per tile/pixel, color-coded maps and an image-level answer — is described in
+> [`visible_pipeline_report.md`](visible_pipeline_report.md). This report remains the record of
+> the multi-label models and of how the layers, heads and losses were chosen.
+
 **Status:** complete. Canonical checkpoint: `checkpoints/stage_c_unet_t2_lf/stage_c_head.pt`
 (U-Net-style decoder on all five backbone depths, strides 2–32, Dice + BCE), trained on the pixel masks of
 `data/processed/stage_b` (the same 14000 images, splits and severities as Stage B, with the

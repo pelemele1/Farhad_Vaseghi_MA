@@ -41,7 +41,24 @@ from add_mud import (  # noqa: E402 (path must be set up first)
     add_dirtwaterByTxture_slight,
 )
 from add_droplet_distort import add_distort  # noqa: E402
+import generate_texture_paper as _texture_module  # noqa: E402
 from generate_texture_paper import generate_texture  # noqa: E402
+
+# pythonperlin's perlin(seed=None) calls np.random.seed(None), i.e. reseeds numpy
+# from OS entropy on every call -- the reason dirt/water renders were never
+# pixel-reproducible (Session 6). Passing a seed drawn from the already-seeded
+# numpy state makes every texture, and every draw after it, reproducible
+# (Session 27: the visible-change labels re-render a combo without one effect).
+_unseeded_perlin = _texture_module.perlin
+
+
+def _seeded_perlin(*shape, seed=None, **kwargs):
+    if seed is None:
+        seed = int(np.random.randint(0, 2**31 - 1))
+    return _unseeded_perlin(*shape, seed=seed, **kwargs)
+
+
+_texture_module.perlin = _seeded_perlin
 
 # Measured empirically (mean mask value / fraction of pixels > 50 out of 255,
 # 3 trials each, unchanged vendored code): r_fog/thick_fog/little_rain_drop

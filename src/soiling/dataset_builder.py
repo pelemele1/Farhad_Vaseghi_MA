@@ -115,14 +115,22 @@ def _apply_visible_effect(before, name, seed, severity):
     so a label never names a distortion that isn't in the image (Session 26
     label audit). Returns (out, full-strength mask), or (before, None) if no
     attempt was visible; the caller then leaves the class unlabeled."""
+    out, mask, _ = apply_visible_effect_with_seed(before, name, seed, severity)
+    return out, mask
+
+
+def apply_visible_effect_with_seed(before, name, seed, severity):
+    """`_apply_visible_effect`, also returning the seed of the attempt that was
+    kept (None if none was visible) -- needed to re-render the same effect
+    later (src/soiling/visible_labels.py)."""
     effect = {"dirt": add_dirt, "water": add_water, "scratch": add_scratch}[name]
     for attempt in range(MAX_EFFECT_ATTEMPTS):
         attempt_seed = seed if attempt == 0 else derive_seed(seed, "retry", attempt)
         effect_out, mask = effect(before, seed=attempt_seed)
         out, _ = apply_severity(before, effect_out, mask, severity)
         if is_visible(before, out, mask):
-            return out, mask
-    return before, None
+            return out, mask, attempt_seed
+    return before, None, None
 
 
 def apply_effect_combo(image, combo, seeds, severities=None):

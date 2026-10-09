@@ -1,5 +1,10 @@
 # Stage B Final Report — Tile/Grid Distortion Localization
 
+> **Superseded design (Session 27).** The current pipeline — gate first (Stage A), one visible
+> class per tile/pixel, color-coded maps and an image-level answer — is described in
+> [`visible_pipeline_report.md`](visible_pipeline_report.md). This report remains the record of
+> the multi-label models and of how the layers, heads and losses were chosen.
+
 **Status:** complete. Canonical checkpoint: `checkpoints/stage_b_h32_lf/stage_b_head.pt`
 (multi-scale tile head with 32 channels, focal loss α=0.75, γ=2.0, random left-right flips), trained on `data/processed/stage_b`
 (14000 images, combo-inclusive, severity-balanced, severity-independent and audited ground

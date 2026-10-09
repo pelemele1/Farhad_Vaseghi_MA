@@ -1,0 +1,149 @@
+### Starting TaskPrologue of job 1835959 on tg071 at Fri Oct  9 04:52:07 PM CEST 2026
+Running on cores 2-3,10-11,16,19,26-27 with governor ondemand
+Fri Oct  9 16:52:07 2026       
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 580.178.04             Driver Version: 580.178.04     CUDA Version: 13.0     |
++-----------------------------------------+------------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  Tesla V100-PCIE-32GB           On  |   00000000:3B:00.0 Off |                    0 |
+| N/A   39C    P0             44W /  250W |       0MiB /  32768MiB |      0%      Default |
+|                                         |                        |                  N/A |
++-----------------------------------------+------------------------+----------------------+
+
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
+|        ID   ID                                                               Usage      |
+|=========================================================================================|
+|  No running processes found                                                             |
++-----------------------------------------------------------------------------------------+
+### Finished TaskPrologue
+
+val: tuning Stage A and gate thresholds and the map offsets
+  val: 200/1400
+  val: 400/1400
+  val: 600/1400
+  val: 800/1400
+  val: 1000/1400
+  val: 1200/1400
+  val: 1400/1400
+tile offsets [-0.2, 0.0, -0.8] (val mean F1 0.818); pixel offsets [-0.4, -0.8, -2.6] (val mean F1 0.829)
+val: pixel maps with the tuned offsets, for the answer's minimum shares
+  val: 200/1400
+  val: 400/1400
+  val: 600/1400
+  val: 800/1400
+  val: 1000/1400
+  val: 1200/1400
+  val: 1400/1400
+answer minimum shares {'dirt': 0.1, 'water': 0.05011872336272725, 'scratch': 0.000707945784384138}; rewrote checkpoints/visible_pipeline.json
+gate threshold 0.2778 (val: impaired kept 0.981, clean passed 0.712); Stage A thresholds {'dirt': 0.31776854395866394, 'water': 0.42190155386924744, 'scratch': 0.44037672877311707}; wrote checkpoints/visible_pipeline.json
+test: all stages
+  test: 200/1400
+  test: 400/1400
+  test: 600/1400
+  test: 800/1400
+  test: 1000/1400
+  test: 1200/1400
+  test: 1400/1400
+
+Stage A (image level, test)
+  dirt     t=0.318 P=0.903 R=0.900 F1=0.902 AP=0.971 AUC=0.972 n=600
+  water    t=0.422 P=0.931 R=0.925 F1=0.928 AP=0.978 AUC=0.978 n=600
+  scratch  t=0.440 P=0.852 R=0.869 F1=0.861 AP=0.941 AUC=0.945 n=597
+  dirt: low R=0.751 AP=0.836  medium R=0.970 AP=0.977  high R=0.990 AP=0.992
+  water: low R=0.832 AP=0.878  medium R=0.969 AP=0.986  high R=0.976 AP=0.985
+  scratch: low R=0.776 AP=0.757  medium R=0.884 AP=0.901  high R=0.939 AP=0.945
+
+Gate: ROC-AUC 0.938, impaired kept 0.985, clean passed 0.700, kept by lowest severity {'low': 0.9736346516007532, 'medium': 0.9930715935334873, 'high': 0.9940476190476191}
+  recall target 0.90: threshold 0.675, impaired kept 0.908, faint kept 0.842, clean passed 0.230
+  recall target 0.95: threshold 0.468, impaired kept 0.950, faint kept 0.908, clean passed 0.440
+  recall target 0.98: threshold 0.278, impaired kept 0.985, faint kept 0.974, clean passed 0.700
+  recall target 0.99: threshold 0.172, impaired kept 0.994, faint kept 0.991, clean passed 0.810
+
+Stage B (32-px tiles, test)
+[ungated] class      precision  recall     f1    IoU     AP   support
+         dirt          0.875   0.847  0.861  0.755  0.936     72543
+         water         0.780   0.863  0.819  0.694  0.899     66798
+         scratch       0.844   0.729  0.782  0.643  0.847      7086
+         dirt: low R=0.717 F1=0.736 AP=0.805  medium R=0.865 F1=0.850 AP=0.930  high R=0.922 F1=0.898 AP=0.967
+         water: low R=0.701 F1=0.667 AP=0.717  medium R=0.879 F1=0.811 AP=0.889  high R=0.937 F1=0.868 AP=0.949
+         scratch: low R=0.575 F1=0.655 AP=0.694  medium R=0.749 F1=0.771 AP=0.834  high R=0.796 F1=0.814 AP=0.883
+         clean test images with any location flagged: {'dirt': 0.25, 'water': 0.17, 'scratch': 0.2}
+[gated] class      precision  recall     f1    IoU     AP   support
+         dirt          0.877   0.842  0.859  0.753  0.933     72543
+         water         0.781   0.861  0.819  0.694  0.898     66798
+         scratch       0.845   0.727  0.782  0.642  0.845      7086
+         dirt: low R=0.709 F1=0.734 AP=0.800  medium R=0.864 F1=0.851 AP=0.929  high R=0.917 F1=0.897 AP=0.963
+         water: low R=0.696 F1=0.666 AP=0.714  medium R=0.879 F1=0.812 AP=0.889  high R=0.936 F1=0.868 AP=0.948
+         scratch: low R=0.571 F1=0.654 AP=0.691  medium R=0.747 F1=0.771 AP=0.833  high R=0.796 F1=0.815 AP=0.884
+         clean test images with any location flagged: {'dirt': 0.14, 'water': 0.09, 'scratch': 0.16}
+confusion (gated, rows = truth, cols = prediction; clean/dirt/water/scratch):
+        194819        5763       10784         607
+          6120       61088        5153         182
+          6473        2630       57537         158
+          1527         192         212        5155
+
+Stage C (pixels, test)
+[ungated] class      precision  recall     f1    IoU     AP   support
+         dirt          0.871   0.839  0.855  0.746  0.933  63916973
+         water         0.785   0.809  0.797  0.662  0.879  59742269
+         scratch       0.880   0.802  0.839  0.723  0.863    784693
+         dirt: low R=0.669 F1=0.706 AP=0.778  medium R=0.861 F1=0.845 AP=0.925  high R=0.932 F1=0.901 AP=0.971
+         water: low R=0.599 F1=0.610 AP=0.661  medium R=0.828 F1=0.783 AP=0.862  high R=0.896 F1=0.857 AP=0.927
+         scratch: low R=0.680 F1=0.732 AP=0.713  medium R=0.814 F1=0.829 AP=0.847  high R=0.851 F1=0.865 AP=0.895
+         clean test images with any location flagged: {'dirt': 0.78, 'water': 0.68, 'scratch': 0.37}
+[gated] class      precision  recall     f1    IoU     AP   support
+         dirt          0.872   0.836  0.854  0.745  0.930  63916973
+         water         0.786   0.808  0.797  0.662  0.878  59742269
+         scratch       0.881   0.800  0.839  0.722  0.862    784693
+         dirt: low R=0.663 F1=0.705 AP=0.774  medium R=0.860 F1=0.845 AP=0.925  high R=0.929 F1=0.901 AP=0.968
+         water: low R=0.595 F1=0.609 AP=0.658  medium R=0.828 F1=0.784 AP=0.863  high R=0.896 F1=0.857 AP=0.927
+         scratch: low R=0.677 F1=0.731 AP=0.709  medium R=0.812 F1=0.828 AP=0.846  high R=0.851 F1=0.866 AP=0.896
+         clean test images with any location flagged: {'dirt': 0.54, 'water': 0.42, 'scratch': 0.31}
+confusion (gated, rows = truth, cols = prediction; clean/dirt/water/scratch):
+     227586005     5316331     9596085       59244
+       6911844    53431516     3561949       11664
+       8970995     2500057    48256964       14253
+        124041       20176       12364      628112
+
+Image-level answer: impaired/clean correct 0.955, dominant distortion correct 0.918 (of 1300 impaired; by severity {'low': 0.8091787439613527, 'medium': 0.9527186761229315, 'high': 0.9827213822894169}), clean answered clean 0.950, exact set 0.854
+  presence: dirt P=0.989 R=0.880 F1=0.931  water P=0.972 R=0.928 F1=0.950  scratch P=0.973 R=0.894 F1=0.932
+  (any pixel counts: impaired/clean correct 0.939, dominant 0.868, clean answered clean 0.330, exact set 0.276)
+
+wrote results/visible_eval.json and results/visible_eval.npz
+wrote docs/images/visible_label_examples.jpg
+wrote docs/images/visible_metrics.jpg
+wrote docs/images/visible_severity.jpg
+wrote docs/images/visible_confusion.jpg
+wrote docs/images/visible_training_curves.jpg
+wrote docs/images/visible_report_page1.jpg
+wrote docs/images/visible_report_page2.jpg
+wrote docs/images/visible_report_page3.jpg
+=== JOB_STATISTICS ===
+=== current date     : Fri Oct  9 04:55:32 PM CEST 2026
+= Job-ID             : 1835959 on tinygpu
+= Job-Name           : eval_visible
+= Job-Command        : /home/woody/iwnt/iwnt196h/Farhad_Vaseghi_MA/scripts/hpc/run_shell.slurm
+= Initial workdir    : /home/woody/iwnt/iwnt196h/Farhad_Vaseghi_MA
+= Queue/Partition    : v100
+= Slurm account      : iwnt with QOS=normal
+= Requested resources:  for 03:00:00
+= Elapsed runtime    : 00:03:26
+= Total RAM usage    : 2.6 GiB of requested  GiB (%)   
+= Node list          : tg071
+= Subm/Elig/Start/End: 2026-10-09T16:51:53 / 2026-10-09T16:51:53 / 2026-10-09T16:52:06 / 2026-10-09T16:55:32
+======================
+=== Quota infos ======
+    Path                 Used     SoftQ    HardQ    Gracetime  Filec    FileQ    FiHaQ    FileGrace    
+    /home/woody            21.0G  1000.0G  1500.0G        N/A     171K   5,000K   7,500K        N/A    
+    /home/hpc               8.2G   104.9G   209.7G        N/A   1,699      300K     400K        N/A    
+    /home/vault             0.0K  1048.6G  2097.2G        N/A       1      200K     400K        N/A    
+======================
+=== GPU utilization ==
+gpu_name, gpu_bus_id, pid, gpu_utilization [%], mem_utilization [%], max_memory_usage [MiB], time [ms]
+Tesla V100-PCIE-32GB, 00000000:3B:00.0, 2392719, 13 %, 6 %, 2104 MiB, 172937 ms
+Tesla V100-PCIE-32GB, 00000000:3B:00.0, 2392718, 1 %, 0 %, 698 MiB, 8522 ms

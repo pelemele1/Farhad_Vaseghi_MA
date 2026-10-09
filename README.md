@@ -4,17 +4,20 @@
 
 Master's thesis project (FAU Erlangen-Nürnberg): detecting **dirt, water and scratches** on the
 protective glass in front of a camera, with a frozen YOLOv11 backbone and three small
-"distortion heads" that answer three increasingly detailed questions:
+"distortion heads" that answer increasingly detailed questions, **gate first**:
 
-| Stage | Question | Output |
+| Step | Question | Output |
 |---|---|---|
-| **A** — image level | *Is* there dirt / water / a scratch in this image? | 3 probabilities per image |
-| **B** — tile level | *Roughly where*? | 3 probabilities per 32×32-px tile (16×16 grid) |
-| **C** — pixel level | *Exactly where*? | 3 probability masks at full resolution |
-| **Gate** | Is the image impaired at all? | 1 probability; clean images skip B/C output |
+| **A** — image level, **gate** | Is this image impaired, and by what? | P(dirt), P(water), P(scratch); clean images stop here |
+| **B** — tile level | *Roughly where*, and which distortion? | one class per 32×32-px tile (16×16 grid), color-coded |
+| **C** — pixel level | *Exactly where*, and which distortion? | one class per pixel, color-coded |
+| **Answer** | What is the image's problem? | the distortions found, their share of the image, the dominant one |
 
-This branch (`feature/stages-a-b-c`) contains the complete development of all three stages and
-the gate: data generation, models, training, evaluation, HPC job scripts, reports and tests.
+Each tile and pixel gets the one distortion that is **visible** there (clean / dirt / water /
+scratch), so overlapping distortions are labeled by what one actually sees.
+
+This branch (`feature/stages-a-b-c`) contains the complete development of all three stages:
+data generation, models, training, evaluation, HPC job scripts, reports and tests.
 A standing project goal is to also catch **faint** (low-severity) distortions, so every result
 is reported per severity level as well.
 
@@ -42,33 +45,32 @@ is reported per severity level as well.
 
 ## Results at a glance
 
-All numbers are on the held-out **test split** (1400 images from 100 source photos never seen
-in training), with per-class decision thresholds tuned on the validation split. AP = average
-precision (area under the precision-recall curve); "faint" = low-severity distortions.
+Held-out **test split** (1400 images from 100 source photos never seen in training; 1300 with a
+visible distortion, 100 without). Every decision setting was tuned on the validation split.
+Full results: [`docs/visible_pipeline_report.md`](docs/visible_pipeline_report.md).
 
-| Stage | Model | AP dirt / water / scratch | Faint AP dirt / water / scratch |
-|---|---|---|---|
-| **A** (image) | `stage_a_multiscale_lf` — strides 8–32 | 0.976 / 0.980 / 0.939 | 0.867 / 0.888 / 0.737 |
-| **B** (32-px tile) | `stage_b_h32_lf` — strides 4–32, 32-ch head, flips | 0.931 / 0.917 / 0.825 | 0.804 / 0.735 / 0.663 |
-| **C** (pixel, scored on 8×8 cells) | `stage_c_unet_t2_lf` — U-Net, strides 2–32 | 0.897 / 0.883 / 0.769 | 0.731 / 0.659 / 0.544 |
+| Level | dirt | water | scratch | faint (low-severity) recall dirt / water / scratch |
+|---|---|---|---|---|
+| **A** image — AP | 0.971 | 0.978 | 0.941 | 0.75 / 0.83 / 0.78 |
+| **B** 32-px tile — F1 (IoU) | 0.859 (0.75) | 0.819 (0.69) | 0.782 (0.64) | 0.71 / 0.70 / 0.57 |
+| **C** pixel — F1 (IoU) | 0.854 (0.75) | 0.797 (0.66) | 0.839 (0.72) | 0.66 / 0.60 / 0.68 |
 
-**Gate** (`impaired_gate_multiscale_lf`, strides 4–32): ROC-AUC 0.953; at threshold 0.172 it
-keeps 94.4% of impaired images and lets 35% of clean images through. With the gate, Stage B
-wrongly flags 6% / 11% / 10% of clean test images (dirt / water / scratch), versus 20% / 21% /
-22% without.
+**Image-level answer:** the dominant distortion is named correctly for **91.8%** of impaired
+images (faint 80.9%, strong 98.3%); impaired vs. clean is right for 95.5% of all images, and 95%
+of clean images are answered "clean". The **gate** (Stage A) keeps 98.5% of impaired images and
+97.4% of faint ones.
 
-All models are trained on **audited labels** (Session 26): every one of the 28,000 generated
-images was checked against its labels, and three generator defects were fixed — see
-[Development history](#development-history). Measured on the same corrected test labels, the
-retraining raised Stage B's water AP by 0.018 and changed everything else by at most 0.013.
+In short: strong distortions are found and mapped reliably; faint ones remain the hard case,
+faint water at pixel level most of all (recall 0.60); dirt and water are the pair most often
+confused.
 
-In short: dirt and water are found reliably at every level, also when faint. Scratch is the
-hardest class — thin, and a small fraction of the image — and faint scratches remain the
-weakest case in every stage.
+![Pipeline results](docs/images/visible_report_page3.jpg)
+*Per test image: original / distorted with the gate's decision / tile ground truth / Stage B /
+pixel ground truth / Stage C / answer. Orange = dirt, blue = water, red = scratch.*
 
-![Stage C per-sample results](docs/images/stage_c_full_report_unet_t2_page1.jpg)
-*Stage C: original / distorted (with the gate's verdict) / ground-truth mask / predicted mask /
-gated mask.*
+The earlier multi-label models (three independent yes/no maps, a separate gate head, Sessions
+15–26) are documented in the Stage A/B/C reports; their numbers measure a different task and
+are not directly comparable.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -78,40 +80,45 @@ gated mask.*
 
 ```mermaid
 flowchart LR
-    I[RGB image] --> BB["YOLOv11-m backbone<br/>(COCO-pretrained, frozen)<br/>layers 0–10"]
+    I[RGB image 512x512] --> BB["YOLOv11-m backbone<br/>(COCO-pretrained, frozen)<br/>one pass, layers 0–10"]
     BB -- "layers 4, 6, 10<br/>(P3, P4, P5)" --> A["Stage A head<br/>GAP + FC"]
-    BB -- "layers 2, 4, 6, 10" --> G["Impaired gate<br/>GAP + FC"]
-    BB -- "layers 2, 4, 6, 10" --> B["Stage B head<br/>tile classifier"]
-    BB -- "layers 0, 2, 4, 6, 10" --> C["Stage C head<br/>U-Net decoder"]
-    A --> AO[dirt / water / scratch<br/>per image]
-    G --> GT{impaired?}
-    B --> GT
-    C --> GT
-    GT -- yes --> BO[tile grid / pixel masks]
-    GT -- no --> Z[outputs zeroed]
+    A --> G{"gate: max of<br/>P(dirt), P(water), P(scratch)<br/>≥ threshold?"}
+    G -- no --> CL[answer: clean]
+    G -- yes --> B["Stage B head (layers 2, 4, 6, 10)<br/>class per 32-px tile"]
+    G -- yes --> C["Stage C head (layers 0, 2, 4, 6, 10)<br/>U-Net decoder, class per pixel"]
+    B --> BM[tile class map]
+    C --> CM[pixel class map]
+    CM --> ANS[answer: distortions found,<br/>share of the image, dominant one]
 ```
 
-Backbone layers the heads read (map sizes for a 512×512 input; Stage A runs at 640×640, so its
-maps are 80×80 / 40×40 / 20×20):
+Backbone layers the heads read (map sizes for the 512×512 input):
 
 | Layer | Module | Stride | Map size | Channels | Used by |
 |---|---|---|---|---|---|
 | 0 | `Conv` | 2 | 256×256 | 64 | Stage C |
-| 2 | `C3k2` | 4 | 128×128 | 256 | Stage B, Stage C, gate |
-| 4 | `C3k2` (P3) | 8 | 64×64 | 512 | Stage A, Stage B, Stage C, gate |
-| 6 | `C3k2` (P4) | 16 | 32×32 | 512 | Stage A, Stage B, Stage C, gate |
+| 2 | `C3k2` | 4 | 128×128 | 256 | Stage B, Stage C |
+| 4 | `C3k2` (P3) | 8 | 64×64 | 512 | Stage A, Stage B, Stage C |
+| 6 | `C3k2` (P4) | 16 | 32×32 | 512 | Stage A, Stage B, Stage C |
 | 10 | `C2PSA` (P5, end of backbone) | 32 | 16×16 | 512 | all heads |
 
 - The **backbone is never trained**; only the small heads are. This follows the "frozen
   backbone" option of [`architecture.md`](architecture.md) §3: the detection task the backbone
-  serves can never be harmed by distortion training.
+  serves can never be harmed by distortion training. It runs **once** per image; all heads read
+  that one pass (`src/pipeline.py`).
 - Each head reads the backbone at the depths (*strides*) that suit its task. A stride-*s* map
   has one position per *s*×*s* image patch: deep maps (stride 32, "P5") carry abstract scene
   content, shallow maps (stride 2–8) still carry the fine textures that faint distortions and
   thin scratches leave. The finer the output, the finer the maps that help (see the layer
   study in [Development history](#development-history)).
-- The **gate** is trained separately and zeroes Stage B/C predictions for images it considers
-  clean, cutting false alarms on clean images.
+- **Stage A is the gate**: "impaired" means some distortion is present, which is what Stage A
+  predicts. Only impaired images go on to Stages B and C. Its threshold keeps 98% of impaired
+  validation images, so faint distortions are not lost at the first step.
+- Stages B and C give **one class per location** (4-class softmax). A per-class offset tuned on
+  validation is added before the most likely class is taken, to undo the lean toward rare
+  classes that the class-weighted training gives.
+- The **answer** counts a distortion as found when it covers at least its minimum share of the
+  pixel map (dirt 10%, water 5%, scratch 0.07%, tuned on validation); the dominant one is the
+  largest. An image that passes the gate but where nothing reaches its share is answered clean.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -134,18 +141,28 @@ field yet, so distortions are synthesized:
 - **severity** — every effect is blended back toward the clean image at strength
   low 0.3 / medium 0.6 / high 1.0.
 
-Each effect also returns its exact pixel mask, so **no manual annotation** is needed. Ground
-truth is **severity-independent**: a faint patch is labeled exactly like a strong one, because
-it still has to be found. Every label is checked against the image
-(`scripts/audit_dataset_labels.py`): a labeled distortion must visibly change at least 20
-pixels by more than 10 gray levels, otherwise the generator re-draws it.
+**Visible-change labels** (Session 27, `src/soiling/visible_labels.py`) — no manual annotation
+is needed. For every distortion in an image, the image is re-rendered without it (the generator
+is fully reproducible); how much each pixel differs is that distortion's visible contribution.
+Each pixel is labeled with the distortion that changes it most, if by more than 10 gray levels,
+otherwise clean; a visible scratch (the top layer) wins over what is under it. So a layer hidden
+under another (dirt under a thick water film) is not labeled, and a faint distortion is labeled
+wherever it is visible. Tiles take the class whose area exceeds its own cutoff (dirt 20%, water
+25%, scratch 1.5% of the tile) by the largest factor; an image contains a class if at least 20
+pixels carry it.
+
+![Visible-change ground truth](docs/images/visible_label_examples.jpg)
+
+The earlier datasets used the generator's soft masks instead, with severity-independent ground
+truth and every label audited against its image (`scripts/audit_dataset_labels.py`, Session 26).
 
 **Datasets** (git-ignored, regenerated by the builder scripts):
 
 | Dataset | Used by | Content |
 |---|---|---|
-| `data/processed/stage_a` | Stage A | 14000 images at 640 px + image labels |
-| `data/processed/stage_b` | Stage B, Stage C, gate | 14000 images at 512 px + 16×16 tile labels + full-resolution pixel masks |
+| `data/processed/visible` | **all stages (current)** | 14000 images + class map per image (0 clean / 1 dirt / 2 water / 3 scratch, native resolution) + 16×16 tile classes + per-image class areas |
+| `data/processed/stage_a` | earlier Stage A | 14000 images + image labels |
+| `data/processed/stage_b` | earlier Stage B, C, gate | 14000 images + 16×16 tile labels + soft pixel masks |
 
 Each source photo yields 14 variants: 1 clean, 9 single distortions (3 classes × 3
 severities) and 4 combinations (dirt+water, dirt+scratch, water+scratch, all three). Splits are
@@ -162,14 +179,15 @@ only for final numbers.
 | Component | Architecture | Loss | Trained parameters |
 |---|---|---|---|
 | Backbone | Ultralytics YOLOv11-m, COCO weights, frozen | — | 0 |
-| Stage A head | global-average-pool each tap → concat → FC(64) → FC(3) | BCE with `pos_weight` | ~99k |
-| Stage B head | 1×1 conv per tap (32 ch) → pool to 16×16 grid → 3×3 fuse → 3 logits per tile | focal (α 0.75, γ 2) | ~95k |
-| Stage C head | U-Net-style decoder over 5 taps, predicts at stride 2, upsampled to 512 px | Dice + BCE | ~452k |
-| Gate | global-average-pool each tap → FC → 2-way softmax | class-weighted cross-entropy | ~115k |
+| Stage A head (+ gate) | global-average-pool each tap → concat → FC(64) → FC(3) | BCE with `pos_weight` | ~99k |
+| Stage B head | 1×1 conv per tap (32 ch) → pool to 16×16 grid → 3×3 fuse → 4 classes per tile | softmax focal (γ 2), class weights ∝ 1/√frequency | ~95k |
+| Stage C head | U-Net-style decoder over 5 taps, predicts at stride 2, upsampled to 512 px, 4 classes | class-weighted cross-entropy + Dice | ~452k |
 
-Decision thresholds are tuned **per class** on the validation split (best F1). The gate's
-threshold instead keeps ≥ 95% of impaired validation images, because its job is to drop clean
-images without discarding real distortions.
+Decision settings, all tuned on the validation split and stored in
+`checkpoints/visible_pipeline.json`: Stage A's per-class thresholds (best F1), the gate
+threshold (98% of impaired images kept), per-class offsets for the tile and pixel maps (best
+mean F1) and the answer's minimum shares (best F1 per class). The separate impaired-gate head
+(`ImpairedGateHead`) of the earlier design is still in the code but no longer used.
 
 Implementation: `src/models/backbone.py` (frozen backbone, multi-layer taps),
 `src/models/distortion_head.py` (all heads), `src/models/losses.py`.
@@ -190,7 +208,7 @@ cd Farhad_Vaseghi_MA
 git checkout feature/stages-a-b-c
 python -m venv .venv && source .venv/bin/activate    # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
-python -m pytest -q tests                             # ~243 tests
+python -m pytest -q tests                             # ~270 tests
 ```
 
 Download the COCO-pretrained YOLOv11-m weights (`yolo11m.pt`, from the Ultralytics releases) to
@@ -198,6 +216,8 @@ Download the COCO-pretrained YOLOv11-m weights (`yolo11m.pt`, from the Ultralyti
 
 ```bash
 python scripts/sample_mio_tcd.py --tar <path>/MIO-TCD-Localization.tar --out data/raw/mio_tcd --n 1000 --seed 0
+python scripts/build_visible_dataset.py --source data/raw/mio_tcd/images --out data/processed/visible --workers 16
+# earlier multi-label datasets:
 python scripts/build_stage_a_dataset.py --source data/raw/mio_tcd/images \
     --out data/processed/stage_a --variants 14 --include-combos --include-severity
 python scripts/build_stage_b_dataset.py --source data/raw/mio_tcd/images \
@@ -214,6 +234,32 @@ python scripts/audit_dataset_labels.py   # checks every label against its image
 
 Every training script keeps the epoch with the best validation loss and writes it to `--out`.
 Add `--smoke-test` to any training script for a 1-epoch CPU run on 8 images.
+
+**Current pipeline** (visible-change labels, gate first)
+```bash
+python scripts/train_visible.py --stage a --data data/processed/visible --device cuda --out checkpoints/visible_a_w
+python scripts/train_visible.py --stage b --data data/processed/visible --device cuda --out checkpoints/visible_b_w
+python scripts/train_visible.py --stage c --data data/processed/visible --device cuda --out checkpoints/visible_c_v
+python scripts/evaluate_visible.py --data data/processed/visible \
+    --a checkpoints/visible_a_w/stage_a_head.pt --b checkpoints/visible_b_w/stage_b_head.pt \
+    --c checkpoints/visible_c_v/stage_c_head.pt --device cuda \
+    --config checkpoints/visible_pipeline.json --out-json results/visible_eval.json
+python scripts/visualize_visible.py --data data/processed/visible --a ... --b ... --c ... \
+    --config checkpoints/visible_pipeline.json --results results/visible_eval.json --out-dir docs/images
+```
+`evaluate_visible.py` tunes every decision setting on the validation split, writes them to
+`--config`, and evaluates on test. In code:
+
+```python
+from src.pipeline import DistortionPipeline
+pipe = DistortionPipeline("checkpoints/visible_a_w/stage_a_head.pt", "checkpoints/visible_b_w/stage_b_head.pt",
+                          "checkpoints/visible_c_v/stage_c_head.pt", config="checkpoints/visible_pipeline.json")
+result = pipe.predict(images)[0]      # images: (N, 3, 512, 512) RGB in [0, 1]
+result["answer"]     # {"impaired": True, "dominant": "water", "shares": {"water": 0.41, "dirt": 0.12}}
+result["pixel_map"]  # (512, 512): 0 clean / 1 dirt / 2 water / 3 scratch; result["tile_map"]: (16, 16)
+```
+
+The commands below train and evaluate the **earlier multi-label models** (Sessions 15–26).
 
 **Stage A**
 ```bash
@@ -272,7 +318,8 @@ described in [`docs/hpc_stage_a.md`](docs/hpc_stage_a.md); job scripts live in `
 - `layer_study.sh`, `stage_b_regularization.sh`, `stage_b_small_head.sh` — the experiment
   sweeps behind the reports;
 - `regenerate_report_figures.sh` — all report figures;
-- `retrain_after_label_fix.sh`, `evaluate_after_label_fix.sh` — the Session 26 retraining.
+- `retrain_after_label_fix.sh`, `evaluate_after_label_fix.sh` — the Session 26 retraining;
+- `train_visible.sh`, `evaluate_visible.sh` — the current pipeline (Session 27).
 
 Practical notes: a100/v100 jobs need a typed GPU request (`--gres=gpu:a100:1`); V100 nodes need
 the second environment `stage_a_v100` (PyTorch built for CUDA 12.6, which still supports them),
@@ -291,14 +338,16 @@ reported numbers is kept at the repository root (`*_<jobid>.out`) and in `study_
 ├── architecture.md          # design concept: shared backbone + distortion head, Stages A/B/C
 ├── overview.md, setup.md    # thesis overview; two-camera rig (Part 1)
 ├── src/
-│   ├── data/                # MIO-TCD sampling, Stage A/B/C datasets
-│   ├── soiling/             # distortion effects, dataset builder, tile labels
+│   ├── pipeline.py          # gate-first inference: one backbone pass, A -> B/C -> answer
+│   ├── data/                # MIO-TCD sampling, datasets (visible_dataset.py: all stages)
+│   ├── soiling/             # distortion effects, dataset builders, visible-change labels
 │   ├── models/              # frozen backbone, all heads, losses
-│   └── eval/                # metrics, threshold tuning, gate, severity breakdown
+│   └── eval/                # metrics (class_maps.py: one-class-per-location maps), thresholds, gate
 ├── scripts/                 # build_*, train_*, evaluate_*, visualize_*, diagnostics
 │   └── hpc/                 # TinyGPU Slurm/shell scripts
-├── tests/                   # pytest suite (~243 tests)
+├── tests/                   # pytest suite (~270 tests)
 ├── docs/
+│   ├── visible_pipeline_report.md   # current pipeline (Session 27)
 │   ├── stage_a_final_report.md, stage_b_final_report.md, stage_c_final_report.md
 │   ├── development_log.md   # full session-by-session history
 │   ├── data_collection_pipeline.md, hpc_stage_a.md
@@ -306,6 +355,7 @@ reported numbers is kept at the repository root (`*_<jobid>.out`) and in `study_
 │   └── images/              # all report figures
 ├── third_party/physical_lens_soiling/   # vendored dirt/water generator
 ├── notebooks/               # Colab notebook used for one Stage B run
+├── results/                 # visible_eval.json: every number of the current report
 ├── study_logs/, *_<jobid>.out           # raw HPC job logs behind the reported numbers
 ├── raw/, wiki/              # personal reading knowledge base (see CLAUDE.md), not code
 └── data/, checkpoints/, weights/        # git-ignored: datasets, trained heads, YOLO weights
@@ -332,6 +382,7 @@ The full record — every decision, dead end and intermediate number — is in
 | 2026-09-27 | 24–25 | **Stage B overfitting**: train/val gap from too few distinct scenes. Weight decay and dropout only delayed it; horizontal flips plus a **smaller 32-channel head** keep validation loss improving to epoch 38, at −0.005 AP, and cut clean-image false alarms (water 42% → 15%). |
 | 2026-09/10 | — | Report figures cleaned up (legends, titles, axis labels); branch renamed from `feature/stage-a-mio-tcd` to `feature/stages-a-b-c`. |
 | 2026-10-08/09 | 26 | **Label audit of all 28,000 images.** A report figure called a dirt + water image "dirt"; checking every label then found three generator defects: thin-water masks with a 0.2 floor over the whole image (1966 masks), 9 rendered distortions with an all-zero mask, and 44 practically invisible scratches per dataset. Fixed in the generator and in place; all four models retrained (on V100s, via a second CUDA-12.6 environment). Effect: Stage B water AP was overstated by ~0.02 on the old labels; everything else moved by ≤ 0.013. |
+| 2026-10-09 | 27 | **Gate-first pipeline with visible-change labels.** The gate now comes first (Stage A itself), Stages B and C give one class per location as color-coded maps, and an image-level answer names the dominant distortion. Labels mark only what is visible, measured by re-rendering each image without each distortion (made possible by fixing the generator's hidden reseeding). New dataset, all three heads retrained; dominant distortion correct for 91.8% of impaired test images. |
 
 Effect of the main improvements on faint-distortion AP (test split, dirt / water / scratch):
 
@@ -355,7 +406,14 @@ Effect of the main improvements on faint-distortion AP (test split, dirt / water
 - **Multi-layer taps instead of P5 only** — deviates from the literal `architecture.md` Stage A
   design (kept as `--taps 32` for reference) because the finer maps roughly triple faint-distortion
   AP in Stage B, make thin scratches segmentable in Stage C, and add +0.13 faint AP in Stage A.
-- **Severity-independent ground truth** — required for the faint-distortion goal.
+- **Gate first, and the gate is Stage A** — a separate gate head answered the same question
+  less well and erased faint scratches; the gate threshold keeps 98% of impaired images.
+- **One visible class per location** — overlapping distortions are labeled by what is visible,
+  measured from the rendered images, not from the generator's masks.
+- **Decision settings tuned on validation** — map offsets undo the class-weight bias; minimum
+  shares keep stray specks out of the answer.
+- **Severity-independent ground truth** (earlier datasets) — required for the faint-distortion
+  goal; replaced by visibility in Session 27, which still labels faint distortions where visible.
 - **Every label verified against its image** — an invisible effect is re-drawn rather than
   labeled; the dataset audit is a script, so it can be rerun after any generator change.
 - **Focal loss for Stage B** — handles the extreme tile-level imbalance of scratches.
@@ -376,11 +434,12 @@ Effect of the main improvements on faint-distortion AP (test split, dirt / water
   difference images as `architecture.md` §5 describes.
 - **Small pilot dataset** — 1000 source scenes. Stage B still shows a small train/val gap that
   only more distinct scenes (e.g. more MIO-TCD images) would close without losing accuracy.
-- **Faint scratches** are the weakest case in every stage (faint AP 0.56–0.73).
-- **Overlapping distortions**: dirt under a strong water layer stays labeled but is mostly
-  invisible (~3–4% of dirt pixels); the models report the water and miss that dirt.
-- **The gate** occasionally erases a correct scratch detection (Stage B scratch AP 0.829 → 0.789
-  with the gate).
+- **Faint distortions** remain the hardest case at every level; faint water at pixel level is
+  the weakest (recall 0.60), and dirt and water are the pair most often confused.
+- **The gate passes 70% of clean images** at the setting that keeps 97% of faint distortions;
+  the answer then relies on minimum shares, so a real dirt patch smaller than 10% of the image
+  is drawn in the maps but not named in the answer.
+- **Stages B and C overfit mildly** (validation loss levels off after ~12–20 epochs).
 - **Backbone never fine-tuned** — joint training (`architecture.md` §3, option 2) is untested.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
@@ -391,10 +450,11 @@ Effect of the main improvements on faint-distortion AP (test split, dirt / water
 
 | Document | Content |
 |---|---|
+| [`docs/visible_pipeline_report.md`](docs/visible_pipeline_report.md) | **Current pipeline**: gate first, visible-change labels, class maps, image-level answer — method, results per severity, figures |
 | [`docs/stage_a_final_report.md`](docs/stage_a_final_report.md) | Stage A and the gate: method, layer study, results per severity, figures |
 | [`docs/stage_b_final_report.md`](docs/stage_b_final_report.md) | Stage B: tile labels, layer study, overfitting study, results, figures |
 | [`docs/stage_c_final_report.md`](docs/stage_c_final_report.md) | Stage C: U-Net decoder, layer study, pooled-cell evaluation, results, figures |
-| [`docs/development_log.md`](docs/development_log.md) | Complete chronological development history (Sessions 1–25) |
+| [`docs/development_log.md`](docs/development_log.md) | Complete chronological development history (Sessions 1–27) |
 | [`architecture.md`](architecture.md) | Design concept the stages follow |
 | [`docs/data_collection_pipeline.md`](docs/data_collection_pipeline.md) | Field protocol for the real two-camera dataset (Part 1) |
 | [`docs/hpc_stage_a.md`](docs/hpc_stage_a.md) | How to run on NHR@FAU TinyGPU |

@@ -1,5 +1,10 @@
 # Stage A Final Report — Image-Level Distortion Classification
 
+> **Superseded design (Session 27).** The current pipeline — gate first (Stage A), one visible
+> class per tile/pixel, color-coded maps and an image-level answer — is described in
+> [`visible_pipeline_report.md`](visible_pipeline_report.md). This report remains the record of
+> the multi-label models and of how the layers, heads and losses were chosen.
+
 **Status:** complete. Canonical checkpoint: `checkpoints/stage_a_multiscale_lf/stage_a_head.pt`
 (backbone layers at strides 8, 16 and 32 — P3, P4, P5), trained on `data/processed/stage_a`
 (14000 images, combo-inclusive, severity-balanced, labels audited in Session 26). A
