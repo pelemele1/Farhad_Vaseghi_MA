@@ -9,6 +9,7 @@ from scripts.visualize_stage_b_results import (
     _compute_per_class_pr_curves,
     build_report_rows,
     class_index_for_sample,
+    report_entries_for_sample,
     find_combo_sample_index,
     max_prob_per_image,
     plot_stage_b_eight_column_report,
@@ -26,14 +27,20 @@ def test_class_index_for_sample_active_class():
 
 
 def test_class_index_for_sample_picks_first_active_when_multiple_flagged():
-    # Combo variants (Session 19+) do have multiple classes flagged at once --
-    # class_index_for_sample only ever shows one (the overlay is single-class);
-    # find_combo_sample_index (below) is what finds a genuine combo row to
-    # show both classes for.
+    # Combo variants (Session 19+) have several classes flagged at once: the
+    # kind names all of them (a title must not hide one), the class shown by
+    # a single-class overlay is the first.
     row = {"dirt": "0", "water": "1", "scratch": "1"}
     kind, idx = class_index_for_sample(row, ("dirt", "water", "scratch"))
-    assert kind == "water"
+    assert kind == "water + scratch"
     assert idx == 1
+
+
+def test_report_entries_for_sample_one_row_per_active_class():
+    names = ("dirt", "water", "scratch")
+    assert report_entries_for_sample({"dirt": "1", "water": "1", "scratch": "0"}, names) == [
+        ("dirt + water", 0), ("dirt + water", 1)]
+    assert report_entries_for_sample({"dirt": "0", "water": "0", "scratch": "1"}, names) == [("scratch", 2)]
 
 
 def test_class_index_for_sample_clean_uses_most_confident_prediction():

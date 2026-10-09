@@ -32,7 +32,7 @@ from pathlib import Path
 import cv2 as cv
 import numpy as np
 
-from src.soiling.effects import SEVERITY_LEVELS, add_dirt, add_scratch, add_water, apply_severity
+from src.soiling.effects import SEVERITY_LEVELS, add_dirt, add_scratch, add_water, apply_severity, is_visible
 from src.soiling.tile_labels import rasterize_tile_label
 
 EFFECT_NAMES = ("dirt", "water", "scratch")
@@ -105,6 +105,26 @@ def assign_variant_kinds(variant_count, seed, kinds=None):
     return pattern
 
 
+# How often an effect that rendered invisibly is re-drawn with a fresh seed.
+MAX_EFFECT_ATTEMPTS = 10
+
+
+def _apply_visible_effect(before, name, seed, severity):
+    """One effect at `severity` on `before`, re-drawn with a derived seed
+    (up to MAX_EFFECT_ATTEMPTS times) while it changes nothing visible --
+    so a label never names a distortion that isn't in the image (Session 26
+    label audit). Returns (out, full-strength mask), or (before, None) if no
+    attempt was visible; the caller then leaves the class unlabeled."""
+    effect = {"dirt": add_dirt, "water": add_water, "scratch": add_scratch}[name]
+    for attempt in range(MAX_EFFECT_ATTEMPTS):
+        attempt_seed = seed if attempt == 0 else derive_seed(seed, "retry", attempt)
+        effect_out, mask = effect(before, seed=attempt_seed)
+        out, _ = apply_severity(before, effect_out, mask, severity)
+        if is_visible(before, out, mask):
+            return out, mask
+    return before, None
+
+
 def apply_effect_combo(image, combo, seeds, severities=None):
     """combo: (dirt: bool, water: bool, scratch: bool). seeds: dict of
     per-effect seeds. severities: dict[effect, severity] for active effects
@@ -115,24 +135,7 @@ def apply_effect_combo(image, combo, seeds, severities=None):
     that effect, so one effect's severity doesn't dilute another's when
     several are combined. Returns (distorted_image, labels dict) -- labels
     now also carries f"{name}_severity" per class ("none" when inactive)."""
-    severities = severities or {}
-    out = image
-    labels = {}
-    for name, included in zip(EFFECT_NAMES, combo):
-        labels[name] = int(included)
-        if not included:
-            labels[f"{name}_severity"] = "none"
-            continue
-        severity = severities.get(name, "high")
-        labels[f"{name}_severity"] = severity
-        before = out
-        if name == "dirt":
-            effect_out, mask = add_dirt(before, seed=seeds["dirt"])
-        elif name == "water":
-            effect_out, mask = add_water(before, seed=seeds["water"])
-        elif name == "scratch":
-            effect_out, mask = add_scratch(before, seed=seeds["scratch"])
-        out, _ = apply_severity(before, effect_out, mask, severity)
+    out, labels, _ = apply_effect_combo_with_masks(image, combo, seeds, severities)
     return out, labels
 
 
@@ -299,22 +302,18 @@ def apply_effect_combo_with_masks(image, combo, seeds, severities=None):
     labels = {}
     masks = {}
     for name, included in zip(EFFECT_NAMES, combo):
-        labels[name] = int(included)
-        if not included:
+        mask = None
+        if included:
+            severity = severities.get(name, "high")
+            out, mask = _apply_visible_effect(out, name, seeds[name], severity)
+        if mask is None:
+            labels[name] = 0
             labels[f"{name}_severity"] = "none"
             masks[name] = np.zeros(image.shape[:2], dtype=np.float32)
-            continue
-        severity = severities.get(name, "high")
-        labels[f"{name}_severity"] = severity
-        before = out
-        if name == "dirt":
-            effect_out, mask = add_dirt(before, seed=seeds["dirt"])
-        elif name == "water":
-            effect_out, mask = add_water(before, seed=seeds["water"])
-        elif name == "scratch":
-            effect_out, mask = add_scratch(before, seed=seeds["scratch"])
-        out, _ = apply_severity(before, effect_out, mask, severity)
-        masks[name] = mask
+        else:
+            labels[name] = 1
+            labels[f"{name}_severity"] = severity
+            masks[name] = mask
     return out, labels, masks
 
 

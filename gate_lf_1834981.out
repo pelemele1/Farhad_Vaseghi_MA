@@ -1,0 +1,80 @@
+### Starting TaskPrologue of job 1834981 on tg071 at Fri Oct  9 01:09:33 AM CEST 2026
+Running on cores 6-7,14-15,22-23,30-31 with governor ondemand
+Fri Oct  9 01:09:33 2026       
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 580.178.04             Driver Version: 580.178.04     CUDA Version: 13.0     |
++-----------------------------------------+------------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  Tesla V100-PCIE-32GB           On  |   00000000:AF:00.0 Off |                    0 |
+| N/A   30C    P0             25W /  250W |       0MiB /  32768MiB |      0%      Default |
+|                                         |                        |                  N/A |
++-----------------------------------------+------------------------+----------------------+
+
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
+|        ID   ID                                                               Usage      |
+|=========================================================================================|
+|  No running processes found                                                             |
++-----------------------------------------------------------------------------------------+
+### Finished TaskPrologue
+
+arch=multiscale img_size=512
+train=11200 val=1400 class_weight=[13.658536911010742, 1.07899808883667]
+epoch 1/20  train_loss=0.4978  val_loss=0.4000  (60.3s)  *saved
+epoch 2/20  train_loss=0.3910  val_loss=0.3336  (43.8s)  *saved
+epoch 3/20  train_loss=0.3612  val_loss=0.3437  (44.3s)
+epoch 4/20  train_loss=0.3360  val_loss=0.3249  (44.3s)  *saved
+epoch 5/20  train_loss=0.3301  val_loss=0.3069  (44.7s)  *saved
+epoch 6/20  train_loss=0.3169  val_loss=0.3219  (44.7s)
+epoch 7/20  train_loss=0.3168  val_loss=0.3291  (45.2s)
+epoch 8/20  train_loss=0.2963  val_loss=0.3546  (45.2s)
+epoch 9/20  train_loss=0.2924  val_loss=0.3021  (44.3s)  *saved
+epoch 10/20  train_loss=0.2921  val_loss=0.2487  (44.7s)  *saved
+epoch 11/20  train_loss=0.2883  val_loss=0.2875  (44.7s)
+epoch 12/20  train_loss=0.2780  val_loss=0.2482  (44.7s)  *saved
+epoch 13/20  train_loss=0.2763  val_loss=0.2822  (43.9s)
+epoch 14/20  train_loss=0.2664  val_loss=0.3111  (44.0s)
+epoch 15/20  train_loss=0.2725  val_loss=0.2775  (43.8s)
+epoch 16/20  train_loss=0.2720  val_loss=0.2424  (44.1s)  *saved
+epoch 17/20  train_loss=0.2692  val_loss=0.2324  (44.1s)  *saved
+epoch 18/20  train_loss=0.2612  val_loss=0.2560  (44.1s)
+epoch 19/20  train_loss=0.2578  val_loss=0.2276  (43.9s)  *saved
+epoch 20/20  train_loss=0.2535  val_loss=0.2910  (44.1s)
+wrote checkpoints/impaired_gate_multiscale_lf/impaired_gate_head.pt (best val_loss=0.2276)
+Tuned threshold (best-F1 on val split):
+  impaired  0.125
+Evaluated 1400 images from split='test', threshold=tuned
+class      threshold precision    recall        f1        AP   ROC-AUC   support
+impaired       0.125     0.965     0.967     0.966     0.996     0.953      1297
+
+Gate threshold for recall >= 0.95 (tuned on val): 0.172
+  val:  impaired kept=0.951  clean passed=0.337
+  test: impaired kept=0.944  clean passed=0.350
+=== JOB_STATISTICS ===
+=== current date     : Fri Oct  9 01:25:46 AM CEST 2026
+= Job-ID             : 1834981 on tinygpu
+= Job-Name           : gate_lf
+= Job-Command        : /home/woody/iwnt/iwnt196h/Farhad_Vaseghi_MA/scripts/hpc/run_shell.slurm
+= Initial workdir    : /home/woody/iwnt/iwnt196h/Farhad_Vaseghi_MA
+= Queue/Partition    : v100
+= Slurm account      : iwnt with QOS=normal
+= Requested resources:  for 02:00:00
+= Elapsed runtime    : 00:16:14
+= Total RAM usage    : 3.8 GiB of requested  GiB (%)   
+= Node list          : tg071
+= Subm/Elig/Start/End: 2026-10-09T01:09:16 / 2026-10-09T01:09:16 / 2026-10-09T01:09:32 / 2026-10-09T01:25:46
+======================
+=== Quota infos ======
+    Path                 Used     SoftQ    HardQ    Gracetime  Filec    FileQ    FiHaQ    FileGrace    
+    /home/woody            20.1G  1000.0G  1500.0G        N/A     143K   5,000K   7,500K        N/A    
+    /home/hpc               8.2G   104.9G   209.7G        N/A   1,699      300K     400K        N/A    
+    /home/vault             0.0K  1048.6G  2097.2G        N/A       1      200K     400K        N/A    
+======================
+=== GPU utilization ==
+gpu_name, gpu_bus_id, pid, gpu_utilization [%], mem_utilization [%], max_memory_usage [MiB], time [ms]
+Tesla V100-PCIE-32GB, 00000000:AF:00.0, 2193104, 89 %, 44 %, 2528 MiB, 915213 ms
+Tesla V100-PCIE-32GB, 00000000:AF:00.0, 2193103, 26 %, 14 %, 3498 MiB, 33452 ms

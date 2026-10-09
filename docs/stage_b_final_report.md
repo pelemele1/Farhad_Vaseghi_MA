@@ -1,14 +1,14 @@
 # Stage B Final Report — Tile/Grid Distortion Localization
 
-**Status:** complete. Canonical checkpoint: `checkpoints/stage_b_h32/stage_b_head.pt`
+**Status:** complete. Canonical checkpoint: `checkpoints/stage_b_h32_lf/stage_b_head.pt`
 (multi-scale tile head with 32 channels, focal loss α=0.75, γ=2.0, random left-right flips), trained on `data/processed/stage_b`
-(14000 images, combo-inclusive, severity-balanced, severity-independent ground truth), gated at
-inference time by `checkpoints/impaired_gate_multiscale/impaired_gate_head.pt` at threshold
-**0.140** ([`stage_a_final_report.md`](stage_a_final_report.md) §5). The same dataset directory
+(14000 images, combo-inclusive, severity-balanced, severity-independent and audited ground
+truth, §3), gated at inference time by `checkpoints/impaired_gate_multiscale_lf/impaired_gate_head.pt`
+at threshold **0.172** ([`stage_a_final_report.md`](stage_a_final_report.md) §5). The same dataset directory
 also carries full-resolution pixel masks (`masks/`), which Stage C
 ([`stage_c_final_report.md`](stage_c_final_report.md)) trains against. For the full history
 (loss-function iteration, threshold diagnostics, every intermediate checkpoint and dataset
-rebuild, the Session 22 ground-truth fix, the Session 24–25 overfitting study), see [`development_log.md`](development_log.md); this
+rebuild, the Session 22 ground-truth fix, the Session 24–25 overfitting study, the Session 26 label audit), see [`development_log.md`](development_log.md); this
 document reports only the current, final result.
 
 ---
@@ -53,6 +53,21 @@ toward the clean photo), so a faint distortion must still be found — the proje
 goal. (An earlier version also scaled the mask by the severity alpha, which labeled most of a
 faint patch as clean; see `development_log.md` Session 22.)
 
+**Audited labels (Session 26).** Every image's labels were checked against the image itself
+(`scripts/audit_dataset_labels.py`) and three defects fixed in place
+(`scripts/fix_dataset_labels.py`); the generator now avoids all three:
+
+- the thin-water mask of the vendored generator is `texture + 0.2`, so it marked the whole
+  image as 20% water — 1966 of 6000 water masks, where 29% of the positive water tiles existed
+  only because of that floor. The floor is removed from the mask (the rendering is unchanged);
+- 9 variants had a correctly rendered distortion but an all-zero mask; they are re-rendered;
+- 44 scratch labels named a scratch that is practically invisible (fewer than 20 pixels change
+  by more than 10 gray levels — mostly outside the frame, or a bright highlight on white sky);
+  those labels are removed.
+
+Dirt lying under a later, strong water layer keeps its label (5.2% of dirt pixels lie under
+high-severity water); it is physically on the lens, though often hard to see (§5).
+
 ### Model
 
 `StageBMultiScaleHead`: the frozen YOLOv11-m backbone is tapped at four depths — stride 4, 8, 16
@@ -65,6 +80,10 @@ is deep and semantic, and loses most of that signal — the P5-only head reached
 on low-severity distortions (§4).
 
 ### Layer study and scratch weighting
+
+The design studies below (layers, overfitting, head size) were run before the label audit;
+their conclusions are relative comparisons and unaffected, the absolute numbers are not
+re-measured.
 
 Identical training (focal α=0.75, 40 epochs, best-validation epoch kept, 64-channel head, no
 augmentation) with different sets of backbone layers, compared on the **validation** split (AP dirt / water / scratch):
@@ -145,7 +164,7 @@ Each class gets its own decision threshold, tuned on the val split for best F1
 
 The image-level impaired gate ([`stage_a_final_report.md`](stage_a_final_report.md) §5) zeroes
 every tile of an image it calls "not impaired" (`src/eval/gate.py::apply_gate`). Its threshold
-(**0.140**) is chosen on the val split to keep ≥95% of impaired images
+(**0.172**) is chosen on the val split to keep ≥95% of impaired images
 (`evaluate_impaired_gate.py --recall-target 0.95`) — a gate's job is to drop clean images
 without discarding real distortions, so best-F1 is the wrong criterion for it. A gate false
 negative still silently suppresses a genuine detection; its measured cost is in §4.
@@ -154,9 +173,9 @@ negative still silently suppresses a genuine detection; its measured cost is in 
 
 ## 4. Results
 
-HPC job `1823489` (a100), 40 epochs with random left-right flips, best validation loss at
-epoch 38 (0.0154). Validation loss is noisy from epoch to epoch (±0.001) but does not trend
-upward.
+HPC job `1834983` (V100), 40 epochs with random left-right flips on the audited labels, best
+validation loss at epoch 38 (0.0150). Validation loss is noisy from epoch to epoch (±0.001) but
+does not trend upward.
 
 ![Stage B training curve](images/stage_b_training_curve_h32.jpg)
 
@@ -166,49 +185,54 @@ upward.
 
 | class | threshold | precision | recall | F1 | AP | ROC-AUC | support | gated F1 | gated AP | gated ROC-AUC |
 |---|---|---|---|---|---|---|---|---|---|---|
-| dirt | 0.592 | 0.881 | 0.816 | 0.847 | 0.933 | 0.975 | 72748 | 0.846 | 0.931 | 0.972 |
-| water | 0.581 | 0.816 | 0.858 | 0.836 | 0.921 | 0.970 | 82441 | 0.837 | 0.921 | 0.969 |
-| scratch | 0.570 | 0.865 | 0.705 | 0.777 | 0.829 | 0.979 | 9019 | 0.760 | 0.789 | 0.919 |
+| dirt | 0.595 | 0.887 | 0.807 | 0.845 | 0.931 | 0.974 | 72748 | 0.844 | 0.928 | 0.970 |
+| water | 0.593 | 0.813 | 0.849 | 0.831 | 0.917 | 0.972 | 72540 | 0.831 | 0.917 | 0.971 |
+| scratch | 0.551 | 0.841 | 0.715 | 0.773 | 0.825 | 0.979 | 9015 | 0.751 | 0.774 | 0.901 |
 
-On the same test split, the 64-channel head scored AP 0.935 / 0.919 / 0.833 with flips and
-0.934 / 0.916 / 0.820 without.
+**Effect of the label audit.** The same architecture trained on the old labels scores AP
+0.933 / 0.921 / 0.829 on the old test labels, but 0.933 / **0.899** / 0.829 on the audited
+ones: the floor-inflated water labels had overstated its water accuracy by about 0.02. Trained
+on the audited labels, water recovers to 0.917; dirt and scratch move by less than 0.005 (within
+run-to-run noise).
 
 ![Stage B ROC and precision-recall curves](images/stage_b_roc_pr_curves_h32.jpg)
 
-**Clean-image false positives** (`diagnose_clean_false_positives.py`: share of the 100 clean
-test images with *any* of their 256 tiles above the class threshold — a strict measure):
+**Clean-image false positives** (`diagnose_clean_false_positives.py`: share of the 103 clean
+test images — 100 clean variants plus 3 whose only, invisible scratch label the audit removed —
+with *any* of their 256 tiles above the class threshold, a strict measure):
 
 | class | ungated | gated |
 |---|---|---|
-| dirt | 15% | **9%** |
-| water | 15% | **10%** |
-| scratch | 14% | **6%** |
+| dirt | 20% | **6%** |
+| water | 21% | **11%** |
+| scratch | 22% | **10%** |
 
-The smaller head generalizes better to clean scenes: ungated, the 64-channel head flagged
-23% / 42% / 18% of clean images (26% / 46% / 27% without flips). The gate removes a further
-third to half at almost no cost for dirt and water; scratch pays the most (gated AP
-0.829→0.789), because the gate occasionally misses a
-thin scratch.
+The gate removes half to three quarters of these false alarms at almost no cost for dirt and
+water; scratch pays the most (gated AP 0.825→0.774), because the gate occasionally misses a
+thin scratch. Ungated, this model flags more clean images than the one trained on the old
+labels (15% / 9% / 15% on the same images; 9% / 6% / 7% gated); with 103 images each percent
+is a single image, and gated the two are close.
 
 **Per-severity breakdown** (`--by-severity`, ungated, per tile) — how well are faint
 distortions found?
 
 | class | severity | precision | recall | F1 | AP | ROC-AUC | support |
 |---|---|---|---|---|---|---|---|
-| dirt | low | 0.824 | 0.630 | 0.714 | 0.808 | 0.957 | 25387 |
-| dirt | medium | 0.824 | 0.885 | 0.853 | 0.940 | 0.989 | 23960 |
-| dirt | high | 0.832 | 0.946 | 0.886 | 0.972 | 0.996 | 23401 |
-| water | low | 0.719 | 0.701 | 0.710 | 0.774 | 0.956 | 27252 |
-| water | medium | 0.743 | 0.926 | 0.825 | 0.931 | 0.989 | 26524 |
-| water | high | 0.790 | 0.944 | 0.860 | 0.959 | 0.992 | 28665 |
-| scratch | low | 0.862 | 0.523 | 0.651 | 0.666 | 0.961 | 2769 |
-| scratch | medium | 0.847 | 0.733 | 0.786 | 0.838 | 0.989 | 3178 |
-| scratch | high | 0.832 | 0.840 | 0.836 | 0.902 | 0.995 | 3072 |
+| dirt | low | 0.830 | 0.617 | 0.708 | 0.804 | 0.955 | 25387 |
+| dirt | medium | 0.833 | 0.878 | 0.855 | 0.938 | 0.988 | 23960 |
+| dirt | high | 0.840 | 0.942 | 0.888 | 0.970 | 0.995 | 23401 |
+| water | low | 0.681 | 0.674 | 0.678 | 0.735 | 0.953 | 23934 |
+| water | medium | 0.743 | 0.913 | 0.819 | 0.922 | 0.989 | 23454 |
+| water | high | 0.792 | 0.956 | 0.866 | 0.968 | 0.995 | 25152 |
+| scratch | low | 0.828 | 0.536 | 0.651 | 0.663 | 0.961 | 2768 |
+| scratch | medium | 0.817 | 0.746 | 0.780 | 0.831 | 0.988 | 3175 |
+| scratch | high | 0.802 | 0.844 | 0.822 | 0.897 | 0.995 | 3072 |
 
-Faint distortions remain the hardest, but the gap is now moderate: low-severity AP is 0.67–0.81
+Faint distortions remain the hardest, but the gap is now moderate: low-severity AP is 0.66–0.80
 versus 0.89–0.97 at high severity. For comparison, the P5-only head scored against the same
 labels reached only 0.27 / 0.24 / 0.20 low-severity AP (dirt / water / scratch) — the
-multi-scale features roughly triple it. The 64-channel head reached 0.808 / 0.766 / 0.670 with flips and 0.808 / 0.758 / 0.651 without.
+multi-scale features roughly triple it. (On the audited labels the model trained on the old
+labels reaches 0.808 / 0.739 / 0.666.)
 
 ![Stage B predicted probability by ground-truth severity (max per image)](images/stage_b_probability_by_severity_h32.jpg)
 ![Stage B sample predictions](images/stage_b_sample_predictions_h32.jpg)
@@ -223,16 +247,19 @@ positive in the same tiles:
 `scripts/visualize_stage_b_results.py::plot_stage_b_eight_column_report` — one row per sample:
 original / distorted / ground-truth tiles / raw predicted probability (one column per class,
 dominant one marked) / PR curve / gated probability. The raw columns and the PR curve always use
-ungated predictions; the last column shows the post-gate result for direct comparison.
+ungated predictions; the last column shows the post-gate result for direct comparison. A
+multi-distortion image gets one row per class it contains, and its title names all of them.
 
 ![Stage B 8-column report, page 1](images/stage_b_full_report_h32_page1.jpg)
 ![Stage B 8-column report, page 2](images/stage_b_full_report_h32_page2.jpg)
+![Stage B 8-column report, page 3](images/stage_b_full_report_h32_page3.jpg)
 
-Strong dirt is localized closely (rows 4 and 6). The grey, fog-like dirt in row 5 is found but
-labeled **water** — the dirt and water generators share the same fog-texture family and differ
-mainly in color, so the two classes genuinely overlap there (§5). Clean rows show low, noisy
-raw probabilities; the gate suppresses the ones it recognizes as clean (rows 2–3), but lets the
-dark night scene in row 1 through.
+Clean images (page 1, rows 1–3) get low, noisy raw probabilities; the gate removes rows 2–3
+and passes row 1. Dirt, scratches and water are localized closely (page 1 row 4; page 2). Page
+1 rows 5–6 are one **dirt + water** image: the water on top is found, the medium dirt underneath
+it is not — when two distortions overlap, the model reports the visible one (§5). Page 2 row 4
+is a faint scratch the model finds but the gate erases. Page 3 is a water + scratch night
+image: the scratch is found, the faint water film barely.
 
 ### General/any-distortion tile channel
 
@@ -245,13 +272,15 @@ deterministic function of the 3 the model already predicts.
 
 ## 5. Known limitations
 
-- **Faint scratches are the weakest case** — low-severity scratch recall 0.52 (AP 0.67).
-- **Dirt vs. water confusion on grey haze.** Both classes draw from the same vendored
-  fog/mud texture family (`src/soiling/effects.py::_DIRT_WATER_TEXTURE_MODS`); a grey fog
-  layer can legitimately look like either.
-- **Clean-image false alarms remain** at 6–10% of clean images even after gating (strict
+- **Faint scratches are the weakest case** — low-severity scratch recall 0.54 (AP 0.66).
+- **Overlapping distortions.** Dirt under a strong water layer is labeled but mostly invisible
+  (it keeps 13% of its visibility under high-severity thin water, 22% under thick water); the
+  model reports the water and misses the dirt there. This affects about 3–4% of dirt pixels.
+- **Clean-image false alarms remain** at 6–11% of clean images even after gating (strict
   any-tile measure), and the gate trades that against occasionally suppressing a real
-  detection (scratch gated AP 0.829→0.789).
+  detection (scratch gated AP 0.825→0.774).
+- **Very small scratches** that cover less than 1.5% of every tile they touch have no positive
+  tile (2 images); they are labeled at image and pixel level only.
 - **Few distinct scenes.** 800 training photos. The flip and the smaller head keep validation
   loss from rising, but a small train/val gap remains; only more real variety would close it
   without losing accuracy.
@@ -267,30 +296,33 @@ deterministic function of the 3 the model already predicts.
 python scripts/build_stage_b_dataset.py --source data/raw/mio_tcd/images \
     --out data/processed/stage_b --variants 14 --include-combos --include-severity \
     --dirt-threshold 0.20 --water-threshold 0.25 --scratch-threshold 0.015 --save-pixel-masks
+python scripts/audit_dataset_labels.py --stage-a data/processed/stage_a --stage-b data/processed/stage_b
 python scripts/train_impaired_gate.py --data data/processed/stage_b --arch multiscale \
-    --img-size 512 --epochs 20 --device cuda --out checkpoints/impaired_gate_multiscale
+    --img-size 512 --epochs 20 --device cuda --out checkpoints/impaired_gate_multiscale_lf
 python scripts/train_stage_b.py --data data/processed/stage_b --arch multiscale --hflip \
     --hidden-dim 32 --fuse-kernel 3 --epochs 40 --loss focal --focal-alpha 0.75 --focal-gamma 2.0 \
-    --device cuda --out checkpoints/stage_b_h32
-python scripts/evaluate_stage_b.py --checkpoint checkpoints/stage_b_h32/stage_b_head.pt \
+    --device cuda --out checkpoints/stage_b_h32_lf
+python scripts/evaluate_stage_b.py --checkpoint checkpoints/stage_b_h32_lf/stage_b_head.pt \
     --data data/processed/stage_b --split test --tune-thresholds --by-severity \
-    --gate-checkpoint checkpoints/impaired_gate_multiscale/impaired_gate_head.pt --gate-threshold 0.140
-python scripts/diagnose_clean_false_positives.py --checkpoint checkpoints/stage_b_h32/stage_b_head.pt \
+    --gate-checkpoint checkpoints/impaired_gate_multiscale_lf/impaired_gate_head.pt --gate-threshold 0.172
+python scripts/diagnose_clean_false_positives.py --checkpoint checkpoints/stage_b_h32_lf/stage_b_head.pt \
     --data data/processed/stage_b --split test --tune-thresholds \
-    --gate-checkpoint checkpoints/impaired_gate_multiscale/impaired_gate_head.pt --gate-threshold 0.140
-python scripts/visualize_stage_b_results.py --checkpoint checkpoints/stage_b_h32/stage_b_head.pt \
+    --gate-checkpoint checkpoints/impaired_gate_multiscale_lf/impaired_gate_head.pt --gate-threshold 0.172
+python scripts/visualize_stage_b_results.py --checkpoint checkpoints/stage_b_h32_lf/stage_b_head.pt \
     --data data/processed/stage_b --split test --tune-thresholds \
-    --gate-checkpoint checkpoints/impaired_gate_multiscale/impaired_gate_head.pt --gate-threshold 0.140 \
-    --log-file stage_b_h32_1823489.out --tag _h32 --out-dir docs/images
+    --gate-checkpoint checkpoints/impaired_gate_multiscale_lf/impaired_gate_head.pt --gate-threshold 0.172 \
+    --log-file stage_b_lf_1834983.out --tag _h32 --out-dir docs/images
 ```
 
-The current builder writes severity-independent ground truth directly. A dataset built before
-Session 22 is converted in place with `scripts/make_gt_severity_independent.py --data <dir>`
-(which is how the on-disk dataset was produced). `build_b_severity_1822268.out` /
-`build_b_pixel_masks_1822558.out` (dataset build), `stage_b_h32_1823489.out` (training) and
-`final_b_h32_1823506.out` (test evaluation, clean-image check and figures) are the raw stdout of
-the TinyGPU jobs; the overfitting study is `scripts/hpc/stage_b_regularization.sh` and
-`stage_b_small_head.sh` (logs `study_logs/b_reg_*`, `study_logs/b_small_*`). The earlier
-64-channel models are kept as `checkpoints/stage_b_multiscale` (no flips) and
-`checkpoints/stage_b_flip`. Superseded checkpoints and their numbers are in
+The current builder writes severity-independent, audited ground truth directly. The on-disk
+dataset was built earlier and converted in place: `scripts/make_gt_severity_independent.py`
+(Session 22), then `scripts/fix_dataset_labels.py` (Session 26; its changes are listed in the
+dataset's `label_fixes.csv`). `build_b_severity_1822268.out` / `build_b_pixel_masks_1822558.out`
+(dataset build), `stage_b_lf_1834983.out` (training) and `eval_lf_1834990.out` (test evaluation,
+clean-image check and figures; `scripts/hpc/evaluate_after_label_fix.sh`) are the raw stdout of
+the TinyGPU jobs; `eval_old_on_fixed_1835006.out` scores the pre-audit models on the audited
+labels; the overfitting study is `scripts/hpc/stage_b_regularization.sh` and
+`stage_b_small_head.sh` (logs `study_logs/b_reg_*`, `study_logs/b_small_*`). The pre-audit
+model is kept as `checkpoints/stage_b_h32`, the earlier 64-channel models as
+`checkpoints/stage_b_multiscale` (no flips) and `checkpoints/stage_b_flip`. Superseded checkpoints and their numbers are in
 `docs/development_log.md`.

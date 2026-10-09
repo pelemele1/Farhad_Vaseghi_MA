@@ -1,0 +1,152 @@
+### Starting TaskPrologue of job 1834990 on tg071 at Fri Oct  9 01:57:50 AM CEST 2026
+Running on cores 6-7,14-15,22-23,30-31 with governor ondemand
+Fri Oct  9 01:57:51 2026       
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 580.178.04             Driver Version: 580.178.04     CUDA Version: 13.0     |
++-----------------------------------------+------------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  Tesla V100-PCIE-32GB           On  |   00000000:AF:00.0 Off |                    0 |
+| N/A   30C    P0             25W /  250W |       0MiB /  32768MiB |      0%      Default |
+|                                         |                        |                  N/A |
++-----------------------------------------+------------------------+----------------------+
+
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
+|        ID   ID                                                               Usage      |
+|=========================================================================================|
+|  No running processes found                                                             |
++-----------------------------------------------------------------------------------------+
+### Finished TaskPrologue
+
+Tuned per-class thresholds (best-F1 on val split):
+  dirt      0.595
+  water     0.593
+  scratch   0.551
+[ungated] Evaluated 1400 images (358400 tiles) from split='test', threshold=tuned per-class
+class      threshold precision    recall        f1        AP   ROC-AUC   support
+dirt           0.595     0.887     0.807     0.845     0.931     0.974     72748
+water          0.593     0.813     0.849     0.831     0.917     0.972     72540
+scratch        0.551     0.841     0.715     0.773     0.825     0.979      9015
+
+[gated] Evaluated 1400 images (358400 tiles) from split='test', threshold=tuned per-class
+class      threshold precision    recall        f1        AP   ROC-AUC   support
+dirt           0.595     0.888     0.805     0.844     0.928     0.970     72748
+water          0.593     0.814     0.848     0.831     0.917     0.971     72540
+scratch        0.551     0.844     0.677     0.751     0.774     0.901      9015
+
+Per-severity breakdown (ungated, per tile):
+class     severity   threshold precision    recall        f1        AP   ROC-AUC   support
+dirt      low            0.595     0.830     0.617     0.708     0.804     0.955     25387
+dirt      medium         0.595     0.833     0.878     0.855     0.938     0.988     23960
+dirt      high           0.595     0.840     0.942     0.888     0.970     0.995     23401
+water     low            0.593     0.681     0.674     0.678     0.735     0.953     23934
+water     medium         0.593     0.743     0.913     0.819     0.922     0.989     23454
+water     high           0.593     0.792     0.956     0.866     0.968     0.995     25152
+scratch   low            0.551     0.828     0.536     0.651     0.663     0.961      2768
+scratch   medium         0.551     0.817     0.746     0.780     0.831     0.988      3175
+scratch   high           0.551     0.802     0.844     0.822     0.897     0.995      3072
+[ungated] Evaluated 103 clean images from split='test', threshold=tuned per-class
+class      threshold     FP rate
+dirt           0.595     20.388%
+water          0.593     21.359%
+scratch        0.551     22.330%
+
+[gated] Evaluated 103 clean images from split='test', threshold=tuned per-class
+class      threshold     FP rate
+dirt           0.595      5.825%
+water          0.593     10.680%
+scratch        0.551      9.709%
+Tuned per-class thresholds (best-F1 on val split):
+  dirt      0.099
+  water     0.264
+  scratch   0.009
+ground-truth cell threshold: {'dirt': 0.2, 'water': 0.25, 'scratch': 0.015}
+[ungated] Evaluated 1400 images (5734400 tiles) from split='test', threshold=tuned per-class
+class      threshold precision    recall        f1        AP   ROC-AUC   support
+dirt           0.099     0.864     0.785     0.822     0.897     0.960   1137437
+water          0.264     0.788     0.827     0.807     0.883     0.958   1148292
+scratch        0.009     0.861     0.738     0.795     0.769     0.964     53179
+
+[gated] Evaluated 1400 images (5734400 tiles) from split='test', threshold=tuned per-class
+class      threshold precision    recall        f1        AP   ROC-AUC   support
+dirt           0.099     0.870     0.783     0.825     0.899     0.959   1137437
+water          0.264     0.793     0.826     0.809     0.885     0.959   1148292
+scratch        0.009     0.873     0.693     0.773     0.725     0.890     53179
+
+Per-severity breakdown (ungated, pooled to 64x64):
+class     severity   threshold precision    recall        f1        AP   ROC-AUC   support
+dirt      low            0.099     0.758     0.603     0.672     0.731     0.933    397373
+dirt      medium         0.099     0.779     0.852     0.814     0.887     0.982    373754
+dirt      high           0.099     0.799     0.913     0.852     0.920     0.990    366310
+water     low            0.264     0.621     0.641     0.631     0.659     0.931    379173
+water     medium         0.264     0.702     0.897     0.788     0.879     0.982    371546
+water     high           0.264     0.768     0.940     0.845     0.937     0.991    397573
+scratch   low            0.009     0.728     0.550     0.626     0.544     0.926     16302
+scratch   medium         0.009     0.793     0.771     0.782     0.751     0.978     18796
+scratch   high           0.009     0.802     0.875     0.837     0.833     0.992     18081
+tuned thresholds: {'dirt': 0.5974411368370056, 'water': 0.6201841235160828, 'scratch': 0.5273547768592834}
+wrote docs/images/stage_a_test_metrics_multiscale.jpg
+wrote docs/images/stage_a_roc_pr_curves_multiscale.jpg
+wrote docs/images/stage_a_sample_predictions_multiscale.jpg
+wrote docs/images/stage_a_probability_by_severity_multiscale.jpg
+wrote docs/images/stage_a_training_curve_multiscale.jpg
+/home/woody/iwnt/iwnt196h/Farhad_Vaseghi_MA/scripts/visualize_stage_a_class_examples.py:141: UserWarning: This figure includes Axes that are not compatible with tight_layout, so results might be incorrect.
+  fig.tight_layout(rect=[0, 0.1, 1, 0.95])
+wrote docs/images/stage_a_example_dirt.jpg
+/home/woody/iwnt/iwnt196h/Farhad_Vaseghi_MA/scripts/visualize_stage_a_class_examples.py:141: UserWarning: This figure includes Axes that are not compatible with tight_layout, so results might be incorrect.
+  fig.tight_layout(rect=[0, 0.1, 1, 0.95])
+wrote docs/images/stage_a_example_water.jpg
+/home/woody/iwnt/iwnt196h/Farhad_Vaseghi_MA/scripts/visualize_stage_a_class_examples.py:141: UserWarning: This figure includes Axes that are not compatible with tight_layout, so results might be incorrect.
+  fig.tight_layout(rect=[0, 0.1, 1, 0.95])
+wrote docs/images/stage_a_example_scratch.jpg
+tuned thresholds: {'dirt': 0.5950959324836731, 'water': 0.5931248068809509, 'scratch': 0.5512374639511108}
+wrote docs/images/stage_b_test_metrics_h32.jpg
+wrote docs/images/stage_b_roc_pr_curves_h32.jpg
+wrote docs/images/stage_b_probability_by_severity_h32.jpg
+wrote docs/images/stage_b_sample_predictions_h32.jpg
+wrote docs/images/stage_b_combo_sample_h32.jpg
+wrote docs/images/stage_b_full_report_h32_page1.jpg
+wrote docs/images/stage_b_full_report_h32_page2.jpg
+wrote docs/images/stage_b_full_report_h32_page3.jpg
+wrote docs/images/stage_b_training_curve_h32.jpg
+tuned thresholds: {'dirt': 0.09858489781618118, 'water': 0.2643243968486786, 'scratch': 0.00888767372816801}
+wrote docs/images/stage_c_test_metrics_unet_t2.jpg
+wrote docs/images/stage_c_roc_pr_curves_unet_t2.jpg
+wrote docs/images/stage_c_probability_by_severity_unet_t2.jpg
+wrote docs/images/stage_c_full_report_unet_t2_page1.jpg
+wrote docs/images/stage_c_full_report_unet_t2_page2.jpg
+wrote docs/images/stage_c_full_report_unet_t2_page3.jpg
+wrote docs/images/stage_c_training_curve_unet_t2.jpg
+=== JOB_STATISTICS ===
+=== current date     : Fri Oct  9 02:05:48 AM CEST 2026
+= Job-ID             : 1834990 on tinygpu
+= Job-Name           : eval_lf
+= Job-Command        : /home/woody/iwnt/iwnt196h/Farhad_Vaseghi_MA/scripts/hpc/run_shell.slurm
+= Initial workdir    : /home/woody/iwnt/iwnt196h/Farhad_Vaseghi_MA
+= Queue/Partition    : v100
+= Slurm account      : iwnt with QOS=normal
+= Requested resources:  for 03:00:00
+= Elapsed runtime    : 00:07:58
+= Total RAM usage    : 3.3 GiB of requested  GiB (%)   
+= Node list          : tg071
+= Subm/Elig/Start/End: 2026-10-09T01:26:38 / 2026-10-09T01:57:40 / 2026-10-09T01:57:50 / 2026-10-09T02:05:48
+======================
+=== Quota infos ======
+    Path                 Used     SoftQ    HardQ    Gracetime  Filec    FileQ    FiHaQ    FileGrace    
+    /home/woody            20.1G  1000.0G  1500.0G        N/A     143K   5,000K   7,500K        N/A    
+    /home/hpc               8.2G   104.9G   209.7G        N/A   1,699      300K     400K        N/A    
+    /home/vault             0.0K  1048.6G  2097.2G        N/A       1      200K     400K        N/A    
+======================
+=== GPU utilization ==
+gpu_name, gpu_bus_id, pid, gpu_utilization [%], mem_utilization [%], max_memory_usage [MiB], time [ms]
+Tesla V100-PCIE-32GB, 00000000:AF:00.0, 2201919, 24 %, 13 %, 3514 MiB, 52383 ms
+Tesla V100-PCIE-32GB, 00000000:AF:00.0, 2202109, 33 %, 18 %, 3514 MiB, 38926 ms
+Tesla V100-PCIE-32GB, 00000000:AF:00.0, 2202225, 14 %, 6 %, 1864 MiB, 136404 ms
+Tesla V100-PCIE-32GB, 00000000:AF:00.0, 2202747, 30 %, 15 %, 5210 MiB, 44590 ms
+Tesla V100-PCIE-32GB, 00000000:AF:00.0, 2202897, 1 %, 0 %, 620 MiB, 2524 ms
+Tesla V100-PCIE-32GB, 00000000:AF:00.0, 2202975, 26 %, 14 %, 3514 MiB, 49916 ms
+Tesla V100-PCIE-32GB, 00000000:AF:00.0, 2203123, 18 %, 8 %, 1864 MiB, 107909 ms

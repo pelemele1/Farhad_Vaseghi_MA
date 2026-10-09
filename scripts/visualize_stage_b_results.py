@@ -64,7 +64,8 @@ def max_prob_per_image(probs):
 
 def class_index_for_sample(row, class_names, probs_chw=None):
     """row: a metadata.csv row dict (string 0/1 values for each class name).
-    Returns (kind, class_idx): `kind` is the sample's active class name, or
+    Returns (kind, class_idx): `kind` names every active class (e.g.
+    "dirt + water" for a combo variant, so a figure title never hides one), or
     "clean" if none; `class_idx` is which class's tile grid to visualize --
     the active class itself, or (for a clean sample, given `probs_chw`, a
     (C, H, W) prediction array) whichever class the model was most
@@ -73,10 +74,22 @@ def class_index_for_sample(row, class_names, probs_chw=None):
     the sample-picking logic is unit-testable without matplotlib."""
     active = [c for c in class_names if int(row[c])]
     if active:
-        kind = active[0]
-        return kind, class_names.index(kind)
+        return " + ".join(active), class_names.index(active[0])
     class_idx = int(np.argmax(probs_chw.max(axis=(1, 2)))) if probs_chw is not None else 0
     return "clean", class_idx
+
+
+def report_entries_for_sample(row, class_names, probs_chw=None):
+    """[(kind, class_idx), ...] -- one entry per active class, so a combo
+    variant gets a report row for each of its distortions instead of only the
+    first (showing just dirt on a dirt + water image made a correct water
+    detection look like a missed dirt patch). A single-class or clean sample
+    gets exactly class_index_for_sample's one entry."""
+    kind, class_idx = class_index_for_sample(row, class_names, probs_chw)
+    active = [c for c in class_names if int(row[c])]
+    if len(active) < 2:
+        return [(kind, class_idx)]
+    return [(kind, class_names.index(c)) for c in active]
 
 
 def plot_tile_grid_overlay(dataset, indices, probs, labels, class_names, threshold, out_path, cols=3):
@@ -227,9 +240,8 @@ def build_report_rows(dataset, indices, probs, class_names):
     on which class each sample is "about"."""
     rows = []
     for idx in indices:
-        row = dataset.rows[idx]
-        kind, class_idx = class_index_for_sample(row, class_names, probs[idx])
-        rows.append((idx, kind, class_idx))
+        for kind, class_idx in report_entries_for_sample(dataset.rows[idx], class_names, probs[idx]):
+            rows.append((idx, kind, class_idx))
     return rows
 
 

@@ -1,8 +1,8 @@
 # Stage A Final Report — Image-Level Distortion Classification
 
-**Status:** complete. Canonical checkpoint: `checkpoints/stage_a_multiscale/stage_a_head.pt`
+**Status:** complete. Canonical checkpoint: `checkpoints/stage_a_multiscale_lf/stage_a_head.pt`
 (backbone layers at strides 8, 16 and 32 — P3, P4, P5), trained on `data/processed/stage_a`
-(14000 images, combo-inclusive, severity-balanced). A
+(14000 images, combo-inclusive, severity-balanced, labels audited in Session 26). A
 companion image-level "impaired/not impaired" gate head (§5) is trained alongside it and used
 as a real inference-time filter on Stage B's tile predictions — see
 [`stage_b_final_report.md`](stage_b_final_report.md). For the full session-by-session history
@@ -73,6 +73,13 @@ severity) in exactly 6000/14000 images (42.9%); combo kinds get a severity per a
 too, picked pseudo-randomly (deterministically seeded) rather than balanced, to avoid a
 combinatorial explosion (3 effects × 3 levels for the triple-effect kind).
 
+**Label audit (Session 26).** `scripts/audit_dataset_labels.py` checked every label against
+the image. 44 scratch labels named a scratch that is practically invisible (fewer than 20
+pixels change by more than 10 gray levels — mostly outside the frame, or a bright highlight on
+white sky); `scripts/fix_dataset_labels.py` removed them (listed in the dataset's
+`label_fixes.csv`), and the generator now re-draws such a scratch. All other labels were
+correct. So 3 test images now count as clean, and scratch has 597 positive test images.
+
 ### Model
 
 - **Backbone:** Ultralytics YOLOv11-m, COCO-pretrained, entirely frozen. The backbone processes
@@ -127,8 +134,8 @@ as `evaluate_stage_a.py --tune-thresholds`), then applied once to test.
 
 ## 4. Results
 
-HPC job `1823220`, 20 epochs, best validation loss at the last epoch (0.2489),
-`checkpoints/stage_a_multiscale/stage_a_head.pt`.
+HPC job `1834982` (V100), 20 epochs on the audited labels, best validation loss at epoch 19
+(0.2471), `checkpoints/stage_a_multiscale_lf/stage_a_head.pt`.
 
 ![Stage A train/val loss](images/stage_a_training_curve_multiscale.jpg)
 
@@ -138,11 +145,12 @@ HPC job `1823220`, 20 epochs, best validation loss at the last epoch (0.2489),
 
 | class | threshold | precision | recall | F1 | AP | ROC-AUC | support |
 |---|---|---|---|---|---|---|---|
-| dirt | 0.619 | 0.959 | 0.892 | 0.924 | 0.975 | 0.976 | 600 |
-| water | 0.454 | 0.935 | 0.928 | 0.931 | 0.979 | 0.979 | 600 |
-| scratch | 0.445 | 0.838 | 0.865 | 0.852 | 0.937 | 0.941 | 600 |
+| dirt | 0.597 | 0.923 | 0.897 | 0.910 | 0.976 | 0.977 | 600 |
+| water | 0.620 | 0.933 | 0.925 | 0.929 | 0.980 | 0.980 | 600 |
+| scratch | 0.527 | 0.858 | 0.853 | 0.855 | 0.939 | 0.943 | 597 |
 
-For comparison, the P5-only design scored AP 0.940 / 0.958 / 0.913 on the same test split.
+The same model trained before the label audit scores 0.975 / 0.979 / 0.937 on these labels; the
+P5-only design scored 0.940 / 0.958 / 0.913.
 
 ![Stage A ROC and precision-recall curves](images/stage_a_roc_pr_curves_multiscale.jpg)
 
@@ -151,18 +159,18 @@ dataset was built to answer: does the model do worse on subtle distortions than 
 
 | class | severity | precision | recall | F1 | AP | ROC-AUC | support |
 |---|---|---|---|---|---|---|---|
-| dirt | low | 0.868 | 0.722 | 0.789 | 0.861 | 0.939 | 209 |
-| dirt | medium | 0.894 | 0.975 | 0.932 | 0.984 | 0.994 | 198 |
-| dirt | high | 0.893 | 0.990 | 0.939 | 0.996 | 0.999 | 193 |
-| water | low | 0.811 | 0.827 | 0.819 | 0.886 | 0.952 | 202 |
-| water | medium | 0.830 | 0.984 | 0.900 | 0.987 | 0.993 | 193 |
-| water | high | 0.837 | 0.976 | 0.901 | 0.986 | 0.993 | 205 |
-| scratch | low | 0.576 | 0.735 | 0.646 | 0.732 | 0.888 | 185 |
-| scratch | medium | 0.661 | 0.899 | 0.762 | 0.893 | 0.958 | 217 |
-| scratch | high | 0.653 | 0.949 | 0.774 | 0.944 | 0.973 | 198 |
+| dirt | low | 0.774 | 0.737 | 0.755 | 0.867 | 0.940 | 209 |
+| dirt | medium | 0.810 | 0.970 | 0.883 | 0.982 | 0.993 | 198 |
+| dirt | high | 0.810 | 0.995 | 0.893 | 0.995 | 0.999 | 193 |
+| water | low | 0.806 | 0.822 | 0.814 | 0.888 | 0.953 | 202 |
+| water | medium | 0.825 | 0.979 | 0.896 | 0.986 | 0.993 | 193 |
+| water | high | 0.833 | 0.976 | 0.899 | 0.986 | 0.994 | 205 |
+| scratch | low | 0.611 | 0.717 | 0.660 | 0.737 | 0.889 | 184 |
+| scratch | medium | 0.695 | 0.888 | 0.780 | 0.900 | 0.961 | 215 |
+| scratch | high | 0.689 | 0.939 | 0.795 | 0.944 | 0.973 | 198 |
 
 **Yes — a monotonic, physically sensible trend for all three classes**, but a much smaller gap
-than with P5 alone: faint-distortion AP is 0.861 / 0.886 / 0.732 (P5 only: 0.702 / 0.773 /
+than with P5 alone: faint-distortion AP is 0.867 / 0.888 / 0.737 (P5 only: 0.702 / 0.773 /
 0.665). Faint scratches remain the hardest case. Visualized as a violin+box plot of predicted
 probability grouped by ground-truth severity:
 
@@ -184,7 +192,7 @@ hit, gray = correct reject, orange = false alarm, red = miss, at threshold 0.5):
 
 ```bash
 python scripts/visualize_stage_a_class_examples.py \
-    --checkpoint checkpoints/stage_a_multiscale/stage_a_head.pt \
+    --checkpoint checkpoints/stage_a_multiscale_lf/stage_a_head.pt \
     --data data/processed/stage_a --split test --device cpu --out-dir docs/images
 ```
 
@@ -205,11 +213,11 @@ sees the finer layers where faint texture changes survive. It is trained at 512 
 Stage B/C dataset's images — the resolution it is applied at — from the same 1000 source
 photos and splits.
 
-**Training:** HPC job `1823027`, 20 epochs, best-validation epoch kept —
-`checkpoints/impaired_gate_multiscale/impaired_gate_head.pt`.
+**Training:** HPC job `1834981` (V100), 20 epochs on the audited labels, best-validation epoch
+kept — `checkpoints/impaired_gate_multiscale_lf/impaired_gate_head.pt`.
 
 **Which layers?** The same layer study as for the Stage A head, on the **validation** split
-(threshold tuned to keep ≥95% of impaired images, as below):
+before the label audit (threshold tuned to keep ≥95% of impaired images, as below):
 
 | gate layers (strides) | ROC-AUC | clean images passed |
 |---|---|---|
@@ -225,14 +233,18 @@ close (the val split has only 100 clean images), so the existing stride-4–32 g
 discarding real distortions. Best-F1 is the wrong criterion here (with ~93% impaired images it
 picks a near-zero threshold that lets almost every clean image through), so the threshold is
 the highest one that keeps **≥95% of impaired val images**
-(`evaluate_impaired_gate.py --recall-target 0.95`): **0.140**.
+(`evaluate_impaired_gate.py --recall-target 0.95`): **0.172**.
 
-**Results (held-out test split, 1400 images, 1300 impaired / 100 clean)**
+**Results (held-out test split, 1400 images, 1297 impaired / 103 clean after the audit)**
 
 | gate | ROC-AUC | AP | threshold | impaired kept | clean passed |
 |---|---|---|---|---|---|
 | P5 only (earlier version, 640 px) | 0.927 | 0.994 | 0.159 | 94.6% | 48% |
-| **multi-scale (canonical, 512 px)** | **0.956** | **0.997** | **0.140** | **95.3%** | **31%** |
+| multi-scale, before the label audit | 0.956 | 0.997 | 0.140 | 95.3% | 31% |
+| **multi-scale, audited labels (canonical)** | **0.953** | **0.996** | **0.172** | **94.4%** | **35%** |
+
+The audit changed only 3 test labels the gate sees (images whose only, invisible scratch label
+was removed); the two multi-scale gates are equal within noise.
 
 Separating "any distortion" from "clean" is hard mainly because of faint, low-severity images;
 the finer layers cut the clean images that slip through from about half to under a third.
@@ -244,8 +256,8 @@ predictions for any image this head calls "not impaired" — see
 
 ```bash
 python scripts/train_impaired_gate.py --data data/processed/stage_b --arch multiscale \
-    --img-size 512 --epochs 20 --device cuda --out checkpoints/impaired_gate_multiscale
-python scripts/evaluate_impaired_gate.py --checkpoint checkpoints/impaired_gate_multiscale/impaired_gate_head.pt \
+    --img-size 512 --epochs 20 --device cuda --out checkpoints/impaired_gate_multiscale_lf
+python scripts/evaluate_impaired_gate.py --checkpoint checkpoints/impaired_gate_multiscale_lf/impaired_gate_head.pt \
     --data data/processed/stage_b --split test --tune-thresholds --recall-target 0.95
 ```
 
@@ -256,8 +268,8 @@ python scripts/evaluate_impaired_gate.py --checkpoint checkpoints/impaired_gate_
 - **The backbone was never fine-tuned.** All learning happened in a ~99k-parameter head on
   top of frozen COCO features.
 - **Faint distortions are still harder to detect than strong ones** (§4) — AP drops 10–21
-  points from high to low severity (dirt 0.996→0.861, water 0.986→0.886, scratch
-  0.944→0.732). Faint scratches are the weakest case.
+  points from high to low severity (dirt 0.995→0.867, water 0.986→0.888, scratch
+  0.944→0.737). Faint scratches are the weakest case.
 - **Deviates from the literal `architecture.md` Stage A design** (GAP over P5 only) by also
   pooling P3/P4; the P5-only design is kept as `--taps 32` and its numbers are in §3.
 - **Purely synthetic distortions**, untested against real multi-distortion photos — an
@@ -272,17 +284,20 @@ python scripts/evaluate_impaired_gate.py --checkpoint checkpoints/impaired_gate_
 ```bash
 python scripts/build_stage_a_dataset.py --source data/raw/mio_tcd/images \
     --out data/processed/stage_a --variants 14 --include-combos --include-severity
+python scripts/audit_dataset_labels.py --stage-a data/processed/stage_a --stage-b data/processed/stage_b
 python scripts/train_stage_a.py --data data/processed/stage_a --taps 8,16,32 --epochs 20 \
-    --img-size 640 --device cuda --out checkpoints/stage_a_multiscale
-python scripts/evaluate_stage_a.py --checkpoint checkpoints/stage_a_multiscale/stage_a_head.pt \
+    --img-size 640 --device cuda --out checkpoints/stage_a_multiscale_lf
+python scripts/evaluate_stage_a.py --checkpoint checkpoints/stage_a_multiscale_lf/stage_a_head.pt \
     --data data/processed/stage_a --split test --tune-thresholds --by-severity
-python scripts/visualize_stage_a_results.py --checkpoint checkpoints/stage_a_multiscale/stage_a_head.pt \
-    --data data/processed/stage_a --split test --tune-thresholds --log-file stage_a_multiscale_1823220.out \
+python scripts/visualize_stage_a_results.py --checkpoint checkpoints/stage_a_multiscale_lf/stage_a_head.pt \
+    --data data/processed/stage_a --split test --tune-thresholds --log-file stage_a_lf_1834982.out \
     --tag _multiscale --out-dir docs/images
 ```
 
 The layer study is `scripts/hpc/layer_study.sh` (its logs are in `study_logs/`).
-`build_a_severity_1822266.out` (dataset build), `stage_a_multiscale_1823220.out` (training)
-and `final_a_1823272.out` (test evaluation and figures) are the raw stdout of the TinyGPU jobs.
-The earlier P5-only checkpoint (`checkpoints/stage_a_severity`) and older intermediate results
-are recorded in `docs/development_log.md`.
+`build_a_severity_1822266.out` (dataset build), `stage_a_lf_1834982.out` (training and test
+evaluation), `gate_lf_1834981.out` (gate) and `eval_lf_1834990.out` (figures) are the raw stdout
+of the TinyGPU jobs; the labels were fixed in place by `scripts/fix_dataset_labels.py`. The
+pre-audit model (`checkpoints/stage_a_multiscale`), the earlier P5-only checkpoint
+(`checkpoints/stage_a_severity`) and older intermediate results are recorded in
+`docs/development_log.md`.

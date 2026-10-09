@@ -1,0 +1,91 @@
+### Starting TaskPrologue of job 1834982 on tg074 at Fri Oct  9 01:09:34 AM CEST 2026
+Running on cores 0-1,8-9,16-17,24-25 with governor ondemand
+Fri Oct  9 01:09:34 2026       
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 580.178.04             Driver Version: 580.178.04     CUDA Version: 13.0     |
++-----------------------------------------+------------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  Tesla V100-PCIE-32GB           On  |   00000000:18:00.0 Off |                    0 |
+| N/A   38C    P0             27W /  250W |       0MiB /  32768MiB |      0%      Default |
+|                                         |                        |                  N/A |
++-----------------------------------------+------------------------+----------------------+
+
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
+|        ID   ID                                                               Usage      |
+|=========================================================================================|
+|  No running processes found                                                             |
++-----------------------------------------------------------------------------------------+
+### Finished TaskPrologue
+
+train=11200 val=1400 taps=(8, 16, 32) pos_weight=[1.3333333730697632, 1.3333333730697632, 1.3509656190872192]
+epoch 1/20  train_loss=0.5734  val_loss=0.4767  (95.5s)  *saved
+epoch 2/20  train_loss=0.4380  val_loss=0.4019  (66.1s)  *saved
+epoch 3/20  train_loss=0.3841  val_loss=0.3697  (65.4s)  *saved
+epoch 4/20  train_loss=0.3525  val_loss=0.3365  (66.4s)  *saved
+epoch 5/20  train_loss=0.3304  val_loss=0.3507  (65.4s)
+epoch 6/20  train_loss=0.3160  val_loss=0.3288  (66.1s)  *saved
+epoch 7/20  train_loss=0.3028  val_loss=0.3023  (65.9s)  *saved
+epoch 8/20  train_loss=0.2918  val_loss=0.2913  (65.3s)  *saved
+epoch 9/20  train_loss=0.2827  val_loss=0.2900  (65.4s)  *saved
+epoch 10/20  train_loss=0.2740  val_loss=0.2737  (65.7s)  *saved
+epoch 11/20  train_loss=0.2662  val_loss=0.2859  (65.4s)
+epoch 12/20  train_loss=0.2595  val_loss=0.2782  (65.4s)
+epoch 13/20  train_loss=0.2567  val_loss=0.2828  (65.4s)
+epoch 14/20  train_loss=0.2499  val_loss=0.2667  (65.4s)  *saved
+epoch 15/20  train_loss=0.2449  val_loss=0.2718  (65.5s)
+epoch 16/20  train_loss=0.2368  val_loss=0.2656  (66.3s)  *saved
+epoch 17/20  train_loss=0.2398  val_loss=0.2551  (65.3s)  *saved
+epoch 18/20  train_loss=0.2306  val_loss=0.2741  (66.4s)
+epoch 19/20  train_loss=0.2301  val_loss=0.2471  (66.4s)  *saved
+epoch 20/20  train_loss=0.2269  val_loss=0.2506  (65.4s)
+wrote checkpoints/stage_a_multiscale_lf/stage_a_head.pt (best val_loss=0.2471)
+Tuned per-class thresholds (best-F1 on val split):
+  dirt      0.597
+  water     0.620
+  scratch   0.527
+Evaluated 1400 images from split='test', threshold=tuned per-class
+class      threshold precision    recall        f1        AP   ROC-AUC   support
+dirt           0.597     0.923     0.897     0.910     0.976     0.977       600
+water          0.620     0.933     0.925     0.929     0.980     0.980       600
+scratch        0.527     0.858     0.853     0.855     0.939     0.943       597
+
+Per-severity breakdown:
+class     severity   threshold precision    recall        f1        AP   ROC-AUC   support
+dirt      low            0.597     0.774     0.737     0.755     0.867     0.940       209
+dirt      medium         0.597     0.810     0.970     0.883     0.982     0.993       198
+dirt      high           0.597     0.810     0.995     0.893     0.995     0.999       193
+water     low            0.620     0.806     0.822     0.814     0.888     0.953       202
+water     medium         0.620     0.825     0.979     0.896     0.986     0.993       193
+water     high           0.620     0.833     0.976     0.899     0.986     0.994       205
+scratch   low            0.527     0.611     0.717     0.660     0.737     0.889       184
+scratch   medium         0.527     0.695     0.888     0.780     0.900     0.961       215
+scratch   high           0.527     0.689     0.939     0.795     0.944     0.973       198
+=== JOB_STATISTICS ===
+=== current date     : Fri Oct  9 01:33:12 AM CEST 2026
+= Job-ID             : 1834982 on tinygpu
+= Job-Name           : stage_a_lf
+= Job-Command        : /home/woody/iwnt/iwnt196h/Farhad_Vaseghi_MA/scripts/hpc/run_shell.slurm
+= Initial workdir    : /home/woody/iwnt/iwnt196h/Farhad_Vaseghi_MA
+= Queue/Partition    : v100
+= Slurm account      : iwnt with QOS=normal
+= Requested resources:  for 05:00:00
+= Elapsed runtime    : 00:23:40
+= Total RAM usage    : 4.3 GiB of requested  GiB (%)   
+= Node list          : tg074
+= Subm/Elig/Start/End: 2026-10-09T01:09:16 / 2026-10-09T01:09:16 / 2026-10-09T01:09:32 / 2026-10-09T01:33:12
+======================
+=== Quota infos ======
+    Path                 Used     SoftQ    HardQ    Gracetime  Filec    FileQ    FiHaQ    FileGrace    
+    /home/woody            20.1G  1000.0G  1500.0G        N/A     143K   5,000K   7,500K        N/A    
+    /home/hpc               8.2G   104.9G   209.7G        N/A   1,699      300K     400K        N/A    
+    /home/vault             0.0K  1048.6G  2097.2G        N/A       1      200K     400K        N/A    
+======================
+=== GPU utilization ==
+gpu_name, gpu_bus_id, pid, gpu_utilization [%], mem_utilization [%], max_memory_usage [MiB], time [ms]
+Tesla V100-PCIE-32GB, 00000000:18:00.0, 2007734, 90 %, 44 %, 3268 MiB, 1354991 ms
+Tesla V100-PCIE-32GB, 00000000:18:00.0, 2007733, 35 %, 18 %, 5210 MiB, 38455 ms

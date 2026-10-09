@@ -46,7 +46,7 @@ from scripts.visualize_stage_a_results import (
 from scripts.visualize_stage_b_results import (
     _clean_image_lookup,
     _load_image_for_row,
-    class_index_for_sample,
+    report_entries_for_sample,
 )
 from src.data.stage_c_dataset import StageCDataset
 from src.eval.gate import apply_gate, collect_gate_probs, load_gate
@@ -62,9 +62,9 @@ def select_report_rows(dataset, max_probs, class_names, per_class=3, seed=0):
     indices = select_diverse_sample_indices(dataset.rows, class_names, per_kind=per_class, seed=seed)
     rows = []
     for idx in indices:
-        row = dataset.rows[idx]
-        kind, class_idx = class_index_for_sample(row, class_names, np.asarray(max_probs[idx])[:, None, None])
-        rows.append((idx, kind, class_idx))
+        probs_chw = np.asarray(max_probs[idx])[:, None, None]
+        for kind, class_idx in report_entries_for_sample(dataset.rows[idx], class_names, probs_chw):
+            rows.append((idx, kind, class_idx))
     return rows
 
 

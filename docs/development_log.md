@@ -2340,3 +2340,91 @@ On test the smaller head matches the 64-channel one within noise, and it raises 
 false alarms on clean images (water: 42% -> 15% ungated) -- the clearest sign that it memorizes
 less. `stage_b_final_report.md` updated (head-size table, results, figures, reproduction); the
 `_flip` figures were replaced by `_h32`.
+
+## Session 26 — Label audit of all generated images; ground-truth fixes; retraining
+
+**Date:** 2026-10-08/09
+
+**Trigger.** In the Stage C report figure, a "dirt" row showed an almost empty predicted dirt
+mask. It was a **dirt + water** image: the plotting code named only the first active class and
+showed only its channel. The model had marked 99.7% of the water area as water and missed the
+medium dirt lying under high-severity water (92% of the dirt was covered). The user asked for
+every generated image to be checked for mislabeling.
+
+### Figure fix
+
+`visualize_stage_b_results.py::class_index_for_sample` now names every active class
+("dirt + water"), and the per-sample report figures of Stages B and C (`report_entries_for_sample`)
+show one row per active class of a combination. The Stage B/C report text that had read this row
+as "grey dirt mistaken for water" was wrong and is corrected.
+
+### Audit (`scripts/audit_dataset_labels.py`, all 28000 images of both datasets)
+
+Correct: metadata (class flag <-> severity, 14 variants per photo, one split per photo), clean
+variants vs. source photos, tile labels vs. masks (0 mismatches), mask channel order in the
+loaders (BGR->RGB is applied to the image only). Mask peaks below 1 (814 flags) are benign:
+scratch and droplet masks are partly transparent by design, independent of severity.
+
+Defects found:
+
+| # | defect | size | cause |
+|---|---|---|---|
+| 1 | thin-water masks carry a 0.2 floor over the whole image | 1969 of 6000 water images; 29% of their positive water tiles exist only because of the floor | vendored `add_dirtwaterByTxture_slight` builds the mask as `texture + 0.2` |
+| 2 | labeled distortion with an all-zero mask, although the image is clearly distorted | 9 images (5 dirt, 4 water) | vendored effect returned an empty mask |
+| 3 | labeled scratch that is practically invisible (< 20 pixels changed by > 10 gray levels) | 44 images per dataset | scratch mostly outside the frame, or a bright screen-blend highlight on white sky/snow |
+| 4 | dirt under a later, strong water layer | 5.2% of dirt pixels lie under high-severity water; dirt keeps 13% (thin) / 22% (thick) / 74% (droplet) of its visibility there | builder order dirt -> water -> scratch |
+
+Defect 4 is kept: the dirt is physically on the lens, and removing it would need the water
+mechanism, which the dataset does not store. A first version of the fix unlabeled the 9 images
+of defect 2; the re-audit of the fixed data showed they are real distortions with broken masks,
+so they are re-rendered instead (caught before any training).
+
+### Fixes
+
+- Generator (`src/soiling/effects.py`, `dataset_builder.py`): `remove_thin_water_floor` for
+  thin-water masks; `visible_pixel_count` / `is_visible` (>= 20 pixels changed by > 10 gray
+  levels inside the mask); `_apply_visible_effect` re-draws an invisible effect with a fresh
+  seed (up to 10 times) and leaves the class unlabeled only if it never becomes visible.
+- Existing data (`scripts/fix_dataset_labels.py`, in place, backups kept): floor removed from
+  1966 masks, 9 variants re-rendered, 44 scratch labels removed per dataset, tiles re-rasterized
+  from the stored masks. Re-audit: 0 tile mismatches, no floor, no invisible or empty label.
+- Tests: `tests/test_label_audit_fixes.py`; 243 tests pass.
+
+### Retraining
+
+HPC GPUs were all busy except one V100 node; the `stage_a` env (torch cu130) has no sm_70 kernels,
+so a second env `stage_a_v100` (torch 2.14.1+cu126) was created and `run_shell.slurm` takes
+`CONDA_ENV`. All four models retrained in parallel on V100s with their canonical settings into
+`*_lf` checkpoints (`scripts/hpc/retrain_after_label_fix.sh`).
+
+| model | job | best epoch (val loss) |
+|---|---|---|
+| gate | `1834981` | 19 (0.2276); recall-target threshold 0.172 (was 0.140) |
+| Stage A | `1834982` | 19 (0.2471) |
+| Stage B | `1834983` | 38 (0.0150) |
+| Stage C | `1834984` | 25 (0.2588) |
+
+### Results (test split, audited labels)
+
+To separate the effect of the corrected *labels* from the effect of *retraining*, the
+pre-audit models were also scored on the audited test labels (`eval_old_on_fixed_1835006.out`):
+
+| | pre-audit model, old labels | pre-audit model, audited labels | retrained, audited labels |
+|---|---|---|---|
+| A: AP dirt / water / scratch | 0.975 / 0.979 / 0.937 | 0.975 / 0.979 / 0.937 | 0.976 / 0.980 / 0.939 |
+| A: faint AP | 0.861 / 0.886 / 0.732 | 0.861 / 0.886 / 0.733 | 0.867 / 0.888 / 0.737 |
+| B: AP | 0.933 / 0.921 / 0.829 | 0.933 / 0.899 / 0.829 | 0.931 / 0.917 / 0.825 |
+| B: faint AP | 0.808 / 0.774 / 0.666 | 0.808 / 0.739 / 0.666 | 0.804 / 0.735 / 0.663 |
+| B: clean images flagged, ungated / gated | 15/15/14% / 9/10/6% | 15/9/15% / 9/6/7% | 20/21/22% / 6/11/10% |
+| C: AP | 0.901 / 0.890 / 0.780 | 0.901 / 0.878 / 0.780 | 0.897 / 0.883 / 0.769 |
+| C: faint AP | 0.735 / 0.686 / 0.557 | 0.735 / 0.656 / 0.557 | 0.731 / 0.659 / 0.544 |
+| gate: ROC-AUC, impaired kept / clean passed | 0.956, 95.3% / 31% | — | 0.953, 94.4% / 35% |
+
+Conclusions: the defects did not distort the results dramatically. The thin-water floor had
+made Stage B/C *water* look better than it was (B: 0.921 on old labels vs. 0.899 on the audited
+ones); retraining on the audited labels recovers B water to 0.917 (C: +0.005). All other changes
+are at most 0.013 AP, the size of run-to-run noise. Ungated, the retrained Stage B flags more of
+the 103 clean test images; gated the two are similar. The retrained `*_lf` models are canonical,
+since they are trained on labels now verified correct. All reports, figures
+(`regenerate_report_figures.sh`) and the README are updated; the per-sample figures now give a
+multi-distortion image one row per class.

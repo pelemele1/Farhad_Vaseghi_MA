@@ -250,4 +250,45 @@ def add_water(image, seed=None, mechanism=None):
         fn = add_dirtwaterByTxture if mechanism == "thick" else add_dirtwaterByTxture_slight
         out, mask = fn(image.copy(), texture)
 
-    return out, _normalize_mask(mask)
+    mask = _normalize_mask(mask)
+    if mechanism == "thin":
+        mask = remove_thin_water_floor(mask)
+    return out, mask
+
+
+# physical_lens_soiling's thin-water mask is `texture + 0.2`: never below 0.2,
+# anywhere in the image. The rendering uses it as the blend weight (a faint 20%
+# film everywhere), but as ground truth the floor made every pixel 20% "water",
+# so the same tile/cell cutoff meant far less real water than for thick water
+# or dirt (Session 26 label audit). The floor is removed from the mask only.
+THIN_WATER_MASK_FLOOR = 0.2
+
+
+def remove_thin_water_floor(mask, floor=THIN_WATER_MASK_FLOOR):
+    """Rescales a thin-water mask so its floor maps to 0 and 1 stays 1."""
+    return np.clip((np.asarray(mask, dtype=np.float32) - floor) / (1.0 - floor), 0.0, 1.0)
+
+
+# A labeled distortion must visibly change the image: at least MIN_VISIBLE_PIXELS
+# pixels inside its mask (> 0.5) must differ from the image before the effect by
+# more than MIN_PIXEL_CHANGE gray levels. Catches effects that render nothing --
+# a scratch mostly outside the frame, or a bright scratch highlight on a white
+# sky -- while every faint-but-visible distortion still counts.
+MIN_VISIBLE_PIXELS = 20
+MIN_PIXEL_CHANGE = 10
+
+
+def visible_pixel_count(before, after, mask):
+    """Pixels inside `mask` (> 0.5) that the effect changed by more than
+    MIN_PIXEL_CHANGE gray levels (largest change over the color channels)."""
+    region = np.asarray(mask) > 0.5
+    if not region.any():
+        return 0
+    change = np.abs(after.astype(np.int16) - before.astype(np.int16))
+    if change.ndim == 3:
+        change = change.max(axis=2)
+    return int((change[region] > MIN_PIXEL_CHANGE).sum())
+
+
+def is_visible(before, after, mask):
+    return visible_pixel_count(before, after, mask) >= MIN_VISIBLE_PIXELS

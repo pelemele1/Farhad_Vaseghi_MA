@@ -1,0 +1,137 @@
+### Starting TaskPrologue of job 1835006 on tg071 at Fri Oct  9 02:08:37 AM CEST 2026
+Running on cores 6-7,14-15,22-23,30-31 with governor ondemand
+Fri Oct  9 02:08:37 2026       
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 580.178.04             Driver Version: 580.178.04     CUDA Version: 13.0     |
++-----------------------------------------+------------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  Tesla V100-PCIE-32GB           On  |   00000000:AF:00.0 Off |                    0 |
+| N/A   30C    P0             25W /  250W |       0MiB /  32768MiB |      0%      Default |
+|                                         |                        |                  N/A |
++-----------------------------------------+------------------------+----------------------+
+
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
+|        ID   ID                                                               Usage      |
+|=========================================================================================|
+|  No running processes found                                                             |
++-----------------------------------------------------------------------------------------+
+### Finished TaskPrologue
+
+Tuned per-class thresholds (best-F1 on val split):
+  dirt      0.591
+  water     0.629
+  scratch   0.570
+[ungated] Evaluated 1400 images (358400 tiles) from split='test', threshold=tuned per-class
+class      threshold precision    recall        f1        AP   ROC-AUC   support
+dirt           0.591     0.880     0.817     0.847     0.933     0.975     72748
+water          0.629     0.786     0.839     0.812     0.899     0.966     72540
+scratch        0.570     0.865     0.705     0.777     0.829     0.979      9015
+
+[gated] Evaluated 1400 images (358400 tiles) from split='test', threshold=tuned per-class
+class      threshold precision    recall        f1        AP   ROC-AUC   support
+dirt           0.591     0.881     0.815     0.846     0.931     0.972     72748
+water          0.629     0.787     0.838     0.812     0.899     0.965     72540
+scratch        0.570     0.866     0.677     0.760     0.789     0.919      9015
+
+Per-severity breakdown (ungated, per tile):
+class     severity   threshold precision    recall        f1        AP   ROC-AUC   support
+dirt      low            0.591     0.823     0.632     0.715     0.808     0.957     25387
+dirt      medium         0.591     0.823     0.885     0.853     0.941     0.989     23960
+dirt      high           0.591     0.831     0.947     0.885     0.972     0.996     23401
+water     low            0.629     0.713     0.635     0.672     0.739     0.953     23934
+water     medium         0.629     0.735     0.918     0.816     0.915     0.988     23454
+water     high           0.629     0.779     0.959     0.860     0.960     0.994     25152
+scratch   low            0.570     0.862     0.523     0.651     0.666     0.961      2768
+scratch   medium         0.570     0.847     0.734     0.786     0.838     0.989      3175
+scratch   high           0.570     0.832     0.840     0.836     0.902     0.995      3072
+[ungated] Evaluated 103 clean images from split='test', threshold=tuned per-class
+class      threshold     FP rate
+dirt           0.591     14.563%
+water          0.629      8.738%
+scratch        0.570     14.563%
+
+[gated] Evaluated 103 clean images from split='test', threshold=tuned per-class
+class      threshold     FP rate
+dirt           0.591      8.738%
+water          0.629      5.825%
+scratch        0.570      6.796%
+Tuned per-class thresholds (best-F1 on val split):
+  dirt      0.088
+  water     0.374
+  scratch   0.004
+ground-truth cell threshold: {'dirt': 0.2, 'water': 0.25, 'scratch': 0.015}
+[ungated] Evaluated 1400 images (5734400 tiles) from split='test', threshold=tuned per-class
+class      threshold precision    recall        f1        AP   ROC-AUC   support
+dirt           0.088     0.861     0.789     0.823     0.901     0.961   1137437
+water          0.374     0.785     0.825     0.805     0.878     0.956   1148292
+scratch        0.004     0.880     0.742     0.805     0.780     0.963     53179
+
+[gated] Evaluated 1400 images (5734400 tiles) from split='test', threshold=tuned per-class
+class      threshold precision    recall        f1        AP   ROC-AUC   support
+dirt           0.088     0.866     0.788     0.825     0.902     0.961   1137437
+water          0.374     0.788     0.825     0.806     0.879     0.957   1148292
+scratch        0.004     0.885     0.709     0.787     0.744     0.906     53179
+
+Per-severity breakdown (ungated, pooled to 64x64):
+class     severity   threshold precision    recall        f1        AP   ROC-AUC   support
+dirt      low            0.088     0.752     0.604     0.670     0.735     0.934    397373
+dirt      medium         0.088     0.774     0.857     0.814     0.892     0.982    373754
+dirt      high           0.088     0.791     0.920     0.851     0.927     0.991    366310
+water     low            0.374     0.643     0.626     0.634     0.656     0.934    379173
+water     medium         0.374     0.707     0.903     0.793     0.876     0.983    371546
+water     high           0.374     0.786     0.943     0.857     0.943     0.992    397573
+scratch   low            0.004     0.767     0.556     0.645     0.557     0.923     16302
+scratch   medium         0.004     0.824     0.777     0.800     0.773     0.977     18796
+scratch   high           0.004     0.826     0.875     0.850     0.852     0.990     18081
+Tuned per-class thresholds (best-F1 on val split):
+  dirt      0.619
+  water     0.454
+  scratch   0.445
+Evaluated 1400 images from split='test', threshold=tuned per-class
+class      threshold precision    recall        f1        AP   ROC-AUC   support
+dirt           0.619     0.959     0.892     0.924     0.975     0.976       600
+water          0.454     0.934     0.927     0.931     0.979     0.979       600
+scratch        0.445     0.837     0.868     0.852     0.937     0.942       597
+
+Per-severity breakdown:
+class     severity   threshold precision    recall        f1        AP   ROC-AUC   support
+dirt      low            0.619     0.868     0.722     0.789     0.861     0.939       209
+dirt      medium         0.619     0.894     0.975     0.932     0.984     0.994       198
+dirt      high           0.619     0.893     0.990     0.939     0.996     0.999       193
+water     low            0.454     0.810     0.822     0.816     0.886     0.952       202
+water     medium         0.454     0.830     0.984     0.900     0.987     0.993       193
+water     high           0.454     0.837     0.976     0.901     0.986     0.993       205
+scratch   low            0.445     0.574     0.739     0.646     0.733     0.889       184
+scratch   medium         0.445     0.658     0.902     0.761     0.895     0.958       215
+scratch   high           0.445     0.651     0.949     0.772     0.944     0.973       198
+=== JOB_STATISTICS ===
+=== current date     : Fri Oct  9 02:13:24 AM CEST 2026
+= Job-ID             : 1835006 on tinygpu
+= Job-Name           : eval_old_on_fixed
+= Job-Command        : /home/woody/iwnt/iwnt196h/Farhad_Vaseghi_MA/scripts/hpc/run_shell.slurm
+= Initial workdir    : /home/woody/iwnt/iwnt196h/Farhad_Vaseghi_MA
+= Queue/Partition    : v100
+= Slurm account      : iwnt with QOS=normal
+= Requested resources:  for 01:00:00
+= Elapsed runtime    : 00:04:49
+= Total RAM usage    : 3.0 GiB of requested  GiB (%)   
+= Node list          : tg071
+= Subm/Elig/Start/End: 2026-10-09T02:08:18 / 2026-10-09T02:08:18 / 2026-10-09T02:08:35 / 2026-10-09T02:13:24
+======================
+=== Quota infos ======
+    Path                 Used     SoftQ    HardQ    Gracetime  Filec    FileQ    FiHaQ    FileGrace    
+    /home/woody            20.1G  1000.0G  1500.0G        N/A     143K   5,000K   7,500K        N/A    
+    /home/hpc               8.2G   104.9G   209.7G        N/A   1,699      300K     400K        N/A    
+    /home/vault             0.0K  1048.6G  2097.2G        N/A       1      200K     400K        N/A    
+======================
+=== GPU utilization ==
+gpu_name, gpu_bus_id, pid, gpu_utilization [%], mem_utilization [%], max_memory_usage [MiB], time [ms]
+Tesla V100-PCIE-32GB, 00000000:AF:00.0, 2204083, 27 %, 15 %, 3514 MiB, 47491 ms
+Tesla V100-PCIE-32GB, 00000000:AF:00.0, 2204271, 35 %, 19 %, 3514 MiB, 37443 ms
+Tesla V100-PCIE-32GB, 00000000:AF:00.0, 2204456, 14 %, 6 %, 1864 MiB, 132304 ms
+Tesla V100-PCIE-32GB, 00000000:AF:00.0, 2204082, 33 %, 17 %, 5210 MiB, 40645 ms

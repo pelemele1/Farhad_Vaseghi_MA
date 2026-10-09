@@ -1,0 +1,91 @@
+### Starting TaskPrologue of job 1834983 on tg074 at Fri Oct  9 01:09:34 AM CEST 2026
+Running on cores 2-3,10-11,18-19,26-27 with governor ondemand
+Fri Oct  9 01:09:34 2026       
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 580.178.04             Driver Version: 580.178.04     CUDA Version: 13.0     |
++-----------------------------------------+------------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  Tesla V100-PCIE-32GB           On  |   00000000:3B:00.0 Off |                    0 |
+| N/A   40C    P0             26W /  250W |       0MiB /  32768MiB |      0%      Default |
+|                                         |                        |                  N/A |
++-----------------------------------------+------------------------+----------------------+
+
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
+|        ID   ID                                                               Usage      |
+|=========================================================================================|
+|  No running processes found                                                             |
++-----------------------------------------------------------------------------------------+
+### Finished TaskPrologue
+
+head parameters: 94627
+arch=multiscale taps=(4, 8, 16, 32) hflip=True weight_decay=0.0 dropout=0.0
+train=11200 val=1400 loss=focal alpha=0.75 gamma=2.0 class_weights=None
+epoch 1/40  train_loss=0.0249  val_loss=0.0238  (60.3s)  *saved
+epoch 2/40  train_loss=0.0201  val_loss=0.0206  (46.3s)  *saved
+epoch 3/40  train_loss=0.0189  val_loss=0.0186  (46.1s)  *saved
+epoch 4/40  train_loss=0.0181  val_loss=0.0199  (46.3s)
+epoch 5/40  train_loss=0.0174  val_loss=0.0175  (46.1s)  *saved
+epoch 6/40  train_loss=0.0170  val_loss=0.0169  (46.1s)  *saved
+epoch 7/40  train_loss=0.0166  val_loss=0.0185  (46.2s)
+epoch 8/40  train_loss=0.0164  val_loss=0.0163  (46.3s)  *saved
+epoch 9/40  train_loss=0.0160  val_loss=0.0161  (46.1s)  *saved
+epoch 10/40  train_loss=0.0158  val_loss=0.0160  (46.5s)  *saved
+epoch 11/40  train_loss=0.0156  val_loss=0.0174  (46.3s)
+epoch 12/40  train_loss=0.0152  val_loss=0.0164  (46.3s)
+epoch 13/40  train_loss=0.0152  val_loss=0.0163  (46.4s)
+epoch 14/40  train_loss=0.0150  val_loss=0.0158  (46.1s)  *saved
+epoch 15/40  train_loss=0.0149  val_loss=0.0157  (46.3s)  *saved
+epoch 16/40  train_loss=0.0148  val_loss=0.0160  (46.3s)
+epoch 17/40  train_loss=0.0146  val_loss=0.0170  (46.5s)
+epoch 18/40  train_loss=0.0146  val_loss=0.0168  (46.4s)
+epoch 19/40  train_loss=0.0144  val_loss=0.0156  (46.4s)  *saved
+epoch 20/40  train_loss=0.0143  val_loss=0.0164  (46.2s)
+epoch 21/40  train_loss=0.0143  val_loss=0.0158  (46.2s)
+epoch 22/40  train_loss=0.0141  val_loss=0.0158  (46.5s)
+epoch 23/40  train_loss=0.0140  val_loss=0.0158  (46.1s)
+epoch 24/40  train_loss=0.0140  val_loss=0.0157  (46.1s)
+epoch 25/40  train_loss=0.0139  val_loss=0.0155  (46.5s)  *saved
+epoch 26/40  train_loss=0.0139  val_loss=0.0151  (45.9s)  *saved
+epoch 27/40  train_loss=0.0138  val_loss=0.0154  (46.1s)
+epoch 28/40  train_loss=0.0137  val_loss=0.0166  (46.1s)
+epoch 29/40  train_loss=0.0137  val_loss=0.0155  (46.1s)
+epoch 30/40  train_loss=0.0137  val_loss=0.0151  (46.0s)
+epoch 31/40  train_loss=0.0136  val_loss=0.0152  (46.0s)
+epoch 32/40  train_loss=0.0135  val_loss=0.0151  (46.1s)
+epoch 33/40  train_loss=0.0135  val_loss=0.0162  (46.1s)
+epoch 34/40  train_loss=0.0134  val_loss=0.0153  (45.9s)
+epoch 35/40  train_loss=0.0134  val_loss=0.0158  (46.2s)
+epoch 36/40  train_loss=0.0133  val_loss=0.0160  (46.3s)
+epoch 37/40  train_loss=0.0133  val_loss=0.0155  (46.1s)
+epoch 38/40  train_loss=0.0133  val_loss=0.0150  (46.4s)  *saved
+epoch 39/40  train_loss=0.0132  val_loss=0.0154  (45.9s)
+epoch 40/40  train_loss=0.0131  val_loss=0.0162  (46.2s)
+wrote checkpoints/stage_b_h32_lf/stage_b_head.pt (best val_loss=0.0150)
+=== JOB_STATISTICS ===
+=== current date     : Fri Oct  9 01:41:01 AM CEST 2026
+= Job-ID             : 1834983 on tinygpu
+= Job-Name           : stage_b_lf
+= Job-Command        : /home/woody/iwnt/iwnt196h/Farhad_Vaseghi_MA/scripts/hpc/run_shell.slurm
+= Initial workdir    : /home/woody/iwnt/iwnt196h/Farhad_Vaseghi_MA
+= Queue/Partition    : v100
+= Slurm account      : iwnt with QOS=normal
+= Requested resources:  for 03:00:00
+= Elapsed runtime    : 00:31:29
+= Total RAM usage    : 3.2 GiB of requested  GiB (%)   
+= Node list          : tg074
+= Subm/Elig/Start/End: 2026-10-09T01:09:16 / 2026-10-09T01:09:16 / 2026-10-09T01:09:32 / 2026-10-09T01:41:01
+======================
+=== Quota infos ======
+    Path                 Used     SoftQ    HardQ    Gracetime  Filec    FileQ    FiHaQ    FileGrace    
+    /home/woody            20.1G  1000.0G  1500.0G        N/A     143K   5,000K   7,500K        N/A    
+    /home/hpc               8.2G   104.9G   209.7G        N/A   1,699      300K     400K        N/A    
+    /home/vault             0.0K  1048.6G  2097.2G        N/A       1      200K     400K        N/A    
+======================
+=== GPU utilization ==
+gpu_name, gpu_bus_id, pid, gpu_utilization [%], mem_utilization [%], max_memory_usage [MiB], time [ms]
+Tesla V100-PCIE-32GB, 00000000:3B:00.0, 2007731, 93 %, 46 %, 2758 MiB, 1868999 ms
