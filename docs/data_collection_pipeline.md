@@ -1,6 +1,11 @@
 # Data Collection Pipeline (Part 1)
 
-**Status:** ready for review, not yet executed in the field.
+**Status:** earlier plan, partly replaced. The supervisor's protocol
+([`data_collection/datacollection_surveilance_en.md`](data_collection/datacollection_surveilance_en.md))
+and our capture plan ([`data_collection/capture_plan.md`](data_collection/capture_plan.md))
+now set the procedure, the amounts and the decisions (panes on both lenses, only the right
+pane contaminated, software trigger, the Stereo Capture app). The equipment notes below still
+apply.
 
 This document is the step-by-step field protocol for capturing the real dataset with the
 two-camera rig. [`setup.md`](../setup.md) states the design rules (glass pane, sync, mapping,
