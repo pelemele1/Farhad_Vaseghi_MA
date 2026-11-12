@@ -1,7 +1,7 @@
 ---
 title: Procedural generation of lens soiling data via physics-based simulation
 sources: [raw/papers/Zhang et al. - 2025 - Procedural generation of lens soiling data via physics-based simulation.pdf]
-updated: 2026-08-31
+updated: 2026-11-12
 ---
 
 # Procedural generation of lens soiling data via physics-based simulation
@@ -60,6 +60,20 @@ water_thin → this project's `water`, blob-blend variant) map onto this;
 `add_droplet_distort.py`'s `add_distort` is the water-droplet refraction
 variant, a second, physically different mechanism also folded into this
 project's single `water` class.
+
+## Update 2026-11-12: use in the six approved generators (Session 29)
+
+The project now uses this paper for four of its six contamination types (see
+`docs/synthetic_generators.md` in the repo): water drops = Fig. 1(g) droplets only (the
+per-droplet steps of `add_distort`), mud = Fig. 1(b, c) via `add_mudByTxture`, fogging = the
+mist textures `r_fog` / `thick_fog` with a project-own scattering-veil rendering (the paper's
+"mist drawn like water stains, whiter" gave unnatural clumps), dust = Fig. 1(e), written from
+the paper's description ("like mud stains but lighter and more transparent") with the
+`many_dust_drop` texture, since `add_lensdust.py` was never vendored. The paper shows each
+effect at one strength only; all light / medium / heavy levels are the project's design. The
+vendored blur sizes are fixed in pixels, so the effects are rendered on the photo enlarged
+to 1440 px wide (the 720 x 480 MIO-TCD photos otherwise blur them much more than the paper's
+figures). The earlier "thick"/"thin" water-stain mechanisms are no longer used for any class.
 
 ## Results relevant to this thesis's design choices
 

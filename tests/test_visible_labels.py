@@ -20,7 +20,7 @@ from src.eval.class_maps import (
 from src.models.losses import CEDiceLoss, MultiClassFocalLoss, inverse_sqrt_frequency_weights
 from src.pipeline import colorize, format_answer, image_answer
 from src.soiling import visible_labels
-from src.soiling.effects import add_dirt, add_water
+from src.soiling.effects import add_dirt, add_water, apply_severity
 from src.soiling.visible_dataset import build_visible_dataset
 from src.soiling.visible_labels import clean_up_labels, render_chain, tile_class_grid, visible_label_map
 
@@ -74,7 +74,13 @@ def _fake_effects(monkeypatch):
         out[69:72] += 25
         return np.clip(out, 0, 255).astype(np.uint8), mask
 
-    monkeypatch.setattr(visible_labels, "_EFFECTS", {"dirt": dirt, "water": water, "scratch": scratch})
+    effects = {"dirt": dirt, "water": water, "scratch": scratch}
+
+    def render(name, image, seed, severity):
+        effect_out, mask = effects[name](image, seed=seed)
+        return apply_severity(image, effect_out, mask, severity)[0], mask
+
+    monkeypatch.setattr(visible_labels, "render_effect", render)
 
 
 def test_single_effect_label_is_where_the_image_visibly_changed(monkeypatch):

@@ -32,7 +32,7 @@ from pathlib import Path
 import cv2 as cv
 import numpy as np
 
-from src.soiling.effects import SEVERITY_LEVELS, add_dirt, add_scratch, add_water, apply_severity, is_visible
+from src.soiling.effects import SEVERITY_LEVELS, is_visible, render_effect
 from src.soiling.tile_labels import rasterize_tile_label
 
 EFFECT_NAMES = ("dirt", "water", "scratch")
@@ -123,11 +123,9 @@ def apply_visible_effect_with_seed(before, name, seed, severity):
     """`_apply_visible_effect`, also returning the seed of the attempt that was
     kept (None if none was visible) -- needed to re-render the same effect
     later (src/soiling/visible_labels.py)."""
-    effect = {"dirt": add_dirt, "water": add_water, "scratch": add_scratch}[name]
     for attempt in range(MAX_EFFECT_ATTEMPTS):
         attempt_seed = seed if attempt == 0 else derive_seed(seed, "retry", attempt)
-        effect_out, mask = effect(before, seed=attempt_seed)
-        out, _ = apply_severity(before, effect_out, mask, severity)
+        out, mask = render_effect(name, before, attempt_seed, severity)
         if is_visible(before, out, mask):
             return out, mask, attempt_seed
     return before, None, None

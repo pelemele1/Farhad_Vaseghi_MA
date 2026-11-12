@@ -16,10 +16,19 @@ protective glass in front of a camera, with a frozen YOLOv11 backbone and three 
 Each tile and pixel gets the one distortion that is **visible** there (clean / dirt / water /
 scratch), so overlapping distortions are labeled by what one actually sees.
 
-This branch (`feature/stages-a-b-c`) contains the complete development of all three stages:
-data generation, models, training, evaluation, HPC job scripts, reports and tests.
+The repository contains the complete development of all three stages (developed on the
+branch `feature/stages-a-b-c`): data generation, models, training, evaluation, HPC job
+scripts, reports and tests, plus the capture app and plan for the real data.
 A standing project goal is to also catch **faint** (low-severity) distortions, so every result
 is reported per severity level as well.
+
+**Next step (in preparation).** The supervisor's capture protocol has **6 contamination
+types**: mud, water drops, fogging, cleaning streaks, scratches and dust. Synthetic generators
+for all six are built and approved ([`docs/synthetic_generators.md`](docs/synthetic_generators.md)),
+the amounts of synthetic and real data are planned ([Planned dataset](#planned-dataset-target-amounts)),
+and a capture app for the real two-camera data is ready
+([`docs/data_collection/capture_plan.md`](docs/data_collection/capture_plan.md)). The models and
+results below are still the 3-class ones; the dataset builder is updated to 6 classes next.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -29,7 +38,8 @@ is reported per severity level as well.
 
 1. [Results at a glance](#results-at-a-glance)
 2. [How it works](#how-it-works)
-3. [Data](#data)
+3. [Data](#data) — [generators for the 6 types](#synthetic-generators-for-the-6-contamination-types-approved-session-29),
+   [planned dataset](#planned-dataset-target-amounts), [real data capture](#real-data-capture)
 4. [Models](#models)
 5. [Getting started](#getting-started)
 6. [Usage](#usage)
@@ -130,9 +140,8 @@ Backbone layers the heads read (map sizes for the 512×512 input):
 localization part), sampled reproducibly (seed 0) by `scripts/sample_mio_tcd.py` from the
 official tar archive, which must be downloaded separately.
 
-**Synthetic distortions.** The real two-camera capture rig (Part 1 of the thesis,
-[`docs/data_collection_pipeline.md`](docs/data_collection_pipeline.md)) has not been used in the
-field yet, so distortions are synthesized:
+**Synthetic distortions (current dataset and models).** No real contaminated images exist yet,
+so distortions are synthesized. The current dataset was built with:
 
 - **dirt** and **water** — from [`physical_lens_soiling`](https://github.com/JannLi/physical_lens_soiling),
   vendored in `third_party/` with the supervisor's permission;
@@ -169,6 +178,87 @@ severities) and 4 combinations (dirt+water, dirt+scratch, water+scratch, all thr
 made **by source photo** (no scene appears in two splits): **11200 / 1400 / 1400**
 train / val / test. Model choices are made on the validation split; the test split is used
 only for final numbers.
+
+### Synthetic generators for the 6 contamination types (approved, Session 29)
+
+For the next dataset, one generator per protocol type was built and approved by eye on sample
+sheets of randomly chosen photos. Severity is now **how much contamination is on the pane**
+(more droplets, larger stains, more wipe strokes, more sanding, more dust), not a fade, and a
+lighter level is always part of the heavier one. Full description, parameters, which parts come
+from the paper and which are ours, one sample per type and measured strength:
+[`docs/synthetic_generators.md`](docs/synthetic_generators.md).
+
+![The six generators at medium severity](docs/images/generators/overview.jpg)
+*One photo: clean, each type at medium, and a two-type example.*
+
+| Type | Generator (`src/soiling/effects.py`) | Source | Light → medium → heavy |
+|---|---|---|---|
+| Water drops | `add_water_droplets` | Zhang et al. 2025, Fig. 1(g): vendored droplet code | 2–3 → 4–5 → 6–9 droplets |
+| Mud | `add_mud_stains` | Fig. 1(b, c): vendored `add_mudByTxture` | stains shrink to 20% → 50% → 100% |
+| Fogging | `add_fog` | vendored mist shapes (Fig. 1 f), own veil rendering | larger, denser, blurrier veil |
+| Cleaning streaks | `add_cleaning_streaks` | own design | 1 → 3 → 6 wipe strokes |
+| Scratches | `add_sanding_scratches` | own design (sandpaper, as in the protocol) | 1+1 → 2+2 → 4+4 sanding patches + long scratches |
+| Dust | `add_dust` | Fig. 1(e): vendored dust texture | 1 → 3 → 6 layers of specks + a faint veil |
+
+The dataset builder still makes the old 3-class layout; it is updated to 6 classes and the
+planned counts before the next dataset is built (see [Known limitations](#known-limitations-and-next-steps)).
+
+### Planned dataset (target amounts)
+
+The next dataset covers all 6 contamination types of the capture protocol in equal amounts.
+These are planned amounts; the dataset described above is the one that exists today. How the
+real amounts are captured (button presses, combinations, file names) is in
+[`docs/data_collection/capture_plan.md`](docs/data_collection/capture_plan.md).
+
+- **3 severities** per type: light, medium, heavy.
+- **Two-type images** are 10% of each dataset and hold exactly 2 types; 3 types together are not used.
+- **3 pane distances** for the real data. The exact distances are still to be found in practice.
+- **Fogging** is captured as images at different time intervals, not as video. The exact
+  intervals are still to be found in practice.
+- **Only the right pane** (camera 2C) is ever contaminated. Only right-camera images are network
+  input; the left image (camera 97) is the clean reference for making the labels.
+
+**Synthetic (images)**
+
+| Category | Light | Medium | Heavy | Train | Validation | Test | Total |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Clean | – | – | – | 800 | 100 | 100 | **1,000** |
+| Mud | 1,000 | 1,000 | 1,000 | 2,400 | 300 | 300 | **3,000** |
+| Water drops | 1,000 | 1,000 | 1,000 | 2,400 | 300 | 300 | **3,000** |
+| Fogging | 1,000 | 1,000 | 1,000 | 2,400 | 300 | 300 | **3,000** |
+| Cleaning streaks | 1,000 | 1,000 | 1,000 | 2,400 | 300 | 300 | **3,000** |
+| Scratches | 1,000 | 1,000 | 1,000 | 2,400 | 300 | 300 | **3,000** |
+| Dust | 1,000 | 1,000 | 1,000 | 2,400 | 300 | 300 | **3,000** |
+| Two types (15 combinations × 141) | – | – | – | 1,695 | 210 | 210 | **2,115** |
+| **Total** | | | | **16,895** | **2,110** | **2,110** | **21,115** |
+
+**Real (one pair = 1 right image + 1 left image)**
+
+| Category | Light | Medium | Heavy | Pairs per distance | Total pairs | Total images |
+|---|---:|---:|---:|---:|---:|---:|
+| Clean | – | – | – | 36 | **108** | 216 |
+| Mud | 30 | 30 | 30 | 30 | **90** | 180 |
+| Water drops | 30 | 30 | 30 | 30 | **90** | 180 |
+| Fogging | 30 | 30 | 30 | 30 | **90** | 180 |
+| Cleaning streaks | 30 | 30 | 30 | 30 | **90** | 180 |
+| Scratches | 30 | 30 | 30 | 30 | **90** | 180 |
+| Dust | 30 | 30 | 30 | 30 | **90** | 180 |
+| Two types (6 combinations × 12) | – | – | – | 24 | **72** | 144 |
+| **Total** | | | | **240** | **720** | **1,440** |
+
+### Real data capture
+
+The real dataset is captured with two Allied Vision Alvium 1800 U-1240c cameras side by side,
+a pane in front of each; only the right pane (camera 2C) is contaminated. The supervisor's
+protocol is [`docs/data_collection/datacollection_surveilance_en.md`](docs/data_collection/datacollection_surveilance_en.md);
+the decisions that change it, the amounts and the procedure are in
+[`docs/data_collection/capture_plan.md`](docs/data_collection/capture_plan.md).
+
+The **Stereo Capture** app (`src/capture/`, `scripts/capture_app.py`, packaged as a double-click
+`.exe`) replaces Vimba X Viewer for capturing: live view of both cameras, the protocol form,
+synchronized pairs saved as lossless PNG with the conditions in the file name
+(`water_drops_medium_3cm_r1_0002_right_2C.png`), timed series for fogging, two-type captures,
+and one log row per capture (`data/real_captures/capture_log.csv`).
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -208,7 +298,7 @@ cd Farhad_Vaseghi_MA
 git checkout feature/stages-a-b-c
 python -m venv .venv && source .venv/bin/activate    # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
-python -m pytest -q tests                             # ~270 tests
+python -m pytest -q tests                             # 310 tests (the dataset-building ones take a while)
 ```
 
 Download the COCO-pretrained YOLOv11-m weights (`yolo11m.pt`, from the Ultralytics releases) to
@@ -217,6 +307,9 @@ Download the COCO-pretrained YOLOv11-m weights (`yolo11m.pt`, from the Ultralyti
 ```bash
 python scripts/sample_mio_tcd.py --tar <path>/MIO-TCD-Localization.tar --out data/raw/mio_tcd --n 1000 --seed 0
 python scripts/build_visible_dataset.py --source data/raw/mio_tcd/images --out data/processed/visible --workers 16
+#   ^ The builders now call the six new generators but still make the old 3-class layout:
+#     do not rebuild until they are updated to 6 classes. To reproduce the reported numbers,
+#     check out commit 0438bff first.
 # earlier multi-label datasets:
 python scripts/build_stage_a_dataset.py --source data/raw/mio_tcd/images \
     --out data/processed/stage_a --variants 14 --include-combos --include-severity
@@ -296,6 +389,23 @@ python scripts/evaluate_stage_c.py --checkpoint checkpoints/stage_c_unet_t2_lf/s
     --gate-checkpoint checkpoints/impaired_gate_multiscale_lf/impaired_gate_head.pt --gate-threshold 0.172
 ```
 
+**Synthetic generators** — sample figures and measured strength of the six generators:
+```bash
+python scripts/render_generator_samples.py --source data/raw/mio_tcd/images \
+    --out-dir docs/images/generators --stats-json results/generator_stats.json
+```
+In code: `render_effect(name, image, seed, severity)` from `src/soiling/effects.py`, with
+`name` in `water`, `dirt` (mud), `fogging`, `cleaning_streaks`, `scratch`, `dust` and
+`severity` in `low`, `medium`, `high`; it returns the image and the effect's mask.
+
+**Capture app** (real data; close Vimba X Viewer first)
+```bash
+python scripts/capture_app.py                         # or the packaged StereoCapture.exe
+python scripts/capture_app.py --check result.txt      # grab one pair without a window
+```
+Packaging: `pyinstaller --windowed --onedir --name StereoCapture --collect-all vmbpy --paths . scripts/capture_app.py`
+(VmbPy is installed from the wheel shipped with Vimba X).
+
 **Report figures** — `scripts/visualize_stage_{a,b,c}_results.py` and
 `scripts/visualize_stage_a_class_examples.py`; `scripts/hpc/regenerate_report_figures.sh`
 rebuilds every figure used in the reports in one go.
@@ -339,23 +449,27 @@ reported numbers is kept at the repository root (`*_<jobid>.out`) and in `study_
 ├── overview.md, setup.md    # thesis overview; two-camera rig (Part 1)
 ├── src/
 │   ├── pipeline.py          # gate-first inference: one backbone pass, A -> B/C -> answer
+│   ├── capture/             # Stereo Capture app: two-camera rig, protocol bookkeeping, window
 │   ├── data/                # MIO-TCD sampling, datasets (visible_dataset.py: all stages)
-│   ├── soiling/             # distortion effects, dataset builders, visible-change labels
+│   ├── soiling/             # distortion effects (6 approved generators), dataset builders, visible-change labels
 │   ├── models/              # frozen backbone, all heads, losses
 │   └── eval/                # metrics (class_maps.py: one-class-per-location maps), thresholds, gate
-├── scripts/                 # build_*, train_*, evaluate_*, visualize_*, diagnostics
+├── scripts/                 # build_*, train_*, evaluate_*, visualize_*, capture_app.py, render_generator_samples.py
 │   └── hpc/                 # TinyGPU Slurm/shell scripts
-├── tests/                   # pytest suite (~270 tests)
+├── tests/                   # pytest suite (310 tests)
 ├── docs/
 │   ├── visible_pipeline_report.md   # current pipeline (Session 27)
+│   ├── synthetic_generators.md      # the six approved generators (Session 29)
+│   ├── data_collection/     # supervisor's capture protocol + our capture plan and app usage
 │   ├── stage_a_final_report.md, stage_b_final_report.md, stage_c_final_report.md
 │   ├── development_log.md   # full session-by-session history
 │   ├── data_collection_pipeline.md, hpc_stage_a.md
 │   ├── diagrams/            # architecture diagram (draw.io)
-│   └── images/              # all report figures
+│   └── images/              # all report figures (generators/: one sample per generator)
+├── thesis/                  # thesis LaTeX template and writing guidelines (from the supervisor)
 ├── third_party/physical_lens_soiling/   # vendored dirt/water generator
 ├── notebooks/               # Colab notebook used for one Stage B run
-├── results/                 # visible_eval.json: every number of the current report
+├── results/                 # visible_eval.json (current report), generator_stats.json
 ├── study_logs/, *_<jobid>.out           # raw HPC job logs behind the reported numbers
 ├── raw/, wiki/              # personal reading knowledge base (see CLAUDE.md), not code
 └── data/, checkpoints/, weights/        # git-ignored: datasets, trained heads, YOLO weights
@@ -383,6 +497,8 @@ The full record — every decision, dead end and intermediate number — is in
 | 2026-09/10 | — | Report figures cleaned up (legends, titles, axis labels); branch renamed from `feature/stage-a-mio-tcd` to `feature/stages-a-b-c`. |
 | 2026-10-08/09 | 26 | **Label audit of all 28,000 images.** A report figure called a dirt + water image "dirt"; checking every label then found three generator defects: thin-water masks with a 0.2 floor over the whole image (1966 masks), 9 rendered distortions with an all-zero mask, and 44 practically invisible scratches per dataset. Fixed in the generator and in place; all four models retrained (on V100s, via a second CUDA-12.6 environment). Effect: Stage B water AP was overstated by ~0.02 on the old labels; everything else moved by ≤ 0.013. |
 | 2026-10-09 | 27 | **Gate-first pipeline with visible-change labels.** The gate now comes first (Stage A itself), Stages B and C give one class per location as color-coded maps, and an image-level answer names the dominant distortion. Labels mark only what is visible, measured by re-rendering each image without each distortion (made possible by fixing the generator's hidden reseeding). New dataset, all three heads retrained; dominant distortion correct for 91.8% of impaired test images. |
+| 2026-11-07 – 11-10 | 28 | **Stereo Capture app** for the real two-camera data, following the supervisor's protocol: synchronized pairs, conditions in the file names, per-capture log, timed fogging series, two-type captures, packaged as a double-click app. Real-camera problems fixed (camera mapping by serial, USB 2 check, locked parameters, hang on close). Decisions: panes on both lenses, only the right pane contaminated. |
+| 2026-11-09 – 11-12 | 29 | **Planned dataset and six approved generators.** Amounts for 6 types × 3 severities (21,115 synthetic images, 720 real pairs, 10% with two types). One generator per protocol type, each approved by the user on sample sheets; severity as the amount of contamination. The dataset builder is not yet updated, so no data was regenerated. |
 
 Effect of the main improvements on faint-distortion AP (test split, dirt / water / scratch):
 
@@ -429,9 +545,16 @@ Effect of the main improvements on faint-distortion AP (test split, dirt / water
 
 ## Known limitations and next steps
 
-- **Synthetic distortions only.** Nothing has been measured on real soiled-lens photos; the real
-  two-camera capture (Part 1) is the natural next step, with Stage C pseudo-masks from
-  difference images as `architecture.md` §5 describes.
+- **Synthetic distortions only.** Nothing has been measured on real soiled-lens photos. The
+  capture app and plan are ready; the real two-camera capture (720 pairs) is the next step, with
+  Stage C pseudo-masks from difference images as `architecture.md` §5 describes.
+- **3 classes so far.** The current models know dirt, water and scratch. The six new
+  generators are approved, but the dataset builder still makes the old 3-class layout with up
+  to three types per image; it needs the 6 classes, two-type images only (10%) and the planned
+  counts before the new dataset is built and all heads are retrained.
+- **Capture app** — tested with a simulated camera (24 tests); its current version (new file
+  names, timed fogging, two types) has not yet run on the real cameras. The 3 pane distances
+  and the fogging interval are still to be measured.
 - **Small pilot dataset** — 1000 source scenes. Stage B still shows a small train/val gap that
   only more distinct scenes (e.g. more MIO-TCD images) would close without losing accuracy.
 - **Faint distortions** remain the hardest case at every level; faint water at pixel level is
@@ -454,9 +577,12 @@ Effect of the main improvements on faint-distortion AP (test split, dirt / water
 | [`docs/stage_a_final_report.md`](docs/stage_a_final_report.md) | Stage A and the gate: method, layer study, results per severity, figures |
 | [`docs/stage_b_final_report.md`](docs/stage_b_final_report.md) | Stage B: tile labels, layer study, overfitting study, results, figures |
 | [`docs/stage_c_final_report.md`](docs/stage_c_final_report.md) | Stage C: U-Net decoder, layer study, pooled-cell evaluation, results, figures |
-| [`docs/development_log.md`](docs/development_log.md) | Complete chronological development history (Sessions 1–27) |
+| [`docs/synthetic_generators.md`](docs/synthetic_generators.md) | The six approved contamination generators: method, source (paper or own), severity parameters, one sample each, measured strength |
+| [`docs/data_collection/datacollection_surveilance_en.md`](docs/data_collection/datacollection_surveilance_en.md) | The supervisor's capture protocol (unchanged) |
+| [`docs/data_collection/capture_plan.md`](docs/data_collection/capture_plan.md) | Decisions that change the protocol, amounts to capture per category, capture app usage, file names |
+| [`docs/development_log.md`](docs/development_log.md) | Complete chronological development history (Sessions 1–29) |
 | [`architecture.md`](architecture.md) | Design concept the stages follow |
-| [`docs/data_collection_pipeline.md`](docs/data_collection_pipeline.md) | Field protocol for the real two-camera dataset (Part 1) |
+| [`docs/data_collection_pipeline.md`](docs/data_collection_pipeline.md) | Earlier field protocol for the two-camera rig (Sessions 6–14; partly replaced by the two documents above) |
 | [`docs/hpc_stage_a.md`](docs/hpc_stage_a.md) | How to run on NHR@FAU TinyGPU |
 
 Each report ends with the exact commands that reproduce its numbers and figures.
@@ -470,7 +596,15 @@ Each report ends with the exact commands that reproduce its numbers and figures.
 - **MIO-TCD** — Luo et al., "MIO-TCD: A New Benchmark Dataset for Vehicle Classification and
   Localization", IEEE TIP 2018.
 - **physical_lens_soiling** — https://github.com/JannLi/physical_lens_soiling (dirt and water
-  effects, vendored with permission).
+  effects, vendored with permission), the code of Zhang et al., "Procedural generation of lens
+  soiling data via physics-based simulation", The Visual Computer 41, 2025 — the source of the
+  water-drop, mud, fogging and dust generators.
+- **SIDL** — Choi, Park and Kim, "SIDL: A Real-World Dataset for Restoring Smartphone Images
+  with Dirty Lenses", AAAI 2025 (fingerprint smears blur and defocus the image; basis for the
+  cleaning-streak rendering).
+- **CLP** — Park et al., "CLP: A Real-World Dataset of Contaminated Lens Protectors for Robust
+  Semantic Segmentation", CVPR (real water, mud and condensation at 0, 1, 3 and 5 cm
+  lens-to-protector distance; orientation for our pane distances).
 - **YOLOv11** — Ultralytics, https://github.com/ultralytics/ultralytics.
 - **OmniDet** — Kumar et al., RA-L 2021 (shared encoder, soiling decoder, frozen-encoder training).
 - **SoilingNet** — Uricár et al., 2019 (tile-level soiling classification, the basis of Stage B).

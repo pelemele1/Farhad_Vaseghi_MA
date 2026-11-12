@@ -24,6 +24,23 @@ taxonomy) were brought in, from `Procudural_Generation_Lens_Soiling/`:
 `lens_dirt_by_augmentation/` folder (their own comparison baseline against the
 Albumentations library, not part of their procedural method).
 
+## Use in the six generators (Session 29)
+
+The approved generators in `src/soiling/effects.py` (see `docs/synthetic_generators.md`) call
+the files above unchanged:
+
+- **water drops** — `generate_distort_enlarege`, `droplet_distort_onedirection` and
+  `rand_point` from `add_droplet_distort.py` (the per-droplet steps of `add_distort`), with
+  our droplet counts and sizes per severity;
+- **mud** — `add_mudByTxture` with the textures `f_water_mud`, `big_rain_drop`,
+  `little_rain_drop`;
+- **fogging** — only the textures `r_fog` and `thick_fog`; the rendering is ours;
+- **dust** — only the texture `many_dust_drop`; drawn from the paper's description, since
+  `add_lensdust.py` was not brought in.
+
+`add_dirtwaterByTxture` / `_slight` and `add_distort` are no longer used by the generators,
+only by the earlier effects `add_water` / `add_dirt` kept for diagnostics and tests.
+
 ## Changes made to the vendored files
 
 No algorithmic changes. The only edit: both `add_mud.py` and `add_droplet_distort.py` had

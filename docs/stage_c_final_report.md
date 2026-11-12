@@ -198,6 +198,11 @@ image: the scratch is found, the faint water film only in patches.
 
 ## 6. Reproducing this report
 
+> **Code version.** These commands reproduce the numbers below only with the code of
+> commit `0438bff` (`git checkout 0438bff`). Since Session 29 the dataset builders call the
+> six new synthetic generators ([`synthetic_generators.md`](synthetic_generators.md)), so
+> rebuilding the dataset with the current code gives different images.
+
 ```bash
 python scripts/build_stage_b_dataset.py --source data/raw/mio_tcd/images \
     --out data/processed/stage_b --variants 14 --include-combos --include-severity \

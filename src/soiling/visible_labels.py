@@ -20,11 +20,10 @@ label is simply "where the image visibly differs from the clean photo".
 import cv2 as cv
 import numpy as np
 
-from src.soiling.effects import MIN_PIXEL_CHANGE, add_dirt, add_scratch, add_water, apply_severity
+from src.soiling.effects import MIN_PIXEL_CHANGE, render_effect
 
 EFFECT_NAMES = ("dirt", "water", "scratch")
 CLASS_NAMES = ("clean",) + EFFECT_NAMES  # label value = index (0 = clean)
-_EFFECTS = {"dirt": add_dirt, "water": add_water, "scratch": add_scratch}
 
 # Smoothing of the change map before the cutoff (Gaussian sigma, pixels): light
 # for scratches, so a 1-px line with a change of 40 levels stays above 10, a
@@ -51,8 +50,7 @@ def render_chain(image, steps):
     out = image
     masks = {}
     for name, seed, severity in steps:
-        effect_out, mask = _EFFECTS[name](out, seed=seed)
-        out, _ = apply_severity(out, effect_out, mask, severity)
+        out, mask = render_effect(name, out, seed, severity)
         masks[name] = mask
     return out, masks
 

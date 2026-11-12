@@ -9,7 +9,7 @@ from pathlib import Path
 import cv2 as cv
 import numpy as np
 
-from src.soiling import dataset_builder
+from src.soiling import dataset_builder, effects
 from src.soiling.dataset_builder import EFFECT_NAMES, apply_effect_combo_with_masks, build_stage_b_dataset
 from src.soiling.effects import (
     MIN_VISIBLE_PIXELS,
@@ -53,11 +53,11 @@ def test_invisible_effect_is_redrawn_and_never_labeled_when_always_invisible(mon
     image = _photo()
     calls = []
 
-    def invisible_scratch(img, seed=None):
+    def invisible_scratch(img, severity, seed=None):
         calls.append(seed)
         return img.copy(), np.ones(img.shape[:2], dtype=np.float32)
 
-    monkeypatch.setattr(dataset_builder, "add_scratch", invisible_scratch)
+    monkeypatch.setattr(effects, "add_sanding_scratches", invisible_scratch)
     out, labels, masks = apply_effect_combo_with_masks(image, (False, False, True), {"scratch": 7}, {"scratch": "high"})
     assert len(calls) == dataset_builder.MAX_EFFECT_ATTEMPTS
     assert len(set(calls)) == len(calls)  # a fresh seed every attempt
@@ -69,14 +69,14 @@ def test_invisible_effect_is_redrawn_and_never_labeled_when_always_invisible(mon
 def test_visible_effect_is_labeled_on_first_attempt(monkeypatch):
     image = _photo()
 
-    def bright_scratch(img, seed=None):
+    def bright_scratch(img, severity, seed=None):
         out = img.copy()
         out[:20, :20] = 255
         mask = np.zeros(img.shape[:2], dtype=np.float32)
         mask[:20, :20] = 1.0
         return out, mask
 
-    monkeypatch.setattr(dataset_builder, "add_scratch", bright_scratch)
+    monkeypatch.setattr(effects, "add_sanding_scratches", bright_scratch)
     _, labels, masks = apply_effect_combo_with_masks(image, (False, False, True), {"scratch": 7}, {"scratch": "high"})
     assert labels["scratch"] == 1 and masks["scratch"].sum() == 400
     assert 400 >= MIN_VISIBLE_PIXELS

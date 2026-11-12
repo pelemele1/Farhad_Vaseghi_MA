@@ -1,6 +1,9 @@
 # Gate-first pipeline with visible-change labels — report
 
-**Status:** complete (Session 27). Canonical models: `checkpoints/visible_a_w` (Stage A, also the
+**Status:** complete (Session 27); the current 3-class pipeline (dirt, water, scratch). The
+6-class successor is in preparation: generators in [`synthetic_generators.md`](synthetic_generators.md),
+planned amounts in the [README](../README.md#planned-dataset-target-amounts).
+Canonical models: `checkpoints/visible_a_w` (Stage A, also the
 gate), `checkpoints/visible_b_w` (Stage B), `checkpoints/visible_c_v` (Stage C); decision
 settings in `checkpoints/visible_pipeline.json`. Dataset: `data/processed/visible` (built as
 `data/processed/visible_1835773` on the HPC). This design replaces the multi-label Stages A/B/C
@@ -270,6 +273,11 @@ names water instead of dirt (page 3, row 3).
 ---
 
 ## 6. Reproduction
+
+> **Code version.** These commands reproduce the numbers below only with the code of
+> commit `0438bff` (`git checkout 0438bff`). Since Session 29 the dataset builders call the
+> six new synthetic generators ([`synthetic_generators.md`](synthetic_generators.md)), so
+> rebuilding the dataset with the current code gives different images.
 
 ```bash
 python scripts/build_visible_dataset.py --source data/raw/mio_tcd/images --out data/processed/visible --workers 16

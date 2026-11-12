@@ -2554,3 +2554,127 @@ Report: `docs/visible_pipeline_report.md`; README rewritten around the new pipel
   `CEDiceLoss`, `inverse_sqrt_frequency_weights`).
 - Pitfall: importing ultralytics patches `cv2.imread` to return grayscale PNGs as (H, W, 1);
   `read_label_map` squeezes it.
+
+## Session 28 — Stereo capture app for the real two-camera data
+
+**Dates:** 2026-11-07 – 2026-11-10
+
+**Trigger.** The supervisor's capture protocol arrived
+(`docs/data_collection/datacollection_surveilance_en.md`). Capturing pairs in Vimba X Viewer
+meant two windows, manual file names and no log, so the user asked for an easier tool that
+opens with a double click, not a Python script.
+
+### What was built (`src/capture/`, `scripts/capture_app.py`)
+
+- **`rig.py`** — opens both Alvium cameras with VmbPy, loads each camera's saved settings and
+  fires both with a software trigger, one frame each, so preview and saved images are the same
+  synchronized pair (measured trigger gap 1–7 ms). A capture only starts with the next triggered
+  pair, so a frame exposed before the button press is never saved.
+- **`session.py`** — the protocol's bookkeeping: file names, the capture log, lossless PNG
+  saving on background threads (bounded, so a slow disk slows the capture instead of dropping
+  pairs).
+- **`app.py`** — PySide6 window: live view with clipping readouts and a full-resolution focus
+  crop, the protocol form, buttons in protocol order, an instruction line for the next step.
+- Packaged with PyInstaller as `D:\MasterThesis_FAU\StereoCapture\StereoCapture.exe`;
+  `--check FILE` grabs one pair without a window, for testing the packaged app.
+
+### Problems found on the real cameras
+
+- **Camera mapping.** The settings files carried the opposite names to the cameras' positions.
+  Near and far objects in real pairs (parallax) showed which camera is physically left; the
+  app now matches settings to cameras by the serial number inside each file, never by name.
+  Final: left = 97 = 05NRR (A), right = 2C = 05HYK (B).
+- **USB 2.** Camera 97 ran at 50 MB/s and loading its settings failed with "RetriesExceeded";
+  re-plugging fixed it. The app now refuses to start below 200 MB/s with a clear message.
+- **Locked parameters.** Viewer XML files set `TLParamsLocked=1`, after which the trigger mode
+  cannot be changed; it is unlocked before and after loading.
+- **Hanging on close.** An exception while resetting the trigger mode left the camera open and
+  the process hung; closing now always releases both cameras.
+
+### Decisions (user and supervisor)
+
+- Panes in front of both lenses; only the test pane is contaminated; **only the right pane**,
+  replacing the protocol's odd/even swap.
+- One pair per button press; each press adds a pair, nothing is overwritten.
+- All dirty images of a session in one folder, the conditions in the file name
+  (`water_drops_medium_6cm_r1_0002_right_2C.png`); one log row per capture
+  (`capture_log.csv`).
+- Fogging as **images at a fixed interval** instead of video (file names carry the seconds
+  since the series began, `fogging_t015s_...`); **two types on one pane** (second type and
+  severity in the form and the name). "IR" renamed to "night".
+
+Plan, amounts and app usage: `docs/data_collection/capture_plan.md`.
+
+### Tests
+
+`tests/test_capture_app.py` (24 tests) runs the window with a simulated camera: protocol order
+of the buttons, naming with severities, distances and two types, numbering that continues
+within a folder, the timed fogging series, the log surviving a log file left open in Excel,
+cameras released on close. The real-camera runs (complete 4024 × 3036 frames, no lost pairs,
+about 0.4 pairs/s with the long indoor exposures) were done before the naming, fogging and
+two-type changes; the current version still needs one real-camera test.
+
+### Files
+
+new: `src/capture/{__init__,rig,session,app}.py`, `scripts/capture_app.py`,
+`tests/test_capture_app.py`, `docs/data_collection/` (protocol, capture plan).
+
+## Session 29 — Planned dataset and six approved synthetic generators
+
+**Dates:** 2026-11-09 – 2026-11-12
+
+**Trigger.** The protocol has 6 contamination types (mud, water drops, fogging, cleaning
+streaks, scratches, dust), the synthetic data so far 3 (dirt, water, scratch). The supervisor
+decided: 3 pane distances, fogging at time intervals, and 10% of both datasets with two types
+on one image.
+
+### Planned amounts
+
+Balanced over the 6 types, 3 severities each; two-type images exactly 10%, never three types:
+
+- **synthetic:** 1,000 photos × (1 clean + 18 one-type) + 2,115 two-type images (all 15
+  combinations × 141) = **21,115 images**, split 80/10/10 by photo;
+- **real:** 108 clean + 540 one-type + 72 two-type (a ring of 6 combinations) = **720 pairs**.
+
+Tables in the README (Data → Planned dataset) and in `docs/data_collection/capture_plan.md`.
+
+### Generator review
+
+Each generator was shown to the user on sample sheets of randomly chosen photos at light,
+medium and heavy, changed until approved, and only then saved. Rules that came out of the
+review: stay with the method of Zhang et al. 2025 (the vendored `physical_lens_soiling`) where
+it has the type; the three levels must be clearly different; light must still be visible. The
+real test captures (sessions 1 and 2) showed no visible water at all (dirty and clean differ by
+camera noise only), so the review uses the synthetic photos only.
+
+| Type | Approved generator | Severity |
+|---|---|---|
+| Water drops | Fig. 1(g) droplets only (vendored droplet functions); the "thick"/"thin" blotches dropped | 2–3 / 4–5 / 6–9 droplets, growing size and strength |
+| Mud | Fig. 1(b, c) via the vendored `add_mudByTxture` with the 3 mud-like textures, renamed `scattered_spots`, `large_splashes`, `single_stain`; fog-like textures dropped | stains shrink: 20% / 50% / 100% of the heavy stain area |
+| Fogging | vendored mist textures, smoothed into one veil; the scene is blurred and takes on its own spread-out light (the paper-style white clumps looked unnatural to the user) | veil size, density and blur grow together |
+| Cleaning streaks | own design: curved wipe strokes with residue lines (no paper source) | 1 / 3 / 6 strokes |
+| Scratches | sandpaper patches and long scratches with this project's scratch-line drawer, plus a faint haze | 1 + 1 / 2 + 2 / 4 + 4 |
+| Dust | Fig. 1(e) via the vendored `many_dust_drop` texture, drawn like mud but lighter and more transparent | 1 / 3 / 6 layers of specks, opacity, a faint veil |
+
+Severity is no longer the old fade toward the clean image (which made light and medium hard to
+tell apart); a lighter level is always contained in the heavier one, as more spray strokes,
+more sanding or more dust would add to it. Water drops, mud, fogging and dust are rendered on
+the photo enlarged to 1440 px wide and only their change is carried back: the vendored blur
+sizes are fixed in pixels and were made for larger images than our 720 × 480 photos.
+Which parts come from the paper and which are ours: `docs/synthetic_generators.md`.
+
+### Code
+
+- `src/soiling/effects.py`: `add_water_droplets`, `add_mud_stains`, `add_fog`,
+  `add_cleaning_streaks`, `add_sanding_scratches`, `add_dust`, and `render_effect`, the one
+  entry point the dataset builder and the visible-change labels now use. The old
+  `add_dirt` / `add_water` / `add_scratch` stay for the diagnostics scripts and tests.
+- `scripts/render_generator_samples.py`: the figures in `docs/images/generators/` and the
+  measured strength in `results/generator_stats.json`.
+- Tests: 2 new tests per generator (each level changes more than the one below; reproducible
+  from the seed and reachable through `render_effect`).
+
+**Not done yet:** the dataset builder still knows only 3 classes and makes up to three types per
+image. Before the new dataset is built it needs the 6 classes, two-type images only (10%) and
+the planned counts. Until then the existing dataset and models stay as they are; building the
+visible dataset now would mix the new mud/water/scratch generators into the old 3-class layout.
