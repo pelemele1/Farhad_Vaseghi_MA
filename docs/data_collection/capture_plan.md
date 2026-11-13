@@ -104,21 +104,10 @@ inside the file, not by its name.
 
 ## 4. Capture app (Stereo Capture)
 
-Double-click `D:\MasterThesis_FAU\StereoCapture\StereoCapture.exe` (desktop shortcut
-"Stereo Capture"), or run `python scripts/capture_app.py`. Close Vimba X Viewer first: only one
-program can control a camera.
+Captured with the Stereo Capture app — window, features, step-by-step use, files and
+packaging are described in [`../capture_app.md`](../capture_app.md).
 
-**What it does**
-- Live view of both cameras with brightness and clipping readouts; "Show centre at full
-  resolution" for focusing.
-- Loads both cameras' settings from a profile, or any two files picked with **Load...**.
-- Checks that both cameras run at USB 3 speed (USB 2 makes loading settings fail).
-- Fires both cameras with a software trigger and saves both images as lossless PNG.
-- Writes every capture to the log, with the camera values actually used.
-
-**Form:** session number, type, severity, second type and severity (for two-type panes; if one
-is fogging, choose it as the first type), fog interval, pane distance, material, repetition,
-pane ID, day / night, remarks.
+![Stereo Capture window](../images/capture_app/window.png)
 
 **Steps**
 1. Enter the pane ID and the conditions.
