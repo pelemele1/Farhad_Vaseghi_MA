@@ -1,5 +1,8 @@
 # Setup: Hardware & Mounting
 
+For the full field protocol (camera specs, pane preparation, session steps, capture log, image
+counts), see [docs/data_collection_pipeline.md](docs/data_collection_pipeline.md).
+
 - Two cameras, close together, rigidly mounted on a shared rig (fixed baseline for the entire data collection)
 - Hardware-triggered synchronization (both cameras fire at exactly the same time)
 - Left camera = reference (ground truth), right camera = distortion camera

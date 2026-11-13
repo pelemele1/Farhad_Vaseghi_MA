@@ -1,0 +1,182 @@
+import subprocess
+import sys
+from pathlib import Path
+
+import cv2 as cv
+import numpy as np
+import pytest
+
+from src.soiling.dataset_builder import build_stage_b_dataset
+
+_WEIGHTS = Path("weights/yolo11m.pt")
+
+pytestmark = pytest.mark.skipif(
+    not _WEIGHTS.exists(),
+    reason="requires weights/yolo11m.pt (COCO-pretrained YOLOv11m) downloaded locally",
+)
+
+
+def test_smoke_test_runs_end_to_end(tmp_path):
+    # --smoke-test is the only training this project runs from the local/
+    # dev side (standing rule: Claude prepares code, doesn't train it) --
+    # this just verifies the backbone -> head -> loss -> optimizer.step()
+    # pipeline actually wires together at the right shapes, not that it
+    # learns anything.
+    source_dir = tmp_path / "source"
+    source_dir.mkdir()
+    rng = np.random.default_rng(0)
+    for i in range(4):
+        img = rng.integers(0, 255, size=(96, 128, 3), dtype=np.uint8)
+        cv.imwrite(str(source_dir / f"{i:08d}.jpg"), img)
+
+    data_dir = tmp_path / "stage_b"
+    build_stage_b_dataset(
+        source_dir, data_dir, variants_per_image=4, seed=0,
+        ratios=(0.5, 0.25, 0.25), img_size=64,
+    )
+
+    result = subprocess.run(
+        [sys.executable, "scripts/train_stage_b.py", "--smoke-test",
+         "--data", str(data_dir), "--weights", str(_WEIGHTS), "--img-size", "64"],
+        capture_output=True, text=True, timeout=300,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "epoch 1/1" in result.stdout
+    assert "loss=bce" in result.stdout  # default
+
+
+def test_smoke_test_runs_end_to_end_with_focal_loss(tmp_path):
+    # Session 17: --loss focal is the fix for the scratch class's
+    # pos_weight-driven over-prediction problem -- exercise its own code
+    # path end to end, not just the default bce one.
+    source_dir = tmp_path / "source"
+    source_dir.mkdir()
+    rng = np.random.default_rng(0)
+    for i in range(4):
+        img = rng.integers(0, 255, size=(96, 128, 3), dtype=np.uint8)
+        cv.imwrite(str(source_dir / f"{i:08d}.jpg"), img)
+
+    data_dir = tmp_path / "stage_b"
+    build_stage_b_dataset(
+        source_dir, data_dir, variants_per_image=4, seed=0,
+        ratios=(0.5, 0.25, 0.25), img_size=64,
+    )
+
+    result = subprocess.run(
+        [sys.executable, "scripts/train_stage_b.py", "--smoke-test",
+         "--data", str(data_dir), "--weights", str(_WEIGHTS), "--img-size", "64",
+         "--loss", "focal", "--focal-alpha", "0.3", "--focal-gamma", "1.5"],
+        capture_output=True, text=True, timeout=300,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "epoch 1/1" in result.stdout
+    assert "loss=focal alpha=0.3 gamma=1.5" in result.stdout
+
+
+def test_smoke_test_runs_end_to_end_with_per_class_focal_alpha(tmp_path):
+    # Session 18 improvement #2: --focal-alpha also accepts 3 comma-separated
+    # values (one per class, dirt/water/scratch order) instead of one shared
+    # float -- exercise that parsing path end to end.
+    source_dir = tmp_path / "source"
+    source_dir.mkdir()
+    rng = np.random.default_rng(0)
+    for i in range(4):
+        img = rng.integers(0, 255, size=(96, 128, 3), dtype=np.uint8)
+        cv.imwrite(str(source_dir / f"{i:08d}.jpg"), img)
+
+    data_dir = tmp_path / "stage_b"
+    build_stage_b_dataset(
+        source_dir, data_dir, variants_per_image=4, seed=0,
+        ratios=(0.5, 0.25, 0.25), img_size=64,
+    )
+
+    result = subprocess.run(
+        [sys.executable, "scripts/train_stage_b.py", "--smoke-test",
+         "--data", str(data_dir), "--weights", str(_WEIGHTS), "--img-size", "64",
+         "--loss", "focal", "--focal-alpha", "0.75,0.75,0.9", "--focal-gamma", "2.0"],
+        capture_output=True, text=True, timeout=300,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "epoch 1/1" in result.stdout
+    assert "loss=focal alpha=[0.75, 0.75, 0.8999999" in result.stdout  # float32 repr rounding on .9
+    assert "gamma=2.0" in result.stdout
+
+
+def test_smoke_test_runs_end_to_end_with_ssd_loss(tmp_path):
+    # Session 19+ supervisor request: --loss ssd (localized per-tile sum of
+    # squared differences) -- exercise its own code path end to end.
+    source_dir = tmp_path / "source"
+    source_dir.mkdir()
+    rng = np.random.default_rng(0)
+    for i in range(4):
+        img = rng.integers(0, 255, size=(96, 128, 3), dtype=np.uint8)
+        cv.imwrite(str(source_dir / f"{i:08d}.jpg"), img)
+
+    data_dir = tmp_path / "stage_b"
+    build_stage_b_dataset(
+        source_dir, data_dir, variants_per_image=4, seed=0,
+        ratios=(0.5, 0.25, 0.25), img_size=64,
+    )
+
+    result = subprocess.run(
+        [sys.executable, "scripts/train_stage_b.py", "--smoke-test",
+         "--data", str(data_dir), "--weights", str(_WEIGHTS), "--img-size", "64",
+         "--loss", "ssd"],
+        capture_output=True, text=True, timeout=300,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "epoch 1/1" in result.stdout
+    assert "loss=ssd" in result.stdout
+
+
+def test_focal_alpha_count_mismatch_raises(tmp_path):
+    source_dir = tmp_path / "source"
+    source_dir.mkdir()
+    rng = np.random.default_rng(0)
+    for i in range(4):
+        img = rng.integers(0, 255, size=(96, 128, 3), dtype=np.uint8)
+        cv.imwrite(str(source_dir / f"{i:08d}.jpg"), img)
+
+    data_dir = tmp_path / "stage_b"
+    build_stage_b_dataset(
+        source_dir, data_dir, variants_per_image=4, seed=0,
+        ratios=(0.5, 0.25, 0.25), img_size=64,
+    )
+
+    result = subprocess.run(
+        [sys.executable, "scripts/train_stage_b.py", "--smoke-test",
+         "--data", str(data_dir), "--weights", str(_WEIGHTS), "--img-size", "64",
+         "--loss", "focal", "--focal-alpha", "0.75,0.9"],  # only 2 values for 3 classes
+        capture_output=True, text=True, timeout=300,
+    )
+    assert result.returncode != 0
+    assert "AssertionError" in result.stderr
+
+
+def test_multiscale_arch_trains_and_is_loaded_by_evaluate(tmp_path):
+    source_dir = tmp_path / "source"
+    source_dir.mkdir()
+    rng = np.random.default_rng(0)
+    for i in range(4):
+        cv.imwrite(str(source_dir / f"{i:08d}.jpg"), rng.integers(0, 255, size=(96, 128, 3), dtype=np.uint8))
+    data_dir = tmp_path / "stage_b"
+    build_stage_b_dataset(source_dir, data_dir, variants_per_image=4, seed=0,
+                          ratios=(0.5, 0.25, 0.25), img_size=64)
+
+    out_dir = tmp_path / "ckpt"
+    train = subprocess.run(
+        [sys.executable, "scripts/train_stage_b.py", "--arch", "multiscale", "--loss", "focal",
+         "--num-workers", "0", "--data", str(data_dir), "--weights", str(_WEIGHTS), "--img-size", "64",
+         "--epochs", "1", "--batch-size", "2", "--out", str(out_dir)],
+        capture_output=True, text=True, timeout=300,
+    )
+    assert train.returncode == 0, train.stdout + train.stderr
+    assert "arch=multiscale" in train.stdout
+
+    evaluate = subprocess.run(
+        [sys.executable, "scripts/evaluate_stage_b.py", "--checkpoint", str(out_dir / "stage_b_head.pt"),
+         "--data", str(data_dir), "--weights", str(_WEIGHTS), "--split", "test"],
+        capture_output=True, text=True, timeout=300,
+    )
+    assert evaluate.returncode == 0, evaluate.stdout + evaluate.stderr
+    assert "scratch" in evaluate.stdout

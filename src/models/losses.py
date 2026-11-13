@@ -1,0 +1,321 @@
+"""
+Stage A/B loss (architecture.md §4): "BCE-with-logits (multi-label). For
+class imbalance (lots of 'clean') -> pos_weight or focal loss."
+"""
+import csv
+
+import numpy as np
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+from src.soiling.dataset_builder import EFFECT_NAMES
+
+
+def compute_pos_weight(metadata_csv, split=None):
+    """pos_weight[c] = (#negatives for class c) / (#positives for class c) --
+    BCEWithLogitsLoss's standard imbalance-correction formula, up-weighting
+    the rarer class's positives by how outnumbered they are. `split`
+    restricts the count to one of metadata.csv's split values (e.g.
+    "train"); pass None to use every row."""
+    counts = {name: 0 for name in EFFECT_NAMES}
+    total = 0
+    with open(metadata_csv, newline="") as f:
+        for row in csv.DictReader(f):
+            if split is not None and row["split"] != split:
+                continue
+            total += 1
+            for name in EFFECT_NAMES:
+                counts[name] += int(row[name])
+
+    return torch.tensor(
+        [(total - counts[name]) / max(counts[name], 1) for name in EFFECT_NAMES],
+        dtype=torch.float32,
+    )
+
+
+def build_stage_a_loss(pos_weight=None):
+    return nn.BCEWithLogitsLoss(pos_weight=pos_weight)
+
+
+def compute_impaired_class_weight(metadata_csv, split=None):
+    """class_weight[0] (not_impaired), class_weight[1] (impaired) for
+    nn.CrossEntropyLoss's `weight` arg -- inverse-frequency, analogous to
+    `compute_pos_weight` but for a 2-class softmax head. "impaired" = any of
+    dirt/water/scratch is 1, derived from metadata.csv's existing columns,
+    no new column needed.
+
+    Note the formula differs from `compute_pos_weight`'s
+    `(total-count)/count` ratio: `nn.CrossEntropyLoss(weight=...)` expects a
+    per-class weight, not a positive-class ratio, so this uses the standard
+    inverse-frequency `total/count` instead -- do not read this as a
+    copy-paste of `compute_pos_weight`."""
+    counts = {0: 0, 1: 0}
+    total = 0
+    with open(metadata_csv, newline="") as f:
+        for row in csv.DictReader(f):
+            if split is not None and row["split"] != split:
+                continue
+            total += 1
+            impaired = int(any(int(row[name]) for name in EFFECT_NAMES))
+            counts[impaired] += 1
+
+    return torch.tensor(
+        [total / max(counts[0], 1), total / max(counts[1], 1)],
+        dtype=torch.float32,
+    )
+
+
+def build_impaired_gate_loss(class_weight=None):
+    return nn.CrossEntropyLoss(weight=class_weight)
+
+
+def compute_tile_pos_weight(tile_labels_npy, metadata_csv, split=None):
+    """Stage B counterpart to `compute_pos_weight`: pos_weight[c] =
+    (#negative tiles for class c) / (#positive tiles for class c), counted
+    over every tile of every row (not just every row) -- tile-level
+    imbalance is much more extreme than image-level (an image labeled
+    "dirt" still has mostly clean tiles, since the effect only covers part
+    of the frame), so this must count tiles, not rows.
+
+    `tile_labels_npy` is the (N, C, H, W) uint8 array `build_stage_b_dataset`
+    writes; `split` restricts the count to rows whose metadata.csv `split`
+    column matches (pass None to use every row). Row order in
+    `tile_labels_npy` is assumed to match `metadata.csv`'s row order, which
+    is how `build_stage_b_dataset` writes them."""
+    tile_labels = np.load(tile_labels_npy) if not hasattr(tile_labels_npy, "shape") else tile_labels_npy
+
+    with open(metadata_csv, newline="") as f:
+        rows = list(csv.DictReader(f))
+    assert len(rows) == len(tile_labels), (
+        f"metadata.csv has {len(rows)} rows but tile_labels has {len(tile_labels)} -- "
+        "they must be row-aligned (same build_stage_b_dataset call)"
+    )
+
+    if split is not None:
+        mask = np.array([r["split"] == split for r in rows])
+        tile_labels = tile_labels[mask]
+
+    positives = tile_labels.sum(axis=(0, 2, 3))  # per class, over rows+H+W
+    total = tile_labels.shape[0] * tile_labels.shape[2] * tile_labels.shape[3]
+    return torch.tensor(
+        [(total - p) / max(p, 1) for p in positives],
+        dtype=torch.float32,
+    )
+
+
+def build_stage_b_loss(pos_weight=None):
+    """Like `build_stage_a_loss`, but the target is (B, C, H, W), not
+    (B, C) -- a plain (C,)-shaped pos_weight would broadcast against the
+    *last* dim (W), not the channel dim (broadcasting aligns from the
+    right), silently weighting the wrong axis. Reshaped to (C, 1, 1) here
+    so it broadcasts against the channel dim as intended."""
+    if pos_weight is not None:
+        pos_weight = pos_weight.view(-1, 1, 1)
+    return nn.BCEWithLogitsLoss(pos_weight=pos_weight)
+
+
+def _normalized(class_weights, like):
+    """(C,) class weights scaled to mean 1 -- they shift emphasis between
+    classes without changing the overall loss scale."""
+    w = torch.as_tensor(class_weights, dtype=like.dtype, device=like.device)
+    return w / w.mean()
+
+
+def _align_per_class(vec, ndim):
+    """Reshapes a (C,) tensor to broadcast against the channel dim (dim 1)
+    of an (B, C) or (B, C, H, W) tensor -- (1, C) or (1, C, 1, 1). Same
+    broadcasting pitfall `build_stage_b_loss`'s pos_weight reshape guards
+    against: PyTorch aligns broadcast dims from the right, so a bare (C,)
+    vector would land on the *last* dim, not the channel dim, unless
+    explicitly reshaped."""
+    return vec.view(1, -1, *([1] * (ndim - 2)))
+
+
+class FocalLossWithLogits(nn.Module):
+    """Binary focal loss (Lin et al. 2017, "Focal Loss for Dense Object
+    Detection", RetinaNet) -- architecture.md §4's own listed alternative to
+    `BCEWithLogitsLoss(pos_weight=...)` for class imbalance.
+
+    Motivation (see docs/development_log.md Session 16): Stage B's scratch
+    class needed `pos_weight` ~95 to counter its ~1% tile-positive rate.
+    That's a single flat multiplier applied to *every* missed positive,
+    which empirically pushed the trained head to over-predict "scratch"
+    almost everywhere (recall 0.852, precision 0.063) rather than localize
+    it -- a large enough pos_weight rewards blanket-guessing "positive" more
+    than it rewards being selective. Focal loss instead down-weights
+    already-easy/confident examples via the `(1 - p_t) ** gamma` factor and
+    concentrates gradient on hard ones, without any single term dominating
+    the loss the way a ~95x multiplier does.
+
+    `alpha`: foreground/background balance weight -- a python float
+    (applied to every class equally) or a (num_classes,) tensor (one alpha
+    per class). Default 0.25 is the RetinaNet paper's own default, used
+    as-is here rather than re-deriving a new per-class value from this
+    dataset's positive rates -- reusing pos_weight's inverse-frequency
+    formula for alpha too would risk reproducing the same over-triggering
+    problem this loss exists to avoid.
+    `gamma`: focusing parameter (RetinaNet default 2.0; 0 reduces this to
+    plain alpha-weighted BCE, no focusing effect).
+    """
+
+    def __init__(self, alpha=0.25, gamma=2.0, class_weights=None):
+        super().__init__()
+        self.alpha = alpha
+        self.gamma = gamma
+        self.class_weights = class_weights
+
+    def forward(self, logits, targets):
+        bce = F.binary_cross_entropy_with_logits(logits, targets, reduction="none")
+        p = torch.sigmoid(logits)
+        p_t = p * targets + (1 - p) * (1 - targets)
+
+        alpha = self.alpha
+        if isinstance(alpha, torch.Tensor):
+            alpha = _align_per_class(alpha.to(logits.device), logits.dim())
+        alpha_t = alpha * targets + (1 - alpha) * (1 - targets)
+
+        loss = alpha_t * (1 - p_t) ** self.gamma * bce
+        if self.class_weights is not None:
+            loss = loss * _align_per_class(_normalized(self.class_weights, logits), logits.dim())
+        return loss.mean()
+
+
+def build_stage_b_focal_loss(alpha=0.25, gamma=2.0, class_weights=None):
+    return FocalLossWithLogits(alpha=alpha, gamma=gamma, class_weights=class_weights)
+
+
+class LocalizedSSDLoss(nn.Module):
+    """Localized tile-based sum of squared differences (supervisor request,
+    Session 19+): squared error between the predicted per-tile probability
+    and the tile's ground-truth label, computed "locally" -- i.e. per tile,
+    the same granularity Stage B's whole task already operates at, as
+    opposed to first pooling to one image-level score and only then
+    comparing. Summed over every tile and class of one sample (the
+    "localized sum"), then averaged over the batch so the loss scale
+    doesn't grow with an unrelated choice like grid size or batch size.
+
+    Unlike `FocalLossWithLogits`, this has no alpha/gamma imbalance
+    correction -- it's the plain squared-error loss as specified. If the
+    class imbalance that motivated focal loss (docs/development_log.md
+    Session 16-17) turns out to hurt this loss the same way it hurt plain
+    BCE, a pos_weight-style extension is the natural next step, but isn't
+    added preemptively here.
+    """
+
+    def forward(self, logits, targets):
+        probs = torch.sigmoid(logits)
+        sq_diff = (probs - targets) ** 2          # (B, C, H, W), elementwise/local
+        return sq_diff.sum(dim=tuple(range(1, sq_diff.dim()))).mean()  # sum per-sample, mean over batch
+
+
+def build_stage_b_ssd_loss():
+    return LocalizedSSDLoss()
+
+
+class DiceBCELoss(nn.Module):
+    """Dice + BCE (architecture.md §4: "Dice + BCE (standard for
+    segmentation with small distortion regions)") -- Stage C's loss.
+
+    Soft Dice (works directly against Stage C's continuous [0,1] mask
+    targets, not just binary ones -- see src/data/stage_c_dataset.py /
+    src/soiling/dataset_builder.py's save_pixel_masks docstring for why the
+    ground truth is kept continuous): per class,
+    `1 - (2*sum(p*t) + smooth) / (sum(p) + sum(t) + smooth)`, with the sums
+    taken over every pixel of the whole *batch* for that class, then
+    averaged over classes. Batch-level rather than per-sample: most
+    (sample, class) pairs here have an empty target (clean images, inactive
+    classes -- ~57% of pairs), and per-sample Dice on an empty target stays
+    ~1 until every pixel's probability is essentially 0 (e.g. 0.01 over
+    512x512 pixels already sums to ~2600 >> smooth), which pushes the whole
+    model toward under-predicting. `smooth` avoids 0/0 for a class absent
+    from the entire batch.
+
+    No pos_weight/imbalance correction in v1, unlike Stage B's `bce`
+    variant -- follows architecture.md's literal "Dice + BCE" spec first;
+    Stage B's own loss history (bce -> focal -> recalibration, see
+    docs/development_log.md Session 16-18) shows the pattern of adding
+    correction only once an empirical over/under-prediction problem shows
+    up, not preemptively.
+    """
+
+    def __init__(self, bce_weight=0.5, smooth=1.0, class_weights=None):
+        super().__init__()
+        self.bce_weight = bce_weight
+        self.smooth = smooth
+        self.class_weights = class_weights
+
+    def forward(self, logits, targets):
+        dims = (0,) + tuple(range(2, logits.dim()))  # reduce over batch + spatial, keep (C,)
+        bce = F.binary_cross_entropy_with_logits(logits, targets, reduction="none").mean(dim=dims)
+
+        probs = torch.sigmoid(logits)
+        intersection = (probs * targets).sum(dim=dims)
+        union = probs.sum(dim=dims) + targets.sum(dim=dims)
+        dice_loss = 1 - (2 * intersection + self.smooth) / (union + self.smooth)
+
+        per_class = self.bce_weight * bce + (1 - self.bce_weight) * dice_loss
+        if self.class_weights is not None:
+            per_class = per_class * _normalized(self.class_weights, logits)
+        return per_class.mean()
+
+
+def build_stage_c_loss(bce_weight=0.5, class_weights=None):
+    return DiceBCELoss(bce_weight=bce_weight, class_weights=class_weights)
+
+
+# --- One class per tile / pixel (Session 27: visible-change labels) ---------
+
+
+def inverse_sqrt_frequency_weights(counts):
+    """(C,) class weights proportional to 1/sqrt(class frequency), scaled to
+    mean 1: a rare class (scratch: well under 1% of pixels) gets several times
+    the weight of 'clean' without the extreme factors plain inverse frequency
+    gives."""
+    counts = np.asarray(counts, dtype=np.float64)
+    freq = counts / counts.sum()
+    w = 1.0 / np.sqrt(np.maximum(freq, 1e-8))
+    return torch.tensor(w / w.mean(), dtype=torch.float32)
+
+
+class MultiClassFocalLoss(nn.Module):
+    """Softmax focal loss over C mutually exclusive classes (Lin et al. 2017):
+    per element -w[y] * (1 - p_y)**gamma * log(p_y), averaged. logits
+    (B, C, ...), targets (B, ...) class indices. Stage B's tile loss."""
+
+    def __init__(self, class_weights=None, gamma=2.0):
+        super().__init__()
+        self.gamma = gamma
+        self.register_buffer("class_weights", None if class_weights is None
+                             else torch.as_tensor(class_weights, dtype=torch.float32))
+
+    def forward(self, logits, targets):
+        log_p = F.log_softmax(logits, dim=1).gather(1, targets.unsqueeze(1)).squeeze(1)
+        loss = -((1 - log_p.exp()) ** self.gamma) * log_p
+        if self.class_weights is not None:
+            loss = loss * self.class_weights.to(logits.device)[targets]
+        return loss.mean()
+
+
+class CEDiceLoss(nn.Module):
+    """Class-weighted cross-entropy + soft Dice over the distortion classes
+    (every class but 0 = clean), Dice sums taken over the whole batch (see
+    DiceBCELoss for why batch-level). Stage C's pixel loss."""
+
+    def __init__(self, class_weights=None, dice_weight=0.5, smooth=1.0):
+        super().__init__()
+        self.dice_weight = dice_weight
+        self.smooth = smooth
+        self.register_buffer("class_weights", None if class_weights is None
+                             else torch.as_tensor(class_weights, dtype=torch.float32))
+
+    def forward(self, logits, targets):
+        weight = None if self.class_weights is None else self.class_weights.to(logits.device)
+        ce = F.cross_entropy(logits, targets, weight=weight)
+        probs = torch.softmax(logits, dim=1)[:, 1:]
+        onehot = F.one_hot(targets, logits.shape[1]).movedim(-1, 1)[:, 1:].to(probs.dtype)
+        dims = (0,) + tuple(range(2, probs.dim()))
+        intersection = (probs * onehot).sum(dim=dims)
+        union = probs.sum(dim=dims) + onehot.sum(dim=dims)
+        dice = 1 - (2 * intersection + self.smooth) / (union + self.smooth)
+        return (1 - self.dice_weight) * ce + self.dice_weight * dice.mean()

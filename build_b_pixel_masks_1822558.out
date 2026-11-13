@@ -1,0 +1,91 @@
+### Starting TaskPrologue of job 1822558 on tg083 at Sat Sep 26 11:37:00 AM CEST 2026
+Running on cores 10-11,26-27,42-43,58-59 with governor powersave
+Sat Sep 26 11:37:00 2026       
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 610.57.04              KMD Version: 610.57.04     CUDA UMD Version: 13.3     |
++-----------------------------------------+------------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  NVIDIA GeForce RTX 3080        On  |   00000000:B2:00.0 Off |                  N/A |
+| 40%   73C    P0            139W /  300W |       1MiB /  10240MiB |      0%      Default |
+|                                         |                        |                  N/A |
++-----------------------------------------+------------------------+----------------------+
+
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
+|        ID   ID                                                               Usage      |
+|=========================================================================================|
+|  No running processes found                                                             |
++-----------------------------------------------------------------------------------------+
+### Finished TaskPrologue
+
+/home/woody/iwnt/iwnt196h/software/private/conda/envs/stage_a/lib/python3.11/site-packages/pythonperlin/__init__.py:4: UserWarning: pkg_resources is deprecated as an API. See https://setuptools.pypa.io/en/latest/pkg_resources.html. The pkg_resources package is slated for removal as early as 2025-11-30. Refrain from using this package or pin to Setuptools<81.
+  from pkg_resources import get_distribution
+/home/woody/iwnt/iwnt196h/Farhad_Vaseghi_MA/third_party/physical_lens_soiling/add_droplet_distort.py:137: FutureWarning: `estimate` is deprecated since version 0.26 and will be removed in version 2.2. Please use `PiecewiseAffineTransform.from_estimate` class constructor instead.
+  affin.estimate(to_points,from_points)
+/home/woody/iwnt/iwnt196h/Farhad_Vaseghi_MA/third_party/physical_lens_soiling/add_droplet_distort.py:137: FutureWarning: `estimate` is deprecated since version 0.26 and will be removed in version 2.2. Please use `PiecewiseAffineTransform.from_estimate` class constructor instead.
+  affin.estimate(to_points,from_points)
+/home/woody/iwnt/iwnt196h/Farhad_Vaseghi_MA/third_party/physical_lens_soiling/add_droplet_distort.py:223: FutureWarning: `estimate` is deprecated since version 0.26 and will be removed in version 2.2. Please use `PiecewiseAffineTransform.from_estimate` class constructor instead.
+  affin.estimate(from_points,to_points)
+/home/woody/iwnt/iwnt196h/software/private/conda/envs/stage_a/lib/python3.11/site-packages/pythonperlin/perlin.py:49: RuntimeWarning: divide by zero encountered in divide
+  grads = grads / np.linalg.norm(grads, axis=0)
+/home/woody/iwnt/iwnt196h/software/private/conda/envs/stage_a/lib/python3.11/site-packages/pythonperlin/perlin.py:188: RuntimeWarning: invalid value encountered in multiply
+  d = np.sum(v * r, axis=1)
+/home/woody/iwnt/iwnt196h/Farhad_Vaseghi_MA/third_party/physical_lens_soiling/generate_texture_paper.py:23: RuntimeWarning: invalid value encountered in cast
+  def to8b(x): return (255*np.clip(x, 0, 1)).astype(np.uint8)
+/home/woody/iwnt/iwnt196h/Farhad_Vaseghi_MA/third_party/physical_lens_soiling/add_mud.py:39: RuntimeWarning: invalid value encountered in divide
+  dir_texture = (dir_texture  - dir_texture.min() )/ (dir_texture.max() - dir_texture.min() )
+/home/woody/iwnt/iwnt196h/Farhad_Vaseghi_MA/third_party/physical_lens_soiling/add_mud.py:59: RuntimeWarning: invalid value encountered in cast
+  image_out = image_out.astype(np.uint8)
+/home/woody/iwnt/iwnt196h/Farhad_Vaseghi_MA/src/soiling/dataset_builder.py:406: RuntimeWarning: invalid value encountered in cast
+  ).astype(np.uint8)
+/home/woody/iwnt/iwnt196h/software/private/conda/envs/stage_a/lib/python3.11/site-packages/pythonperlin/perlin.py:199: RuntimeWarning: invalid value encountered in multiply
+  new_noise.append(d * fade)
+/home/woody/iwnt/iwnt196h/software/private/conda/envs/stage_a/lib/python3.11/site-packages/numpy/_core/fromnumeric.py:83: RuntimeWarning: invalid value encountered in reduce
+  return ufunc.reduce(obj, axis, dtype, out, **passkwargs)
+/home/woody/iwnt/iwnt196h/Farhad_Vaseghi_MA/third_party/physical_lens_soiling/add_mud.py:67: RuntimeWarning: invalid value encountered in divide
+  dir_texture = (dir_texture  - dir_texture.min() )/ (dir_texture.max() - dir_texture.min() )
+/home/woody/iwnt/iwnt196h/Farhad_Vaseghi_MA/third_party/physical_lens_soiling/add_mud.py:102: RuntimeWarning: invalid value encountered in cast
+  image_out = image_out.astype(np.uint8)
+/home/woody/iwnt/iwnt196h/Farhad_Vaseghi_MA/third_party/physical_lens_soiling/add_mud.py:111: RuntimeWarning: invalid value encountered in divide
+  blur_mask = (blur_mask  - blur_mask.min() )/ (blur_mask.max() - blur_mask.min() )
+/home/woody/iwnt/iwnt196h/Farhad_Vaseghi_MA/third_party/physical_lens_soiling/add_mud.py:117: RuntimeWarning: invalid value encountered in divide
+  dir_mask = np.minimum(1,(  (dir_mask  - dir_mask.min() )/ (dir_mask.max() - dir_mask.min() ) + 0.2 ) )
+/home/woody/iwnt/iwnt196h/Farhad_Vaseghi_MA/third_party/physical_lens_soiling/add_mud.py:143: RuntimeWarning: invalid value encountered in cast
+  image_out = image_out.astype(np.uint8)
+Wrote 14000 images to data/processed/stage_b_scratch15/images
+Metadata: data/processed/stage_b_scratch15/metadata.csv
+Tile labels: data/processed/stage_b_scratch15/tile_labels.npy (shape (14000, 3, 16, 16), grid 16x16)
+Pixel masks: data/processed/stage_b_scratch15/masks (one 3-channel PNG per image)
+Split sizes: {'train': 11200, 'test': 1400, 'val': 1400}
+  dirt: 6000/14000 images positive (42.9%) | threshold=0.2 | tile-positive rate=15.4%
+    severity: {'high': 2043, 'low': 1975, 'medium': 1982}
+  water: 6000/14000 images positive (42.9%) | threshold=0.25 | tile-positive rate=15.4%
+    severity: {'low': 2011, 'high': 2000, 'medium': 1989}
+  scratch: 6000/14000 images positive (42.9%) | threshold=0.015 | tile-positive rate=1.9%
+    severity: {'low': 2006, 'high': 1997, 'medium': 1997}
+=== JOB_STATISTICS ===
+=== current date     : Sat Sep 26 01:56:10 PM CEST 2026
+= Job-ID             : 1822558 on tinygpu
+= Job-Name           : build_b_pixel_masks
+= Job-Command        : /home/woody/iwnt/iwnt196h/Farhad_Vaseghi_MA/scripts/hpc/build_stage_b_pixel_masks.slurm
+= Initial workdir    : /home/woody/iwnt/iwnt196h/Farhad_Vaseghi_MA
+= Queue/Partition    : rtx3080
+= Slurm account      : iwnt with QOS=normal
+= Requested resources:  for 03:00:00
+= Elapsed runtime    : 02:19:10
+= Total RAM usage    : 1.3 GiB of requested  GiB (%)   
+= Node list          : tg083
+= Subm/Elig/Start/End: 2026-09-26T11:29:35 / 2026-09-26T11:29:35 / 2026-09-26T11:36:59 / 2026-09-26T13:56:09
+======================
+=== Quota infos ======
+    Path                 Used     SoftQ    HardQ    Gracetime  Filec    FileQ    FiHaQ    FileGrace    
+    /home/woody            10.6G  1000.0G  1500.0G        N/A     105K   5,000K   7,500K        N/A    
+    /home/hpc               6.0G   104.9G   209.7G        N/A   1,449      500K   1,000K        N/A    
+    /home/vault             0.0K  1048.6G  2097.2G        N/A       1      200K     400K        N/A    
+======================
+=== GPU utilization ==
+gpu_name, gpu_bus_id, pid, gpu_utilization [%], mem_utilization [%], max_memory_usage [MiB], time [ms]

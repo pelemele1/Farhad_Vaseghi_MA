@@ -1,0 +1,13 @@
+setuptools<81  # pythonperlin needs pkg_resources, removed from setuptools in later releases
+numpy
+opencv-python
+scikit-image
+scikit-learn
+scipy
+matplotlib
+imageio
+pythonperlin
+Pillow
+pytest
+torch
+ultralytics

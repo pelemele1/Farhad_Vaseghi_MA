@@ -1,0 +1,105 @@
+### Starting TaskPrologue of job 1823372 on tg091 at Sun Sep 27 03:57:27 AM CEST 2026
+Running on cores 64-95 with governor ondemand
+Sun Sep 27 03:57:27 2026       
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 610.57.04              KMD Version: 610.57.04     CUDA UMD Version: 13.3     |
++-----------------------------------------+------------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  NVIDIA A100-SXM4-40GB          On  |   00000000:81:00.0 Off |                    0 |
+| N/A   34C    P0             52W /  400W |       0MiB /  40960MiB |      0%      Default |
+|                                         |                        |             Disabled |
++-----------------------------------------+------------------------+----------------------+
+
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
+|        ID   ID                                                               Usage      |
+|=========================================================================================|
+|  No running processes found                                                             |
++-----------------------------------------------------------------------------------------+
+### Finished TaskPrologue
+
+/home/woody/iwnt/iwnt196h/software/private/conda/envs/stage_a/lib/python3.11/site-packages/pythonperlin/__init__.py:4: UserWarning: pkg_resources is deprecated as an API. See https://setuptools.pypa.io/en/latest/pkg_resources.html. The pkg_resources package is slated for removal as early as 2025-11-30. Refrain from using this package or pin to Setuptools<81.
+  from pkg_resources import get_distribution
+Tuned per-class thresholds (best-F1 on val split):
+  dirt      0.614
+  water     0.592
+  scratch   0.547
+[ungated] Evaluated 1400 images (358400 tiles) from split='test', threshold=tuned per-class
+class      threshold precision    recall        f1        AP   ROC-AUC   support
+dirt           0.614     0.879     0.823     0.850     0.935     0.976     72748
+water          0.592     0.817     0.852     0.834     0.919     0.969     82441
+scratch        0.547     0.839     0.733     0.782     0.833     0.980      9019
+
+[gated] Evaluated 1400 images (358400 tiles) from split='test', threshold=tuned per-class
+class      threshold precision    recall        f1        AP   ROC-AUC   support
+dirt           0.614     0.881     0.821     0.850     0.933     0.973     72748
+water          0.592     0.819     0.852     0.835     0.920     0.969     82441
+scratch        0.547     0.841     0.703     0.766     0.794     0.919      9019
+
+Per-severity breakdown (ungated, per tile):
+class     severity   threshold precision    recall        f1        AP   ROC-AUC   support
+dirt      low            0.614     0.800     0.654     0.719     0.808     0.957     25387
+dirt      medium         0.614     0.807     0.888     0.846     0.938     0.989     23960
+dirt      high           0.614     0.819     0.941     0.876     0.968     0.995     23401
+water     low            0.592     0.706     0.700     0.703     0.766     0.954     27252
+water     medium         0.592     0.752     0.920     0.827     0.925     0.988     26524
+water     high           0.592     0.803     0.934     0.864     0.958     0.992     28665
+scratch   low            0.547     0.807     0.558     0.659     0.670     0.963      2769
+scratch   medium         0.547     0.806     0.765     0.785     0.841     0.988      3178
+scratch   high           0.547     0.805     0.857     0.830     0.903     0.995      3072
+/home/woody/iwnt/iwnt196h/software/private/conda/envs/stage_a/lib/python3.11/site-packages/pythonperlin/__init__.py:4: UserWarning: pkg_resources is deprecated as an API. See https://setuptools.pypa.io/en/latest/pkg_resources.html. The pkg_resources package is slated for removal as early as 2025-11-30. Refrain from using this package or pin to Setuptools<81.
+  from pkg_resources import get_distribution
+[ungated] Evaluated 100 clean images from split='test', threshold=tuned per-class
+class      threshold     FP rate
+dirt           0.614     23.000%
+water          0.592     42.000%
+scratch        0.547     18.000%
+
+[gated] Evaluated 100 clean images from split='test', threshold=tuned per-class
+class      threshold     FP rate
+dirt           0.614      8.000%
+water          0.592     12.000%
+scratch        0.547     10.000%
+/home/woody/iwnt/iwnt196h/software/private/conda/envs/stage_a/lib/python3.11/site-packages/pythonperlin/__init__.py:4: UserWarning: pkg_resources is deprecated as an API. See https://setuptools.pypa.io/en/latest/pkg_resources.html. The pkg_resources package is slated for removal as early as 2025-11-30. Refrain from using this package or pin to Setuptools<81.
+  from pkg_resources import get_distribution
+tuned thresholds: {'dirt': 0.6137803792953491, 'water': 0.5922228693962097, 'scratch': 0.5468721985816956}
+wrote docs/images/stage_b_test_metrics_flip.jpg
+wrote docs/images/stage_b_roc_pr_curves_flip.jpg
+wrote docs/images/stage_b_probability_by_severity_flip.jpg
+wrote docs/images/stage_b_sample_predictions_flip.jpg
+wrote docs/images/stage_b_combo_sample_flip.jpg
+wrote docs/images/stage_b_full_report_flip_page1.jpg
+wrote docs/images/stage_b_full_report_flip_page2.jpg
+wrote docs/images/stage_b_training_curve_flip.jpg
+=== JOB_STATISTICS ===
+=== current date     : Sun Sep 27 03:59:13 AM CEST 2026
+= Job-ID             : 1823372 on tinygpu
+= Job-Name           : final_b
+= Job-Command        : /home/woody/iwnt/iwnt196h/Farhad_Vaseghi_MA/scripts/hpc/run_shell.slurm
+= Initial workdir    : /home/woody/iwnt/iwnt196h/Farhad_Vaseghi_MA
+= Queue/Partition    : a100
+= Slurm account      : iwnt with QOS=normal
+= Requested resources:  for 01:00:00
+= Elapsed runtime    : 00:01:48
+= Total RAM usage    : 2.1 GiB of requested  GiB (%)   
+= Node list          : tg091
+= Subm/Elig/Start/End: 2026-09-27T03:57:24 / 2026-09-27T03:57:24 / 2026-09-27T03:57:25 / 2026-09-27T03:59:13
+======================
+=== Quota infos ======
+    Path                 Used     SoftQ    HardQ    Gracetime  Filec    FileQ    FiHaQ    FileGrace    
+    /home/woody            10.5G  1000.0G  1500.0G        N/A     101K   5,000K   7,500K        N/A    
+    /home/hpc               6.0G   104.9G   209.7G        N/A   1,449      500K   1,000K        N/A    
+    /home/vault             0.0K  1048.6G  2097.2G        N/A       1      200K     400K        N/A    
+======================
+=== GPU utilization ==
+gpu_name, gpu_bus_id, pid, gpu_utilization [%], mem_utilization [%], max_memory_usage [MiB], time [ms]
+NVIDIA A100-SXM4-40GB, 00000000:81:00.0, 1096759, 61 %, 39 %, 3368 MiB, 55515 ms
+NVIDIA A100-SXM4-40GB, 00000000:81:00.0, 1097202, 70 %, 44 %, 3368 MiB, 49902 ms
+NVIDIA A100-SXM4-40GB, 00000000:81:00.0, 1097606, 70 %, 44 %, 3368 MiB, 49854 ms
+NVIDIA A100-SXM4-40GB, 00000000:81:00.0, 1099214, 15 %, 10 %, 3774 MiB, 30209 ms
+NVIDIA A100-SXM4-40GB, 00000000:81:00.0, 1099514, 19 %, 13 %, 3774 MiB, 23307 ms
+NVIDIA A100-SXM4-40GB, 00000000:81:00.0, 1099213, 14 %, 9 %, 3774 MiB, 33424 ms

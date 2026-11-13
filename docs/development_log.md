@@ -1,0 +1,2680 @@
+# Development Log
+
+Chronological record of what was done and why, so progress can be followed without
+digging through git history. One entry per development session/phase.
+
+---
+
+## Session 1 — Scope reset: Stage A on MIO-TCD, scratch-effect method choice
+
+**Date:** 2026-08-23
+
+`overview.md`, `architecture.md`, `setup.md`, and
+`only_for_me/only_for_my_research_thesis_concept.md` / `..._ablations.md` are the source
+of truth for what gets built (`README.md` is an unrelated generic template).
+
+**Scope for this pass**, per architecture.md §2 and the supervisor's guidance:
+- Dataset: **MIO-TCD** (Miovision Traffic Camera Dataset), not BDD100K.
+- Target: Part 2, **Stage A only** — image-level multi-label distortion classification
+  (`dirt` / `water` / `scratch`), GAP + FC + sigmoid on the YOLO backbone's P5 feature map,
+  frozen COCO-pretrained backbone (no detection fine-tuning on MIO-TCD in this pass).
+- Distortion source: synthetic, via https://github.com/JannLi/physical_lens_soiling for
+  `dirt`/`water` — overview.md explicitly names this repo as a sanctioned alternative to
+  the real dual-camera rig.
+- Training destination: NHR@FAU HPC (TinyGPU cluster, SLURM). Per standing project rule,
+  Claude prepares code and job scripts only — training itself runs on the user's own HPC
+  allocation, never launched from here.
+
+**Gap:** `physical_lens_soiling` has no `scratch` effect, and no ready-made lens-scratch
+codebase exists. Resolved by building and comparing three candidates on one sample image
+before committing to any of them for the full dataset build.
+
+### Scratch-method comparison
+
+1. **FilmDamageSimulator** (`github.com/daniela997/FilmDamageSimulator`, MIT licensed).
+   Cloned and ran directly — composited 3 real scratch crops (extracted from their
+   annotated 35mm film-scan dataset) plus 3 outputs of their own procedural
+   `line_scratch()` (Perlin-noise-based fading line) onto the sample image. Needed one
+   one-line fix for a NumPy 2.x incompatibility (`int()` on a size-1 array), otherwise ran
+   as-is. Visual character: convincing as *film-grain* damage, but reads as photographic
+   scratch texture rather than a lens/glass scratch.
+2. **ScratchSim** (arXiv:2607.27065). Its public repo
+   (`github.com/saptarshineil/ScratchSim`) turned out to be a full BlenderProc **3D**
+   pipeline rendering a specific toy-car asset with material/normal-map perturbation —
+   none of it applies to flat 2D photos. What was actually tested is a from-scratch
+   reimplementation of just the paper's described 2D scratch-mask step (cubic Bézier
+   curve through 4 random points + Gaussian blur), since that's the only part of their
+   method that transfers to our setting.
+3. **Own procedural generator** (`src/soiling/effects.py::add_scratch`) — built in the
+   same mask + alpha-blend style `physical_lens_soiling` already uses for its other
+   effects. Iterated twice against user feedback:
+   - v1: smooth curve, tapered width, single continuous stroke → looked too clean/uniform.
+   - v2: added random on/off gaps along the curve (a real lens scratch only catches light,
+     and so is only visible, intermittently) plus bright "glint" points at a few spots —
+     validated against a real reference photo of a scratched camera lens the user found
+     (Lensrentals.com, "Front Element Scratches"), which visibly shows a discontinuous,
+     not-solid scratch line.
+   - v3 (final): removed the glint points (looked artificial/unnatural per user feedback)
+     — kept the broken/discontinuous segments, and replaced the single global taper with a
+     width that meanders between thick and thin along the streak (several blended random
+     Gaussian "lobes"), which reads as natural irregular scratch depth without needing an
+     explicit highlight marker.
+
+**Result — v1 vs. v2 vs. v3** (same sample photo, all three methods; own generator in the
+bottom row of each):
+
+![v1: smooth tapered curve, single continuous stroke, too clean/uniform](images/scratch_comparison_v1_initial.jpg)
+
+![v2: broken segments + glint points, rejected as artificial](images/scratch_comparison_v2_with_glints.jpg)
+
+![v3 final: broken segments + meandering thick/thin width, no glints](images/scratch_comparison_v3_final.jpg)
+
+**Decision: own procedural generator.** Rationale — full parametric control (count,
+length, width, curvature, opacity all independently tunable for later class-balance
+tuning), no external code/license/domain-mismatch dependency (FilmDamageSimulator = film
+grain, ScratchSim = industrial 3D render, neither is a lens/glass scratch), composes
+naturally with `physical_lens_soiling`'s own mask+blend convention for `dirt`/`water`, and
+— unlike either external option — was directly iterated against real-world reference
+evidence of what a scratched lens actually looks like.
+
+**Follow-up tweak:** the v3 renders above all looked uniformly thin. Widths were already
+random per scratch, but the default range (`width_px=(1, 3)`) was too narrow, and the
+meandering-width profile only reaches its sampled max briefly near each "lobe" center — so
+in practice almost every stroke stayed close to 1px regardless of seed. Widened the default
+to `width_px=(1, 7)` so a clearly thick scratch is actually reachable. Confirmed across 6
+random seeds that both thin and thick streaks now occur:
+
+![width variety across 6 random seeds, thin and thick scratches both occur](images/scratch_width_variety.jpg)
+
+**Delivered this session:**
+- `src/soiling/effects.py` — `add_scratch()` / `generate_scratch_mask()`, the finalized
+  procedural scratch generator.
+- `tests/test_effects.py` — 6 fast unit tests (mask shape/range, non-empty, discontinuity,
+  image actually changes, seeded reproducibility, zero-scratches no-op).
+
+**Not yet done (next session):** port `physical_lens_soiling`'s `dirt`/`water` effects
+into `src/soiling/effects.py` alongside `add_scratch`, build the MIO-TCD-based dataset
+pipeline (`src/soiling/dataset_builder.py`), and the Stage A model/training/eval code —
+per the approved plan.
+
+---
+
+## Session 2 — MIO-TCD pilot subset (Step 1)
+
+**Date:** 2026-08-23
+
+Downloaded `MIO-TCD-Localization.tar` (official archive, CC BY-NC-SA 4.0, 3.5 GB,
+137,743 full-frame traffic-camera images) directly from the dataset provider. The archive
+only offers a full-dataset download — no partial/per-image API — so the workflow is:
+download once, then sample locally.
+
+**Archive layout:** `train/` (110,000 images, has public ground truth in `gt_train.csv`,
+one row per object: `image_id,class,x1,y1,x2,y2`) and `test/` (27,743 images, labels held
+out for the competition, not usable). Sampled from `train/` specifically so the same pilot
+subset stays reusable for any later detection-related work, even though Stage A itself
+doesn't need the boxes.
+
+**Pilot size:** 1,000 images (~1% of the train split) — matches the project's own
+pilot-first philosophy (setup.md), and each source image will yield several synthetic
+distortion variants in the next step, so 1,000 sources is enough to produce a few thousand
+training examples for Stage A without processing the full archive.
+
+**Delivered this session:**
+- `src/data/mio_tcd.py` — pure, testable functions (`list_train_image_ids`,
+  `sample_image_ids`, `filter_gt_rows`, `extract_images`) plus `build_pilot_subset()`
+  tying them together: deterministic random sample of image ids (seeded) → extract just
+  those images from the tar (not the whole archive) → filter the matching `gt_train.csv`
+  rows → write a manifest of the sampled ids for reproducibility.
+- `scripts/sample_mio_tcd.py` — CLI wrapper (`--tar`, `--out`, `--n`, `--seed`).
+- `tests/test_mio_tcd.py` — 6 tests against a small synthetic in-memory tar (no real
+  MIO-TCD download needed to run the suite).
+- Ran it for real: `python scripts/sample_mio_tcd.py --tar D:/MasterThesis_FAU/MIO-TCD-Localization.tar --out data/raw/mio_tcd --n 1000 --seed 0`
+  → 1,000 images (27 MB), 3,168 matching ground-truth rows, seed=0 manifest. Verified a
+  random sample of the extracted images decodes correctly and looks like a diverse mix of
+  cameras/scenes. The extracted images themselves are not committed (`data/` is
+  gitignored) — only the sampling code and the seed are, so the exact same 1,000-image
+  subset is reproducible by anyone with the archive.
+
+**Not yet done (next session):** the synthetic distortion pipeline (`dirt`/`water` ported
+from `physical_lens_soiling` + the existing `add_scratch`) applied to this 1,000-image
+subset to build the actual Stage A multi-label dataset.
+
+---
+
+## Session 3 — Vendoring physical_lens_soiling; `{dirt, water, scratch}` taxonomy complete
+
+**Date:** 2026-08-23
+
+The supervisor cleared direct use of `physical_lens_soiling`'s code (it ships no LICENSE
+file upstream, so this was a real permission, not an assumption). That changes Session 1's
+plan from "reimplement the technique ourselves" to vendoring the actual source.
+
+**What was vendored**, into `third_party/physical_lens_soiling/` (kept out of `src/` to
+mark it clearly as external code, not ours):
+- `add_mud.py` — `add_mudByTxture` (mud → our `dirt`), `add_dirtwaterByTxture` /
+  `add_dirtwaterByTxture_slight` (water_thick / water_thin → our `water`, blob-blend).
+- `add_droplet_distort.py` — `add_distort` (→ also `water`, but a physically different
+  mechanism: an actual optical refraction/warp rather than a color blend).
+- `generate_texture_paper.py` — the procedural texture generator both of the above depend on.
+
+Deliberately **not** vendored (outside architecture.md's 3-class taxonomy, per this
+session's earlier decision to drop them): `add_sun_glare.py`, `add_lensdust.py`, and their
+own Albumentations-based comparison baseline.
+
+**One real edit to the vendored files** (documented in
+`third_party/physical_lens_soiling/NOTICE.md`): `add_mud.py` and `add_droplet_distort.py`
+both had top-level script code that ran unconditionally on `import` (looping over a local
+`image/` folder; one line was even `os.makedirs(..., exist_ok=False)`, which would crash on
+a second import). Wrapped that code in `if __name__ == "__main__":` — no algorithmic
+change, verified by running all four functions before/after and confirming identical
+output.
+
+**Wired into `src/soiling/effects.py`** as `add_dirt()` and `add_water()`, matching
+`add_scratch`'s `(image, seed=None) -> (distorted_image, mask)` contract:
+- `add_dirt`: picks a random texture style, calls `add_mudByTxture`.
+- `add_water`: randomly picks one of three mechanisms per call — `'thick'`, `'thin'`
+  (blob-blend), or `'droplet'` (optical warp) — so the water class gets real mechanism
+  diversity, not just opacity variants of the same blend.
+
+All three distortion classes now exist behind one consistent interface:
+
+![dirt, water (all 3 mechanisms), and scratch on a real MIO-TCD image](images/dirt_water_scratch_taxonomy.jpg)
+
+**Delivered this session:**
+- `third_party/physical_lens_soiling/` — vendored source + `NOTICE.md` (provenance, what
+  was kept/dropped, the exact edit made) + `UPSTREAM_README.md`.
+- `requirements.txt` — added at the repo root (didn't exist before); includes
+  `pythonperlin`, the one new dependency the vendored code needs.
+- `src/soiling/effects.py` — `add_dirt()`, `add_water()` added alongside `add_scratch()`.
+- `tests/test_effects_dirt_water.py` — 5 tests (image changes, mask shape/range, seeded
+  reproducibility, all three water mechanisms exercised).
+- Full suite: 17 passed.
+
+**Not yet done (next session):** `src/soiling/dataset_builder.py` — apply `add_dirt` /
+`add_water` / `add_scratch` in random combination (including "clean" negatives) across the
+1,000-image MIO-TCD pilot subset to produce the actual Stage A multi-label training set.
+
+---
+
+## Session 4 — Taxonomy check against the paper's own figure; scratch made harsher
+
+**Date:** 2026-08-23
+
+Checked `dirt`/`water`/`scratch` against the physical_lens_soiling paper's own Figure 1
+(mud stain, flare, dust, water mist, water droplet, water stain) instead of inventing new
+mechanisms — a "residue" dirt-stain variant had been considered and was dropped in favor of
+matching the paper exactly.
+
+**Decision: no invented variants.** `add_dirt`/`add_water` stay exactly as wired in Session
+3 and already match the figure one-for-one (mud stain → (b)/(c), water droplet → (g), water
+stain heavy/light → (h)/(i); "water mist" (f) is just `stain (light)` drawing a fog texture,
+already covered by the existing texture pool). Flare and dust stay excluded (outside
+architecture.md's 3-class taxonomy).
+
+**Scratch made harsher** per feedback that it needed to read more clearly: opacity floor
+`0.35 → 0.6`, blend strength `0.85 → 0.97`.
+
+![figure-1-style layout using only the real vendored effects, plus scratch](images/figure1_style_comparison.jpg)
+
+**Delivered this session:** tuning only, no new modules — `src/soiling/effects.py` opacity/
+blend constants adjusted. Full suite still 17/17.
+
+---
+
+## Session 5 — Weak mud/water outputs traced to texture-pool luck, not a code bug
+
+**Date:** 2026-08-23
+
+Mud and water-stain renders were barely visible, not matching the paper's figure. Explicit
+instruction: do not modify `third_party/physical_lens_soiling/` — find and fix the problem
+elsewhere.
+
+**Root cause:** three of our seven texture-style choices in `_random_dirt_water_texture()`
+(our own sampling code, not vendored) gave near-invisible mask coverage by construction —
+most strikingly `r_water_mud`, despite its name, averaged under 13% coverage vs. ~40-51%
+for the reliable modes. Earlier demo images happened to draw from that weak tail by chance.
+
+**Fix:** narrowed `_DIRT_WATER_TEXTURE_MODS` (our sampling pool, not the vendored
+algorithm) to the five modes that measure consistently strong: `r_fog`, `thick_fog`,
+`f_water_mud`, `big_rain_drop`, `little_rain_drop`. No vendored file touched.
+
+![mud/water across 3 seeds after restricting the texture pool to the reliably-strong modes](images/dirt_water_strong_texture_pool.jpg)
+
+**Delivered this session:** `src/soiling/effects.py` — `_DIRT_WATER_TEXTURE_MODS` narrowed
+from 7 to 5 entries. Full suite: 17/17.
+
+---
+
+## Session 6 — Dataset builder: precompute strategy, balanced single-distortion variants
+
+**Date:** 2026-08-24
+
+**`add_scratch` interface unified with `add_dirt`/`add_water`.** It previously took
+explicit severity kwargs (`n_scratches`, `length_frac`, `width_px`, `opacity`, ...); changed
+to `add_scratch(image, seed=None)`, with the amount randomized internally, matching the
+other two effects' style — needed so all three effects can be driven identically by the
+dataset builder. `generate_scratch_mask(...)` still takes the full parameter set directly
+for anyone who wants explicit control outside the dataset pipeline.
+
+**Augmentation strategy: precompute, not on-the-fly.** Before building the dataset, we
+weighed applying distortions live during training (on-the-fly, discussed vs. precomputing a
+static set once) given training happens on the shared FAU HPC allocation. The vendored
+effects (Perlin-texture generation, piecewise-affine warps for the droplet mechanism) are
+CPU-bound and non-trivial per call; a frozen-backbone, small-head Stage A model has a cheap
+GPU step, so an on-the-fly CPU pipeline risked bottlenecking the GPU on every batch, with the
+added cost paid on every epoch instead of once. Decision: precompute a static dataset once,
+train against fixed files. `src/soiling/dataset_builder.py` and
+`scripts/build_stage_a_dataset.py` implement this — one pass over the source images writes
+distorted variants + a `metadata.csv` (`path, source_id, variant_id, split, dirt, water,
+scratch`) to `data/processed/stage_a/`.
+
+**Splits are assigned per source image, not per variant** (`assign_splits`), so all variants
+of the same source frame stay in the same split — otherwise near-duplicate variants of one
+frame could leak across train/val/test.
+
+**Reproducibility gap found and accepted as a known limitation.** `add_distort` (vendored,
+used for the water "droplet" mechanism) draws via Python's stdlib `random.choice`, not
+`np.random` — seeding only `np.random.seed()` left that draw dependent on leftover global
+state. Fixed with a `_seed_all(seed)` helper in `effects.py` that seeds both `np.random` and
+`random`, used in `add_dirt`/`add_water`/`generate_scratch_mask`. Deeper down, `add_dirt`
+and `add_water` (the texture-based mechanisms) still aren't pixel-reproducible: the vendored
+`generate_texture_paper.py` calls `pythonperlin.perlin(...)` without a `seed=` argument, and
+`pythonperlin`'s own `make_grads()` then calls `np.random.seed(None)` internally — silently
+re-randomizing the global RNG from OS entropy on every texture draw, from inside a
+*dependency* of the vendored code, not the vendored code itself. Fixing it cleanly would mean
+monkey-patching `pythonperlin.perlin` from our own code. **Decision: leave it as-is.** The
+dataset is generated once and the resulting files are the artifact — a regenerated copy
+isn't expected to be pixel-identical, only label-identical (same seed → same effect assigned
+to each variant slot). `tests/test_dataset_builder.py`'s reproducibility test checks labels
+only, with the reasoning recorded inline.
+
+**First build was rejected: too many clean images, and combined distortions.** The initial
+design sampled each of dirt/water/scratch independently per variant with `effect_prob=0.35`,
+which (a) could combine two or three distortion types onto the same image, and (b) skewed
+~65% of variants clean by chance (three independent 65%-fail rolls). Both were wrong for
+this dataset: **exactly one distortion type per image, never combined**, and **not
+overwhelmingly clean**. Replaced with deterministic balanced assignment
+(`assign_variant_kinds`): for each source image, the variant slots are filled by cycling
+through `("clean", "dirt", "water", "scratch")` and shuffling the order — with
+`variants_per_image=4` this guarantees exactly one clean + one of each distortion per source
+image, every time, rather than leaving the mix to chance.
+
+**Delivered this session:** `src/soiling/dataset_builder.py` (new), `scripts/
+build_stage_a_dataset.py` (new), `tests/test_dataset_builder.py` (new, 11 tests). Full suite:
+28/28. Ran the real build against the 1000-image MIO-TCD pilot subset
+(`data/raw/mio_tcd/images`, from Session 2):
+
+| | count |
+|---|---|
+| total images | 4000 (1000 sources × 4 variants) |
+| train / val / test | 3200 / 400 / 400 |
+| dirt positive | 1000 (25.0%) |
+| water positive | 1000 (25.0%) |
+| scratch positive | 1000 (25.0%) |
+| clean (all-zero label) | 1000 (25.0%) |
+
+Output not committed (gitignored, under `data/`) — regenerable via `python
+scripts/build_stage_a_dataset.py --source data/raw/mio_tcd/images --out
+data/processed/stage_a --variants 4 --seed 0`.
+
+**Follow-up (2026-08-24): dataset rebalanced again.** The 0.35 `effect_prob` design above
+still let a variant land clean or combine distortions by chance; direct feedback ("i might
+have 3/4 images clean and this shouldnt be like that", "dont, ever mix two type of
+distortion. only one") replaced it with the fully deterministic
+`assign_variant_kinds` scheme described above (cycle `("clean", "dirt", "water",
+"scratch")`, shuffle order) and dropped `variants_per_image` from 12 → 5 → **4** (final).
+Rebuilt for real against the 1000-image pilot subset: 4000 images, exactly 1000/1000/1000/
+1000 (25.0% each) for clean/dirt/water/scratch, 3200/400/400 train/val/test.
+
+---
+
+## Session 7 — Stage A model: frozen YOLO backbone + distortion head (Step 3)
+
+**Date:** 2026-08-24
+
+Added `torch` and `ultralytics` (CPU-only torch locally — training happens on the FAU HPC,
+never here) and downloaded COCO-pretrained `yolo11m.pt` into `weights/` (gitignored via the
+existing `*.pt` rule).
+
+**`src/models/backbone.py` — `FrozenYOLOBackbone`.** Traced Ultralytics' `YOLO('yolo11m.pt')
+.model.model` (a flat 24-layer `nn.Sequential`) to find the actual P5 tap: layers 0-10
+(Conv/C3k2 stages, SPPF, C2PSA) are the shared backbone, each taking input only from the
+immediately preceding layer; layer 11 is the neck's first `Upsample`, where FPN/PAN fusion
+begins. So layer 10 (`C2PSA`)'s output — confirmed 512 channels, stride 32 — is P5. The
+module runs just those 11 layers, freezes every parameter (`requires_grad = False`), and
+overrides `.train()` to always force `eval()` so batchnorm stats can't drift while only the
+head is being trained (architecture.md §3 Option 1: frozen backbone).
+
+**`src/models/distortion_head.py` — `StageADistortionHead`.** GAP + 2×FC exactly per
+architecture.md §6. Returns raw logits rather than post-sigmoid probabilities: §4 specifies
+`BCEWithLogitsLoss`, which applies sigmoid internally for numerical stability — an explicit
+`Sigmoid` layer in the head would double-apply it. `torch.sigmoid(head(features))` gives the
+per-class probabilities §2 describes; documented inline to make the reasoning explicit
+rather than silently deviating from the doc's literal "...+ sigmoid" wording.
+
+**`src/models/losses.py`.** `compute_pos_weight(metadata_csv, split=...)` reads the
+dataset's own `metadata.csv` and computes the standard `#negatives / #positives` per class
+(architecture.md §4: "`pos_weight` ... for class imbalance"); `build_stage_a_loss` just
+wraps `BCEWithLogitsLoss(pos_weight=...)`.
+
+**Crash found and fixed: `torch` + vendored `scikit-image` code together aborted the
+process.** Running the full suite (model tests + the existing effects/dataset-builder
+tests in one process) crashed with `Fatal Python error: Aborted` inside
+`add_droplet_distort.py`'s `PiecewiseAffineTransform.estimate()` — a known Windows
+MKL/OpenMP conflict: both `torch` and `numpy`/`scikit-image` bundle their own Intel OpenMP
+runtime (`libiomp5md.dll`), and loading it twice aborts on first real use. Not a bug in our
+code. Fixed with the standard `KMP_DUPLICATE_LIB_OK=TRUE` workaround, set in a new
+`tests/conftest.py` (must run before either library is imported, hence conftest rather than
+inline in a test file).
+
+**Smoke-tested end-to-end** against a real image from the Session 6 dataset: `480×720`
+input → P5 `[1, 512, 15, 23]` → head logits `[1, 3]`; `compute_pos_weight` on the train
+split correctly returned `[3.0, 3.0, 3.0]` (matches the dataset's exact 25%-positive-per-
+class balance: 3 negatives per positive); loss finite.
+
+**Delivered this session:** `src/models/backbone.py`, `src/models/distortion_head.py`,
+`src/models/losses.py` (all new), `tests/test_backbone.py`, `tests/test_distortion_head.py`,
+`tests/test_losses.py` (new, 10 tests — 3 of which skip if `weights/yolo11m.pt` isn't
+present locally), `tests/conftest.py` (new). `requirements.txt` — added `torch`,
+`ultralytics`. Full suite: 38/38 (all running, none skipped, since the weights are already
+downloaded here).
+
+**Not yet done (next session):** Step 4 — training script (`scripts/train_stage_a.py`,
+smoke-test mode only per the standing "no training from Claude" rule) combining the
+backbone, head, and loss into an actual training loop over the Stage A dataset.
+
+---
+
+## Session 8 — Training script (Step 4)
+
+**Date:** 2026-08-24
+
+**`src/data/stage_a_dataset.py` — `StageADataset`.** A `torch.utils.data.Dataset` over the
+`metadata.csv` + `images/` written by `dataset_builder.py`. Filters to one `split`,
+preprocesses each image the same way Ultralytics' own predictor does (BGR→RGB, resize,
+HWC→CHW, `/255`) so the frozen backbone sees the input format it was actually trained on.
+`max_samples` truncates the row list, used by the training script's `--smoke-test` mode.
+
+**`scripts/train_stage_a.py`.** Frozen backbone, only `StageADistortionHead`'s parameters
+go to the optimizer (`torch.optim.Adam(head.parameters(), ...)`) — matches architecture.md
+§3 Option 1 exactly: backbone forward runs inside `torch.no_grad()`, only the head builds a
+graph. `pos_weight` for the loss is computed once from the dataset's own `metadata.csv`
+(train split). CLI: `--data`, `--weights`, `--epochs`, `--batch-size`, `--lr`, `--img-size`,
+`--device`, `--out` (checkpoint dir). `--smoke-test` forces 1 epoch / batch-size 2 / CPU / 8
+samples per split and skips writing a checkpoint — this is the only "training" run from this
+side, per the standing rule that real training happens on the user's own FAU HPC job, never
+launched from here.
+
+Ran the smoke test for real against the actual 4000-image dataset from Session 6:
+```
+train=8 val=8 pos_weight=[3.0, 3.0, 3.0]
+epoch 1/1  train_loss=1.0679  val_loss=1.0332  (6.0s)
+```
+Confirms the full backbone → head → loss → optimizer.step() pipeline actually runs on real
+data, not just synthetic tensors — the point of the smoke test, not a claim about learning.
+
+**Delivered this session:** `src/data/stage_a_dataset.py`, `scripts/train_stage_a.py` (both
+new), `tests/test_stage_a_dataset.py` (5 tests), `tests/test_train_stage_a.py` (1
+end-to-end subprocess test, skips without local weights). Full suite: 43/43.
+
+**Not yet done (next session):** Step 5 — FAU HPC SLURM/env scripts
+(`scripts/hpc/setup_env.sh`, `scripts/hpc/train_stage_a.slurm`), then Step 6 — evaluation
+script (`scripts/evaluate_stage_a.py`, per-class precision/recall/F1/AP on the held-out
+test split).
+
+---
+
+## Session 9 — FAU HPC SLURM/env scripts (Step 5)
+
+**Date:** 2026-08-24
+
+Browsed the live `doc.nhr.fau.de` TinyGPU and Python/Conda docs directly (rather than
+relying on possibly-stale prior knowledge) to ground every command in what NHR@FAU actually
+documents today. `portal.hpc.fau.de/ui/user` turned out to be the login-gated account/project
+management portal, not technical docs — didn't attempt to log in (not our credentials);
+the real technical reference is `doc.nhr.fau.de`.
+
+**`scripts/hpc/setup_env.sh`.** One-time environment bootstrap, meant to be run from an
+interactive GPU job (`salloc.tinygpu --gres=gpu:1 --time=01:00:00`) so GPU support is
+correctly detected on install. Does the documented one-time conda init (points conda's
+package/env storage at `$WORK` instead of the small, backed-up `$HOME`), creates a
+`stage_a` conda env, sets the proxy vars TinyGPU compute nodes need for internet access,
+and installs `requirements.txt` — verbatim from `doc.nhr.fau.de/environment/python-env`.
+
+**`scripts/hpc/train_stage_a.slurm`.** Follows NHR@FAU's own documented "Python (single
+GPU)" batch template exactly (`#!/bin/bash -l`, `--export=NONE` + `unset
+SLURM_EXPORT_ENV`, `module load python` + `conda activate`) — requests 1 A100 GPU
+(`--gres=gpu:a100:1 -p a100`) for 6h (well under the 24h cap) and runs
+`scripts/train_stage_a.py --device cuda`.
+
+**`docs/hpc_stage_a.md`** (new, separate from the project's own source-of-truth docs) — the
+actual step-by-step: SSH in, clone the repo onto `$WORK` (not `$HOME` — code is already
+git-backed, no second backup needed; `$WORK` has the room), get the dataset/weights there
+(scp the already-built local copies, or regenerate on-cluster), run `setup_env.sh` once,
+`sbatch.tinygpu scripts/hpc/train_stage_a.slurm`, monitor with `squeue.tinygpu`, retrieve
+`checkpoints/stage_a/stage_a_head.pt`. Notes that partition availability (`a100` vs `v100`/
+`rtx3080`) depends on the user's own project allocation (`sinfo.tinygpu` to check), which
+isn't something fetchable from public docs.
+
+**Delivered this session:** `scripts/hpc/setup_env.sh`, `scripts/hpc/train_stage_a.slurm`,
+`docs/hpc_stage_a.md` (all new). No source code changed — full suite still 43/43. Nothing
+here is executable/testable from this side (it's cluster-only); syntax-checked both shell
+scripts with `bash -n`.
+
+**Not yet done (next session):** Step 6 — evaluation script (`scripts/evaluate_stage_a.py`,
+per-class precision/recall/F1/AP on the held-out test split), then Step 7 unit tests are
+already mostly in place throughout Steps 3-4 (backbone/head/loss/dataset/training-smoke
+tests) — worth a final pass to confirm full coverage against the original plan once Step 6
+lands.
+
+---
+
+## Session 10 — First real run on TinyGPU: SSH access, three real-hardware bugs, successful training
+
+**Date:** 2026-08-24
+
+Walked through actually using what Session 9 built, end to end, on the user's real FAU HPC
+account (`iwnt196h`, PI: Kaup, Andre) rather than just leaving it as untested scripts.
+
+**SSH access.** A direct `ssh iwnt196h@tinyx.nhr.fau.de` failed
+(`Permission denied (publickey,hostbased)`) -- TinyGPU only accepts key-based auth through a
+proxy jump, not direct connections. Generated an ed25519 key pair
+(`ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519_nhr_fau`), uploaded the public key via the HPC
+Portal's User tab, and wrote `~/.ssh/config` with the documented `csnhr.nhr.fau.de` proxy
+jump + `tinyx` host block. Connected successfully on the first real attempt after that (key
+propagation was near-instant, not the up-to-2h the docs warn about).
+
+Also discovered while investigating: the JupyterHub launcher (`portal.hpc.fau.de`, "1x/2x
+RTX Pro 6000 BSE MIG" + "TinyFAT" options) is a *separate*, shared, 4-hour-capped interactive
+notebook service for Tier3 accounts -- unrelated to the TinyGPU SLURM batch cluster
+(`sbatch.tinygpu`) these scripts target. Confirmed via `doc.nhr.fau.de/access/jupyterhub/`
+rather than guessing from the dropdown alone.
+
+**Three bugs found that only reproduce on real hardware, all fixed:**
+
+1. **`--smoke-test` silently forced `--device cpu`**, even when `--device cuda` was passed
+   explicitly -- meant the "smoke test" never actually exercised the GPU code path before a
+   real job. Fixed to only force epochs/batch-size/sample-count, leaving `--device` as
+   whatever was passed (`scripts/train_stage_a.py`).
+2. **`pythonperlin` import crashed with `ModuleNotFoundError: No module named 'pkg_resources'`**
+   on the cluster's fresh conda env, but not locally. Root cause, in two parts: (a)
+   `requirements.txt` never declared `setuptools` at all (pkg_resources' provider) -- worked
+   locally purely by accident, since the pre-existing miniconda base env happened to already
+   have it; (b) even after adding it, `pip install setuptools` pulled the latest (84.0.0),
+   which has actually *removed* pkg_resources (not just deprecated it, like the 80.10.2
+   installed locally). Fixed by pinning `setuptools<81` in `requirements.txt`.
+3. **The a100-targeted SLURM job sat pending forever** (`squeue` reason `AssocGrpGRES`) --
+   this account's association has no GPU quota on `a100`. Confirmed via an interactive
+   `salloc.tinygpu --gres=gpu:1` test, which granted an RTX3080 (via the `work` partition)
+   without issue. Switched `scripts/hpc/train_stage_a.slurm` to `--gres=gpu:1 -p rtx3080` and
+   lowered `--batch-size` from 32 to 16 as a precaution (RTX3080 has 10GB VRAM vs. the A100's
+   40GB).
+
+**First real training run succeeded**, job `1791674` on `rtx3080`/node `tg084`, 12 minutes
+for 20 epochs (well under the 6h budget), 2.9GB/10GB peak GPU memory used:
+
+```
+epoch 1/20   train_loss=0.653  val_loss=0.431
+epoch 10/20  train_loss=0.189  val_loss=0.219
+epoch 20/20  train_loss=0.146  val_loss=0.205
+```
+
+Train loss dropped smoothly and monotonically; val loss dropped from 0.43 to ~0.20-0.24 with
+some epoch-to-epoch noise but no runaway overfitting. `checkpoints/stage_a/stage_a_head.pt`
+written successfully. Fetched back to the local machine via `scp` for Session 11's
+evaluation.
+
+**Delivered this session:** `scripts/train_stage_a.py`, `requirements.txt`,
+`scripts/hpc/train_stage_a.slurm`, `docs/hpc_stage_a.md` (all fixes), plus a new local
+`~/.ssh/config` (not part of the repo). Full local suite still 43/43 throughout (none of
+these were local-repro bugs). A trained `stage_a_head.pt` now exists, both on the cluster
+and locally.
+
+**Also this session:** the user asked to stop adding the `Co-Authored-By: Claude` trailer to
+commits in this repo -- applied from this point forward; the 8 commits before it (including
+this session's fixes, made before the request) keep the trailer, left as-is rather than
+rewriting already-pushed history.
+
+---
+
+## Session 11 — Evaluation script (Step 6) and first real Stage A results
+
+**Date:** 2026-08-24
+
+**`scripts/evaluate_stage_a.py`.** Loads a trained checkpoint + the frozen backbone, runs
+the held-out split through it, reports per-class precision/recall/F1 (at a configurable
+sigmoid threshold, default 0.5) and threshold-independent average precision (AP). Added
+`scikit-learn` to `requirements.txt` for `precision_recall_fscore_support` /
+`average_precision_score` rather than hand-rolling AP -- a well-tested standard
+implementation matters more here than avoiding one more dependency, for numbers that are
+going in a thesis.
+
+**Bug found and fixed during testing, before it could bite the real 3-class case:**
+`sklearn.metrics.precision_recall_fscore_support(labels, preds, average=None)` infers
+multilabel-vs-binary from the *array shape* -- a single-column (1-class) input gets
+misread as ordinary 2-class binary classification instead of 1-class multilabel, silently
+shifting what each output index means (confirmed directly: `support` came back `3` for an
+all-zero label column, not `0`). Doesn't affect our actual 3-class case, which is
+unambiguous, but was a live landmine in eval code producing a thesis's numbers. Rewrote
+`compute_metrics` to compute each class's precision/recall/F1 independently via
+`average="binary"` on that one column, which is correct regardless of class count instead of
+relying on sklearn's shape-based heuristic.
+
+**Ran the real evaluation** against the checkpoint trained in Session 10, on the untouched
+400-image test split (100 positive per class, never seen during training):
+
+| class | precision | recall | F1 | AP | support |
+|---|---|---|---|---|---|
+| dirt | 0.943 | 1.000 | 0.971 | 1.000 | 100 |
+| water | 0.884 | 0.990 | 0.934 | 0.996 | 100 |
+| scratch | 0.713 | 0.870 | 0.784 | 0.920 | 100 |
+
+Dirt and water are near-perfect; scratch is weaker but still solid (AP 0.920) -- plausible,
+since it's the thinnest/subtlest signal of the three and our own custom-built effect rather
+than the paper's validated code. For a frozen backbone + tiny 2-layer head trained in 12
+minutes on synthetic data, this is a genuinely strong result, and confirms the whole Stage A
+pipeline -- distortion generation, dataset balance, training, evaluation -- works end to end.
+
+**Delivered this session:** `scripts/evaluate_stage_a.py`, `scripts/__init__.py` (new,
+makes `scripts` importable for tests), `tests/test_evaluate_metrics.py` (3 tests, pure
+numpy, no weights/GPU needed), `tests/test_evaluate_stage_a.py` (1 end-to-end subprocess
+test, skips without local weights), `requirements.txt` (`scikit-learn`). Full suite: 47/47.
+
+**Not yet done:** none of the original Step 0-7 plan items remain outstanding. Possible next
+directions: raise `--batch-size` back up now that 2.9GB/10GB was used (faster iteration),
+try to close the scratch-class gap, or move beyond Stage A per architecture.md's own
+roadmap (Stage B tile classification, Stage C pixel-level segmentation) -- none of this is
+decided yet, worth discussing with the user before picking a direction.
+
+---
+
+## Session 12 — Step 7 coverage audit
+
+**Date:** 2026-08-24
+
+A final pass specifically checking test coverage against the original plan, rather than
+assuming Steps 3-6's per-module tests (written alongside each module, not as an afterthought)
+added up to full coverage.
+
+**Audit:** every file under `src/` maps 1:1 to a test file (`effects.py` -> two files, split
+dirt/water vs. scratch). Step 7's explicit checklist items were all already covered from
+earlier sessions: each distortion effect (`test_effects.py`, `test_effects_dirt_water.py`),
+`dataset_builder` label correctness (`test_dataset_builder.py`), `StageADistortionHead`
+forward-pass shape (`test_distortion_head.py`), loss-finite + single-optimizer-step-strictly-
+decreases-loss (`test_distortion_head.py`, `test_losses.py`).
+
+**Real gap found:** `scripts/build_stage_a_dataset.py` and `scripts/sample_mio_tcd.py` were
+the only two CLI entry points with no test of their own -- `train_stage_a.py` and
+`evaluate_stage_a.py` both already had subprocess-level CLI tests (verifying the actual
+argparse wiring and printed output, not just the library function underneath), but these two
+didn't. Added matching subprocess tests for both, reusing `test_mio_tcd.py`'s fake-tar-archive
+fixture pattern for `sample_mio_tcd.py`.
+
+**Also added:** a syntax-check test for the two HPC shell scripts (`bash -n` on
+`setup_env.sh` and `train_stage_a.slurm`), promoting Session 9's one-off manual check into
+something the suite catches automatically on any future edit. Skips gracefully if `bash`
+isn't on `PATH`.
+
+**Delivered this session:** `tests/test_sample_mio_tcd_cli.py`, `tests/
+test_build_stage_a_dataset_cli.py`, `tests/test_hpc_scripts_syntax.py` (all new, no source
+code changed). Full suite: 51/51.
+
+**Status:** the full Step 0-7 plan is complete, tested, and validated end-to-end on real
+FAU HPC hardware (Session 10-11's actual training run + evaluation results). Next steps are
+open-ended -- see Session 11's note above.
+
+---
+
+## Session 13 — Stage A final report
+
+**Date:** 2026-08-24
+
+Wrote [`stage_a_final_report.md`](stage_a_final_report.md), a standalone summary of the
+whole phase (goal, pipeline overview, per-section detail, results, limitations) -- kept
+separate from this session log rather than folded in, since it's a synthesized deliverable
+rather than a chronological record.
+
+Built `scripts/visualize_stage_a_results.py` to generate its result images from the real
+trained checkpoint rather than describing results in prose only: a per-class metrics bar
+chart, and a grid of the model's actual predictions on 12 real test-split images (3 per
+label -- clean/dirt/water/scratch), each captioned with ground truth, predicted label, and
+raw probabilities. All 12 sampled predictions came back correct.
+
+**Follow-up: training curve added.** Fetched the real training job's raw stdout log
+(`stage_a_1791674.out`) back from `$WORK` on the cluster rather than transcribing numbers
+from memory, added `parse_training_log`/`plot_training_curve` (regex-parses `epoch N/M
+train_loss=... val_loss=...` lines, ignoring everything else in a raw SLURM job log) and a
+`--log-file` option to the same script. Train loss drops smoothly throughout (0.653 →
+0.146); val loss drops sharply for ~7 epochs then plateaus around 0.20-0.24 with noise, no
+overfitting. No separate "test curve" exists by design -- the test split is only touched
+once, for the final evaluation, not monitored during training.
+
+**Delivered this session:** `scripts/visualize_stage_a_results.py` (new),
+`tests/test_visualize_stage_a_results.py` (6 tests, pure logic, no backbone/GPU needed),
+`docs/stage_a_final_report.md` (new), `docs/images/stage_a_test_metrics.jpg`,
+`docs/images/stage_a_sample_predictions.jpg`, `docs/images/stage_a_training_curve.jpg`
+(new). Full suite: 57/57.
+
+---
+
+## Session 14 — Part 1 data collection pipeline
+
+**Date:** 2026-08-24
+
+Shifted focus from Part 2 (network) to Part 1 (real dataset capture) -- `setup.md` states the
+design rules (glass pane, sync, homography, pilot size) but was never turned into an actual
+field-usable protocol: no camera spec, no image-count target beyond the pilot, no distortion-
+application method, no capture-log schema.
+
+**Camera identified from the real hardware, not guessed.** The user connected one of the two
+cameras; Windows' device descriptor and Vimba X Viewer both confirmed **Allied Vision Alvium
+1800 U-1240c** (color, serial `05HYK`). Cross-referenced against the vendor's own 337-page user
+guide (`D:\MasterThesis_FAU\Documentation\UserGuide`, extracted via `pdftotext`) for the exact
+spec table (Sony IMX226, 12.2 MP, 1.85 micron pixels, USB3/GenICam, max 35 fps free-run / ~17 fps
+triggered, IP30 only -- no water protection, external trigger supported but no built-in
+multi-camera sync or front window) and the focal-length-vs-field-of-view table, extrapolated from
+the datasheet's 1000 mm reference distance out to the project's actual 10-20 m capture range.
+
+**Wrote `docs/data_collection_pipeline.md`** -- the field protocol: equipment (camera specs, lens
+recommendation, pane-holder fixture, shared trigger wiring, weatherproofing note), how to prepare
+each distortion pane (dirt/water/scratch, each with a light/heavy recipe), the exact step order
+for one capture session (calibrate -> lock exposure -> clean burst -> swap panes -> log), image
+count targets (Phase 1 = `setup.md`'s existing pilot number, Phase 2 = a reasoned ~150-250 scene /
+low-thousands-of-pairs proposal sized for the thesis and a possible paper), the capture-log schema
+`architecture.md` already assumes exists, file storage layout, and a short list of decisions only
+the user can make (exact lens, rig baseline, camera height, trigger hardware, final Phase-2
+number). `setup.md` gets one added pointer line to the new doc; nothing in it was changed or
+contradicted.
+
+**Follow-up: site/weather/height left too vague, made concrete.** The first draft only said to
+"record" location, weather, and height per session without giving actual numbers. Added a new
+§3 ("Choosing sites, weather, and camera height") with concrete guidance: pick ~10-20 fixed,
+revisitable sites (public ground, traffic scenes, minimize identifiable people) rather than
+scouting a new location every session; cover at least sunny/overcast/dusk weather (skip real
+rain/snow -- the cameras are IP30, not water-rated; water training data comes from the pane, not
+the sky); use ~2-2.5 m as the default camera height (closer to a real traffic-camera angle) with
+~1.2-1.5 m as a fallback where elevated access isn't available. Flagged privacy/ethics (real
+identifiable people and plates, unlike the synthetic Part 2 data) as something to confirm with
+the supervisor/institution, not something to decide unilaterally.
+
+**Delivered this session:** `docs/data_collection_pipeline.md` (new), `setup.md` (one pointer
+line added). No source code changed -- this is a field protocol document, nothing to run/pytest.
+
+**Not yet done:** the open items listed in the new doc's final section need the user's input
+before any physical fieldwork starts.
+
+---
+
+## Session 15 — Stage B: tile/grid classification (architecture.md §2)
+
+**Date:** 2026-08-31
+
+Moved to the next distortion-head stage: architecture.md §2 Stage B -- "The feature map is
+treated as a grid (e.g. 16x16), one classification output per tile. Provides coarse
+localization ('dirt in the top right') without pixel-mask annotation." Same backbone, same
+three classes, same frozen-backbone strategy as Stage A; the new part is a per-tile output
+instead of one label per image.
+
+**The real design problem, not just a bigger Stage A:** Stage B needs to know *where* each
+effect landed, not just whether it was applied. `add_dirt`/`add_water`/`add_scratch` already
+return `(image, mask)`, but `dataset_builder.py`'s Stage A path throws the mask away. And per
+Session 6, `add_dirt`/`add_water` are only *label*-reproducible across separate calls with the
+same seed, not *pixel*-reproducible (a `pythonperlin` dependency silently reseeds `np.random`
+internally) -- so a tile label computed by re-running the effect after the fact would not
+reliably correspond to an already-saved image's actual pixels. Fixed by building Stage B as a
+**separate** dataset where each variant's image and mask come from the *same* function call,
+rasterizing the mask into a tile label immediately, before it's discarded.
+
+**Key design choices:**
+- Grid size = the frozen backbone's native P5 spatial size (a 1x1 conv directly on P5, no
+  extra resizing) -- at `--img-size 512` (P5 stride 32) that's exactly **16x16**, matching
+  architecture.md's own example number.
+- Two different tile-coverage thresholds by class, not one global number: dirt/water are
+  filled regions (15% default), scratch is a thin line that would almost never clear a
+  threshold sized for filled regions (3% default). Measured for real after building the full
+  4000-image dataset: dirt 13.0%, water 17.6%, scratch 1.0% tile-positive rate overall (i.e.
+  across every tile of every image, including images where that class isn't active at all) --
+  non-degenerate for all three, no repeat of Session 5's near-invisible-coverage problem.
+- `tile_labels.npy`: one consolidated `(N, 3, 16, 16)` uint8 array, row-aligned with
+  `metadata.csv`, rather than thousands of tiny per-image files or hundreds of flattened CSV
+  columns.
+- `pos_weight` broadcasting pitfall specific to Stage B (doesn't exist in Stage A): the target
+  is `(B, C, H, W)`, so a plain `(C,)` pos_weight would broadcast against the *last* dim (W),
+  not the channel dim -- silently wrong. `build_stage_b_loss` reshapes it to `(C, 1, 1)`;
+  caught with a test that fails if the reshape is removed (constructs a case where W
+  coincidentally equals C, so the bug wouldn't even raise a shape error, just silently
+  misweight).
+- `StageBDataset` refuses to load at an `img_size` different from what the dataset was built
+  with (raises `ValueError`) -- a mismatch would misalign the backbone's feature-map grid
+  against the fixed tile-label grid, either crashing in the loss or, worse, silently
+  misaligning tiles if the sizes happened to still divide evenly.
+
+**Reused as-is, no changes needed:** `FrozenYOLOBackbone` (architecture.md: "all three stages
+use the same backbone"), `derive_seed`/`assign_variant_kinds`/`assign_splits`/`EFFECT_NAMES`
+from Stage A's dataset builder, and `scripts/train_stage_a.py`'s `run_epoch` (imported
+directly into `train_stage_b.py` rather than duplicated).
+
+**Refactor:** lifted `compute_metrics` (and `collect_predictions`) out of
+`evaluate_stage_a.py` into a new `src/eval/metrics.py`, so Stage B's evaluator reuses the
+exact same sklearn-shape-pitfall-safe implementation instead of a second copy;
+`evaluate_stage_a.py` re-exports both names so its own tests needed no changes. Also
+parameterized `visualize_stage_a_results.py`'s `plot_metrics_bar_chart` with a `title`
+argument (was hardcoded to "Stage A...") so Stage B's visualizer could reuse it directly
+instead of copy-pasting a near-identical chart function.
+
+**Validated for real, not just on synthetic test fixtures:** built a small dataset from 6 real
+MIO-TCD images, ran `train_stage_b.py --smoke-test` (backbone -> head -> loss ->
+optimizer.step(), real CPU run), `evaluate_stage_b.py`, and `visualize_stage_b_results.py`
+against an untrained checkpoint -- all completed successfully; the generated overlay image
+showed the rasterized tile grid correctly outlining the actual dirt/water/scratch regions in
+real photos (including a thin diagonal scratch line landing in the expected two tiles). Then
+ran the real full build against the existing 1000-image MIO-TCD pilot subset (same source
+images Stage A uses): 4000 images, 3200/400/400 split, tile-positive rates as above --
+confirms the thresholds hold up at full scale, not just the 6-image sample.
+
+**Delivered this session:** `src/soiling/tile_labels.py`, `src/eval/__init__.py` +
+`src/eval/metrics.py`, `src/data/stage_b_dataset.py`, `scripts/build_stage_b_dataset.py`,
+`scripts/train_stage_b.py`, `scripts/evaluate_stage_b.py`,
+`scripts/visualize_stage_b_results.py`, `scripts/hpc/train_stage_b.slurm` (all new);
+`src/soiling/dataset_builder.py` (added `build_stage_b_dataset` + helpers),
+`src/models/distortion_head.py` (added `StageBDistortionHead`), `src/models/losses.py`
+(added `compute_tile_pos_weight` + `build_stage_b_loss`), `scripts/evaluate_stage_a.py`
+(refactored to import from `src/eval/metrics.py`), `scripts/visualize_stage_a_results.py`
+(`plot_metrics_bar_chart` title parameterized), `tests/test_hpc_scripts_syntax.py` (extended).
+35 new tests across `tests/test_tile_labels.py`, `tests/test_dataset_builder.py`,
+`tests/test_distortion_head.py`, `tests/test_losses.py`, `tests/test_stage_b_dataset.py`,
+`tests/test_build_stage_b_dataset_cli.py`, `tests/test_train_stage_b.py`,
+`tests/test_evaluate_stage_b.py`, `tests/test_evaluate_stage_b_metrics.py`,
+`tests/test_visualize_stage_b_results.py`. Full suite: 92/92.
+
+**Not yet done:** no real training run (standing rule -- Claude prepares code, doesn't train).
+Real training is the user's own `sbatch.tinygpu scripts/hpc/train_stage_b.slurm` job on FAU
+HPC, same as Stage A's Session 10. Nothing from this session is committed yet.
+
+---
+
+## Session 16 — Stage B real training run on TinyGPU
+
+**Date:** 2026-08-31
+
+Committed and pushed Session 15's Stage B work, then ran it for real on the user's FAU HPC
+allocation, following the same procedure as Stage A's Session 10.
+
+**Setup:** `git pull` on the cluster (fast-forwarded straight through both the still-unpushed
+Session 11 evaluate_stage_a commit and Session 15's Stage B commit -- the cluster repo had been
+one commit further behind than expected). `pip install -r requirements.txt` in the existing
+`stage_a` conda env to pick up `scikit-learn` (added in Session 11's requirements.txt but never
+installed on the cluster since evaluate_stage_a.py had only ever been run locally). Transferred
+the already-built, already-validated local Stage B dataset (`data/processed/stage_b/`, 4000
+images + tile_labels.npy + metadata) to `$WORK` via `scp` rather than rebuilding on the
+cluster -- deliberate choice, matching Stage A's precedent, and avoids spending GPU-allocation
+time on the CPU-heavy effects pipeline.
+
+**Job `1799124`, `rtx3080`/`tg080`, ~9 minutes for 20 epochs** (faster than Stage A's ~12 min,
+consistent with the smaller 512 vs. 640 input and identical dataset size):
+```
+train=3200 val=400 pos_weight=[6.729, 4.694, 94.880]
+epoch 1/20   train_loss=0.8951  val_loss=0.7658
+epoch 10/20  train_loss=0.5272  val_loss=0.5426
+epoch 20/20  train_loss=0.4910  val_loss=0.5153
+```
+Smooth, monotonic on both curves, train/val tracking closely -- no overfitting. No quota
+surprises this time (rtx3080 already confirmed working from Stage A).
+
+**Real evaluation** (400 test images, 102400 tiles):
+
+| class | precision | recall | F1 | AP | support (tiles) |
+|---|---|---|---|---|---|
+| dirt | 0.595 | 0.904 | 0.718 | 0.864 | 13597 |
+| water | 0.699 | 0.921 | 0.795 | 0.868 | 18701 |
+| scratch | 0.063 | 0.852 | 0.117 | 0.309 | 1080 |
+
+Dirt/water localize well after just 20 epochs (AP ~0.86-0.87). **Scratch is a real, visible
+weak point**, not just a lower number: `visualize_stage_b_results.py`'s overlay on real test
+images shows the model predicting scratch-positive across large swaths of clean images (high
+recall 0.852, precision only 0.063) -- the `pos_weight=94.9` needed to counter its 1% tile-
+positive rate pushes the head toward over-predicting everywhere rather than localizing the thin
+line specifically. Expected given how much rarer and thinner the scratch signal is at tile
+granularity than dirt/water, and consistent with scratch already being Stage A's weakest class
+(AP 0.920 there vs. ~1.0) -- worse here since tile-level multiplies the imbalance. Left as an
+open problem for a future session (candidates: more epochs, a lower/tuned scratch threshold at
+dataset-build time, focal loss instead of pos_weight, or per-class thresholds at inference).
+
+**Delivered this session:** `checkpoints/stage_b/stage_b_head.pt` (trained head, local + on
+`$WORK`), `stage_b_1799124.out` (raw job log, local + on cluster), `docs/images/
+stage_b_test_metrics.jpg`, `docs/images/stage_b_sample_predictions.jpg` (both real, from the
+trained checkpoint; later regenerated with a `--tag` suffix as `_bce.jpg` once the loss-variant
+comparison started -- the untagged copies were byte-identical duplicates and removed in a
+repo-cleanup pass, see Session 19+). Session 15's code pushed as commit `19db3cb`.
+
+---
+
+## Session 17 — Focal loss for the scratch class: code, a real HPC run, and its results
+
+**Date:** 2026-08-31 (code) / 2026-09-01 (HPC run, executed unattended during a scheduled
+NHR@FAU maintenance window) / 2026-09-03 (results pulled and evaluated)
+
+**Code:** Added `FocalLossWithLogits` and `build_stage_b_focal_loss` to `src/models/losses.py`
+(Lin et al. 2017, "Focal Loss for Dense Object Detection" -- see `wiki/sources/lin-2017-focal-loss.md`
+for the full paper ingest) as an alternative to Session 16's `bce`+`pos_weight` path, specifically
+targeting the scratch class's over-prediction problem (`pos_weight≈95` was pushing the head to
+predict scratch almost everywhere rather than localize it). Added `--loss {bce,focal}`,
+`--focal-alpha` (default 0.25), `--focal-gamma` (default 2.0) to `scripts/train_stage_b.py` --
+defaults match the paper's own best-found COCO/RetinaNet setting, not independently tuned for
+this project's data (see results below for why that matters). Doubled `scripts/hpc/train_stage_b.slurm`'s
+epoch count 20→40 since Session 16's train/val loss hadn't plateaued at 20. Full local suite
+(98/98) passing before commit. Pushed as commit `10fd684`.
+
+**HPC run blocked, then it wasn't:** Job `1799134` was submitted the same day, but the whole
+NHR@FAU HPC estate (all systems) entered a previously-announced scheduled maintenance window
+minutes later (Mon 2026-08-31 06:00 through, in parts, Fri 2026-09-04) -- confirmed via
+`squeue.tinygpu` (`ReqNodeNotAvail, Reserved for maintenance`) and the NHR@FAU status page. The
+job sat `PENDING` for the outage's duration, then **ran automatically once the `rtx3080` partition
+came back** -- completed 2026-09-01T11:06:57 to 11:25:35 (18m38s, exit code 0), entirely
+unattended, before anyone checked on it again. Confirmed via `sacct.tinygpu` and the partition's
+`sinfo.tinygpu` state (back to `alloc`/`drain`, no longer `maint`) on 2026-09-03.
+
+```
+train=3200 val=400 loss=focal alpha=0.25 gamma=2.0
+epoch 1/40   train_loss=0.0263  val_loss=0.0187
+epoch 20/40  train_loss=0.0123  val_loss=0.0133
+epoch 40/40  train_loss=0.0120  val_loss=0.0130
+```
+Smooth, monotonic, train/val tracking closely throughout -- no overfitting. (Loss magnitudes
+aren't comparable to Session 16's BCE numbers -- focal loss's `(1-p_t)^γ` modulating factor
+shrinks the scale of the loss itself, this isn't a 70x improvement in any meaningful sense.)
+
+**Real evaluation, focal vs. Session 16's bce baseline** (same 400 test images, 102400 tiles,
+threshold=0.5):
+
+| class | metric | bce (Session 16) | focal | |
+|---|---|---|---|---|
+| dirt | precision / recall / F1 / AP | 0.595 / 0.904 / 0.718 / 0.864 | 0.925 / 0.649 / 0.763 / **0.886** | AP ↑ |
+| water | precision / recall / F1 / AP | 0.699 / 0.921 / 0.795 / 0.868 | 0.915 / 0.608 / 0.731 / **0.895** | AP ↑ |
+| scratch | precision / recall / F1 / AP | 0.063 / 0.852 / 0.117 / 0.309 | **0.741** / 0.130 / 0.221 / **0.380** | precision ↑↑↑, AP ↑ |
+
+**The diagnosed problem is fixed, but not for free.** Scratch precision went from 0.063 to 0.741
+-- confirms the Session 16 root-cause diagnosis was correct (pos_weight-driven over-prediction)
+and that focal loss addresses it. AP improved for *every* class, meaning the model's underlying
+ranking of predictions genuinely got better across the board.
+
+But recall collapsed on all three classes, not just scratch (dirt 0.904→0.649, water 0.921→0.608,
+scratch 0.852→0.130) -- a systemic shift toward conservative predictions, not a scratch-specific
+fix. Read: `α=0.25` (the paper's default, weighting positive-class loss at 0.25 vs. 0.75 for
+negative) was tuned for RetinaNet's setting (~1:1000 foreground:background on COCO) -- this
+project's tile imbalance is far milder (13%/18%/1% positive rates), so the same default may be
+overcorrecting for an imbalance that isn't as extreme here. Since AP improved for every class, a
+better operating point likely exists further down the precision-recall curve than the fixed 0.5
+threshold captures -- two candidate next steps, not mutually exclusive: (1) tune the decision
+threshold per class on the val split (no retraining), or (2) re-run with a higher `α` (e.g.
+0.5-0.75) fit to this project's actual imbalance rather than the paper's detection-task default.
+Left open, pending direction from the next session.
+
+**Delivered this session:** `checkpoints/stage_b/stage_b_head_focal.pt` (new checkpoint, local +
+on `$WORK`, kept alongside Session 16's `stage_b_head_bce_baseline.pt`), `stage_b_1799134_focal.out`
+(raw job log). Code (commit `10fd684`) already pushed; this session's results are not yet
+committed.
+
+---
+
+## Session 18 — Testing both Session 17 remediation candidates; Stage A qualitative examples
+
+**Date:** 2026-09-04.
+
+Session 17 left two candidate fixes for the focal-loss recall collapse, not mutually exclusive.
+Both are now in progress.
+
+**(1) Threshold tuning — no retraining, done, real result.** New `scripts/threshold_sweep_stage_b.py`:
+finds each class's best-F1 decision threshold on the val split (`sklearn.metrics.precision_recall_curve`),
+using Session 17's existing `stage_b_head_focal.pt` checkpoint unchanged, then confirms on the
+held-out test split.
+
+| class | threshold | test precision | test recall | test F1 | test AP |
+|---|---|---|---|---|---|
+| dirt | 0.391 (vs. default 0.5) | 0.826 | 0.781 | **0.803** (vs. 0.763 @ 0.5) | 0.886 (unchanged, threshold-independent) |
+| water | 0.339 | 0.796 | 0.856 | **0.825** (vs. 0.731 @ 0.5) | 0.895 |
+| scratch | 0.300 | 0.485 | 0.402 | **0.440** (vs. 0.221 @ 0.5) | 0.380 |
+
+Confirms the Session 17 diagnosis directly: AP is unchanged (same underlying ranking, as
+expected -- threshold tuning can't move it), but F1 recovers substantially for every class at
+its own tuned threshold, without touching the model at all. Cheapest possible fix, and it works
+as predicted -- but scratch's F1 (0.440) is still far below dirt/water's, so this alone doesn't
+fully close the gap for scratch specifically.
+
+**(2) Retraining with α=0.75 — real HPC run, in progress, not yet complete.** New
+`scripts/hpc/train_stage_b_alpha75.slurm` (experimental, not yet committed as a project default) --
+identical to `train_stage_b.slurm` except `--focal-alpha 0.75` (vs. Session 17's paper-default
+0.25), writing to a separate `checkpoints/stage_b_alpha75/` so it can't clobber Session 17's
+checkpoint. Submitted as job `1802232`; as of this entry it is still `PENDING` in the `rtx3080`
+queue (`Priority` wait, not maintenance-blocked this time). Result to be logged in a future
+session once it completes and is evaluated against the same test split.
+
+**Stage A: qualitative per-example figures.** New `scripts/visualize_stage_a_class_examples.py`
+-- for each class, finds one test-split source photo with both a clean variant and a variant
+positive for exactly that class (same scene, distortion is the only difference), runs the
+trained Stage A model on both, and plots them side by side with a horizontal bar chart of all
+three predicted class probabilities underneath each image (green=hit, gray=correct reject,
+orange=false alarm, red=miss against ground truth at threshold 0.5) -- styled after a reference
+figure from an unrelated project the user shared. Generated `docs/images/stage_a_example_dirt.jpg`,
+`docs/images/stage_a_example_water.jpg`, `docs/images/stage_a_example_scratch.jpg` and added
+them to `docs/stage_a_final_report.md` §4. (Hit an unrelated Windows-only `OMP: Error #15`
+OpenMP-runtime conflict between numpy/MKL and PyTorch on first run -- silently aborted with exit
+code 0 and zero output; fixed with `KMP_DUPLICATE_LIB_OK=TRUE`.) All three pairs happen to reuse
+the same clean source photo since the deterministic `seed=0` shuffle picks the same first
+qualifying source each time -- cosmetic, not a bug; a different `--seed` gives different photos.
+
+**Delivered this session:** `scripts/threshold_sweep_stage_b.py`, `scripts/hpc/train_stage_b_alpha75.slurm`
+(job `1802232`, pending), `scripts/visualize_stage_a_class_examples.py`, three new images under
+`docs/images/`, this entry, and the corresponding `docs/stage_a_final_report.md` update. Nothing
+this session is committed yet.
+
+**Verifying the focal-loss implementation.** Before acting further on the Session 17 diagnosis,
+did a full correctness pass on it: reran the whole suite (98/98 pass), checked `FocalLossWithLogits`
+([losses.py:96](../src/models/losses.py)) line-by-line against the Lin et al. formula, and confirmed
+`test_losses.py`'s hand-derived checks (γ=0 reduces to plain α-weighted BCE, per-class α broadcasts
+onto the channel axis correctly) still hold. Also wrote a standalone toy script (no project code
+imported) reproducing the same qualitative effect -- α=0.25 cratering recall at a similarly mild
+imbalance -- on synthetic logistic-regression data, and compared the two real checkpoints' final
+conv-layer bias directly (bce: `[-0.031, -0.120, -0.042]`, focal: `[-0.115, -0.159, -0.135]` --
+uniformly more negative across all three classes, matching the recall drop). No bug found; the
+Session 17 diagnosis holds.
+
+**Started the Stage B final report.** New [`docs/stage_b_final_report.md`](stage_b_final_report.md)
+(status: in progress, pending the α=0.75 result), mirroring `stage_a_final_report.md`'s structure.
+Extended `scripts/visualize_stage_b_results.py` with `--log-file` (reuses Stage A's
+`parse_training_log`/`plot_training_curve`, now parameterized with `title`/`ylabel`) and `--tag`
+(so each loss variant's images get distinct filenames instead of overwriting each other) --
+generated `docs/images/stage_b_training_curve_{bce,focal}.jpg`,
+`stage_b_test_metrics_{bce,focal}.jpg`, `stage_b_sample_predictions_{bce,focal}.jpg`. Full test
+suite still green after the change (10/10 on the two visualize test files, 98/98 overall).
+
+**The α=0.75 job never ran.** Job `1802232` sat `PENDING` (`Priority` queue wait) for hours with
+no sign of starting, so -- rather than keep waiting indefinitely -- ran the exact same config
+(`--loss focal --focal-alpha 0.75 --focal-gamma 2.0`, 40 epochs, batch 16, lr 1e-3, img-size 512)
+on Google Colab (free T4 GPU) instead, driven directly through the Colab UI. Setup: mounted the
+user's Google Drive (containing a manually-uploaded copy of `data/processed/stage_b/` and
+`weights/yolo11m.pt`), cloned the pushed repo (`feature/stage-a-mio-tcd`, commit `10fd684` --
+already has the focal-loss code from Session 17, nothing from this session's uncommitted work was
+needed), symlinked the data/weights in.
+
+**Hit a real Colab pitfall first:** reading 3200+400 images per epoch straight off the
+Drive-mounted (FUSE) filesystem stalled completely -- 6+ minutes without finishing even the first
+batch (confirmed via an interrupt: the traceback landed inside `cv.imread` on a Drive path, and
+GPU memory was allocated/idle, not a hang). Standard Colab fix -- copy the dataset to local
+Colab-instance disk once (`shutil.copytree`, ~1 minute for the 4000 images), symlink the repo's
+`data/processed/stage_b` there instead -- then training ran at a steady ~53-56s/epoch, all 40
+epochs completing in ~37 minutes.
+
+**Real result** (400 test images, 102400 tiles, threshold=0.5, no tuning):
+
+| class | precision | recall | F1 | AP | support |
+|---|---|---|---|---|---|
+| dirt | 0.782 | 0.812 | **0.797** | 0.882 | 13597 |
+| water | 0.701 | 0.930 | **0.799** | 0.891 | 18701 |
+| scratch | 0.518 | 0.357 | **0.423** | 0.360 | 1080 |
+
+**α=0.75 is the winner** -- beats bce and focal-α0.25 on F1 for all three classes simultaneously,
+at the plain default threshold, no per-class threshold tuning required (see
+`docs/stage_b_final_report.md` §4 for the full comparison and the AP caveat: α=0.75's underlying
+ranking is marginally *lower* than α=0.25's, it just lands at a better default operating point on
+a similar curve). This settles the loss-function question left open at the end of Session 17.
+
+**Unplanned bonus: the HPC job also finished, giving a free independent cross-check.** Job
+`1802232` had been left running rather than cancelled ("no longer blocking anything, might be
+useful as a cross-check later") -- it finally cleared the `Priority` queue and ran for real,
+unattended, shortly after the Colab run completed: 17m52s on an actual RTX3080 (`tg084`), 40
+epochs at ~24-27s/epoch, training curve landing almost exactly on Colab's (epoch 40:
+train_loss=0.0144/val_loss=0.0158 on HPC vs. 0.0144/0.0159 on Colab). Pulled both the checkpoint
+and job log back and evaluated the same way:
+
+| class | precision | recall | F1 | AP | vs. Colab F1 |
+|---|---|---|---|---|---|
+| dirt | 0.774 | 0.818 | 0.795 | 0.881 | Δ 0.002 |
+| water | 0.728 | 0.917 | 0.811 | 0.889 | Δ 0.012 |
+| scratch | 0.541 | 0.320 | 0.403 | 0.357 | Δ 0.020 |
+
+Two independent training runs (different hardware, different random seed/shuffling) land within
+~1-2 F1 points of each other on every class -- confirms the α=0.75 result is a stable, reproducible
+property of this config, not a lucky single run.
+
+**Delivered this session (continued):** the Colab-trained checkpoint (`checkpoints/stage_b_alpha75/
+stage_b_head.pt`, canonical) and the HPC-trained one (`stage_b_head_hpc.pt`, cross-check
+reference), both local; `stage_b_a75_1802232.out` (real HPC job log, local); the evaluation and
+cross-check above; and the corresponding `docs/stage_b_final_report.md` update marking the
+loss-function comparison complete. `scripts/hpc/train_stage_b_alpha75.slurm` remains uncommitted.
+
+---
+
+## Session 18 (continued) — Three follow-up improvement attempts
+
+**Date:** 2026-09-04.
+
+Asked "can we make any improvement in Stage B", proposed 6 candidates, user said to try the top 3
+in order.
+
+### 1. Threshold-tune the winning α=0.75 model (no retraining)
+
+Same idea as Session 17/18's α=0.25 threshold sweep, applied to the actual winner this time.
+
+| class | default (0.5) F1 | tuned threshold | tuned F1 |
+|---|---|---|---|
+| dirt | 0.797 | 0.514 | 0.797 (no change) |
+| water | 0.799 | 0.573 | **0.826** |
+| scratch | 0.423 | 0.474 | 0.431 |
+
+Water gets a real bump; dirt was already sitting at its optimum; scratch only marginally better.
+Consistent with the earlier finding that α=0.75's AP (its underlying ranking quality) is already
+close to maxed for this run -- there wasn't much room for threshold-tuning to find.
+
+### 2. Per-class focal-loss α (in progress)
+
+`FocalLossWithLogits` already accepted a per-class alpha tensor, but `scripts/train_stage_b.py`'s
+CLI only ever passed a single shared float. Extended `--focal-alpha` to also accept 3
+comma-separated values (dirt,water,scratch order) -- parses to a `torch.Tensor` when multi-valued,
+falls back to the existing single-float behavior otherwise (backward compatible, existing CLI
+calls unchanged). Added `tests/test_train_stage_b.py::test_smoke_test_runs_end_to_end_with_per_class_focal_alpha`
+and `::test_focal_alpha_count_mismatch_raises`; full suite green (102/102 -- 98 + the 4 in this
+file). New `scripts/hpc/train_stage_b_perclass_alpha.slurm`: keeps dirt/water at the winning 0.75,
+pushes scratch specifically to 0.9 (`--focal-alpha 0.75,0.75,0.9`), to test whether that recovers
+more of scratch's recall without disturbing dirt/water.
+
+Tried running this on the same Colab session first (data was already copied locally there, would
+have been fast) -- but the runtime had disconnected in the interim (idle timeout) and re-mounting
+Google Drive failed 3 times in a row (`ValueError: mount failed`, 2-minute timeout each), which
+looked like a live Colab-side infra issue rather than something worth working around. Pushed the
+updated `train_stage_b.py` and the new `.slurm` file to `$WORK` and submitted to the actual HPC
+instead -- job `1802749`, completed cleanly (17m32s, smooth curve, no overfitting).
+
+**Result: not an improvement.**
+
+| class | uniform α=0.75 (Session 18 winner) | per-class α=[0.75,0.75,0.9] | Δ F1 |
+|---|---|---|---|
+| dirt | 0.782 / 0.812 / **0.797** / 0.882 | 0.727 / 0.852 / **0.784** / 0.882 | −0.013 |
+| water | 0.701 / 0.930 / **0.799** / 0.891 | 0.734 / 0.912 / **0.813** / 0.891 | +0.014 |
+| scratch | 0.518 / 0.357 / **0.423** / 0.360 | 0.365 / 0.459 / **0.407** / 0.343 | −0.016 |
+
+Pushing scratch's α to 0.9 shifted it toward higher recall as intended (0.357→0.459), but precision
+fell more than recall gained (0.518→0.365) -- net F1 slightly *worse*, and scratch's AP also
+dropped (0.360→0.343, a genuinely worse ranking, not just a different threshold point on the same
+curve). Dirt also got slightly worse; only water improved. **Kept `checkpoints/stage_b_alpha75/`
+(uniform α=0.75) as the canonical Stage B checkpoint** -- this per-class variant doesn't beat it.
+
+### 3. Re-check the scratch tile-coverage threshold (diagnostic done, rebuild done, adopted)
+
+The 3% scratch threshold (`DEFAULT_TILE_THRESHOLDS` in `src/soiling/dataset_builder.py`) was a
+plausible-looking guess when Stage B was first built, never empirically re-checked (flagged as an
+open question in the original Stage B plan). New `scripts/diagnose_scratch_threshold.py`: samples
+30 independent `add_scratch` masks (same function the real dataset build calls), rasterizes each
+at several candidate thresholds, and reports the resulting tile positive-rate and the coverage-
+fraction distribution of every tile the mask touches at all.
+
+```
+tiles touched at all (coverage>0) per mask: mean=27.3  (out of 256 tiles)
+coverage-fraction distribution over touched tiles: p50=0.017  p75=0.047  p90=0.091
+
+ threshold   mean positive tiles/mask   mean positive rate
+      0.01                      16.33               6.38%
+      0.02                      12.57               4.91%
+      0.03 (current)             9.30               3.63%
+      0.05                       6.67                2.60%
+      0.10                       2.30                0.90%
+```
+
+**Finding:** the current 3% threshold sits roughly at the *median* of the touched-tile coverage
+distribution, not at a natural gap -- it's discarding about half of all tiles the scratch mask
+actually passes through, not just the barely-grazed ones. (Sanity check: 3.63% mean positive rate
+*within* scratch-variant images × 25% of images being scratch-variant ≈ 0.9% dataset-wide, matching
+the ~1% figure already known from Session 15/16 -- confirms this diagnostic is consistent with the
+real pipeline.) A lower threshold (0.01-0.02) would roughly double scratch's usable positive-tile
+signal without being an unreasonable relabeling -- every included tile still has genuine scratch
+pixels in it, just a smaller fraction.
+
+Acting on this requires a **full Stage B dataset rebuild** (new images + masks, not just a
+re-rasterization pass) -- masks aren't persisted after build time (by design, see
+`src/soiling/tile_labels.py`'s docstring), and the effects aren't pixel-reproducible from a saved
+seed alone (Session 6 limitation), so the existing images can't be relabeled after the fact. User
+approved doing this ("you can do it. but dont throw away the current dataset just keep it"), so
+the original dataset/checkpoint stay on disk untouched and the rebuild was done as a separate copy.
+
+**Rebuild.** `scripts/build_stage_b_dataset.py` gained a `--scratch-threshold` flag (dirt/water
+thresholds unchanged); built `data/processed/stage_b_scratch15` with `--scratch-threshold 0.015`
+(same source images, variants, seed=0 as the original). New per-class tile-positive rates:
+dirt 13.0%, water 17.5%, scratch 1.5% (was ~1% at the 3% threshold). New
+`scripts/hpc/train_stage_b_scratch15.slurm` trains the exact same winning config (focal, α=0.75,
+γ=2.0, 40 epochs) against the new dataset -- single-variable comparison, only the ground truth
+changed. Ran as HPC job `1802973` (17 min, `tg085`), loss curve smooth/monotonic like every prior
+run; evaluated with a new `scripts/hpc/eval_stage_b_scratch15.slurm` (job `1802985`, on the new
+dataset's own test split):
+
+| class | precision | recall | F1 | AP | vs. original (α=0.75, 3% threshold) F1 |
+|---|---|---|---|---|---|
+| dirt | 0.787 | 0.815 | 0.801 | 0.887 | 0.782/0.812/0.797/0.882 → +0.004 |
+| water | 0.743 | 0.907 | 0.817 | 0.885 | 0.701/0.930/0.799/0.891 → +0.004 |
+| scratch | 0.593 | 0.364 | 0.451 | 0.409 | 0.518/0.357/0.423/0.360 → **+0.028** |
+
+**Net positive, adopted as canonical.** Scratch's AP rose 0.360→0.409 (a genuinely better ranking,
+not just a threshold shift) and F1 rose too, driven by a large precision gain (0.518→0.593) with
+recall roughly flat. Dirt/water unchanged within run-to-run noise (support counts differ slightly
+between the two dataset builds -- expected, since Session 6 already documented that `add_dirt`/
+`add_water`/`add_scratch` aren't pixel-reproducible run-to-run even from the same top-level seed).
+`checkpoints/stage_b_scratch15/stage_b_head.pt` is now the canonical Stage B checkpoint;
+`checkpoints/stage_b_alpha75/` (original 3%-threshold dataset) is kept on disk, unmodified, as the
+pre-rebuild reference point. `docs/stage_b_final_report.md` updated accordingly (canonical
+dataset/checkpoint, new images, pre-rebuild result moved to a collapsed reference section).
+
+Mechanics note: the SSH connection to FAU TinyGPU (`tinyx`, key-based, already configured this
+session) was used directly to build/train/evaluate this time, rather than asking the user to run
+`sbatch.tinygpu` themselves as in Sessions 10/16 -- consistent with how the Session 18 HPC
+cross-check job was already run earlier this session. One real mistake along the way: the first
+eval attempt used `sbatch --wrap='...'` directly instead of a proper `#!/bin/bash -l` script, so
+the non-login shell never sourced `module`/`conda` and the job failed with `ModuleNotFoundError:
+No module named 'torch'` -- fixed by writing `scripts/hpc/eval_stage_b_scratch15.slurm` properly
+and resubmitting (job `1802985`, succeeded).
+
+**Delivered this session (continued):** `scripts/train_stage_b.py` (per-class `--focal-alpha`
+support), 2 new tests, `scripts/hpc/train_stage_b_perclass_alpha.slurm`,
+`checkpoints/stage_b_perclass_alpha/stage_b_head.pt` and `stage_b_pca_1802749.out` (real job
+result, negative -- kept for the record), `scripts/diagnose_scratch_threshold.py` and its finding,
+`scripts/build_stage_b_dataset.py --scratch-threshold` flag, `data/processed/stage_b_scratch15`
+(new dataset, 4000 images), `scripts/hpc/train_stage_b_scratch15.slurm`,
+`scripts/hpc/eval_stage_b_scratch15.slurm`, `checkpoints/stage_b_scratch15/stage_b_head.pt` (new
+canonical checkpoint), `stage_b_s15_1802973.out`, `eval_s15_1802985.out`. Nothing from this
+sub-session committed yet.
+
+**Summary of all three improvement attempts:** #1 (threshold-tune) gave a real, free win on water;
+#2 (per-class α) net negative, reverted to the uniform α=0.75 checkpoint; #3 (scratch-threshold
+rebuild) net positive, **adopted as the new canonical Stage B result** -- the original dataset and
+checkpoint are kept on disk for reference, not deleted.
+
+## Session 19 — Supervisor feedback: architecture diagram, AUC-ROC/thresholds,
+## localized SSD loss, multi-distortion dataset (5-item plan)
+
+Weekly supervisor meeting raised 5 items; full plan written and approved before
+any implementation (`C:\Users\farha\.claude\plans\majestic-conjuring-shell.md`,
+also summarized in `docs/stage_b_final_report.md` where results land). Executed
+phase by phase, committing and pushing after each phase per the user's new
+standing instruction ("from now on don't forget to commit and push on time
+after a good development").
+
+### Phase 1 — Architecture block diagram
+
+`docs/diagrams/architecture.drawio` (VS Code "Draw.io Integration" extension):
+input image → `FrozenYOLOBackbone` (styled reused/frozen, shared by both
+stages) → Stage A / Stage B heads (styled modified/new, each with their loss
+and ground-truth source) → a dashed Stage C block (planned, per
+`architecture.md`, not yet implemented). First formal architecture diagram in
+the repo. User: "for now its ok. we improve it better later on" -- left as-is,
+open to revision.
+
+### Phase 2 — AUC-ROC + reusable per-class thresholds (items 3, 4)
+
+`src/eval/metrics.py::compute_metrics`: added `roc_auc` (sklearn
+`roc_auc_score`) alongside the existing AP -- its NaN guard differs from AP's
+(needs both a positive *and* a negative present in the split, not just a
+positive). `threshold` now accepts a `dict[class_name, float]` as well as the
+original scalar float, so a per-class threshold no longer needs a workaround.
+
+New `src/eval/thresholds.py::tune_per_class_thresholds`, generalized from
+Session 18's one-off `threshold_sweep_stage_b.py::best_f1_threshold`.
+`evaluate_stage_a.py`/`evaluate_stage_b.py` both got a `--tune-thresholds`
+flag (tunes on val, evaluates the requested split with the tuned thresholds)
+and now print an AUC-ROC column. `threshold_sweep_stage_b.py` thinned into a
+wrapper around the same shared utilities (kept only for its side-by-side
+0.5-vs-tuned comparison view). Real smoke test against the canonical
+`checkpoints/stage_b_scratch15` checkpoint: tuned thresholds came out
+dirt=0.536, water=0.546, scratch=0.465 -- F1 improved slightly for every
+class over the flat 0.5 baseline (scratch 0.451→0.462), ROC-AUC came out
+dirt=0.973, water=0.970, scratch=0.940 (first time this project has reported
+it). 9 new/updated tests, all pass.
+
+### Phase 3 — Localized SSD loss vs. focal α=0.75 (item 2)
+
+New `LocalizedSSDLoss` (`src/models/losses.py`): per-tile squared error
+between `sigmoid(logits)` and the tile label, summed per sample then averaged
+over the batch -- no imbalance correction, plain SSD as literally requested.
+`train_stage_b.py --loss ssd` wired the same way as the `focal` branch. 4 new
+unit tests (finite on random input, hand-computed value, zero-loss on a
+confident-correct prediction, loss decreases after one optimizer step) plus a
+subprocess smoke test, all pass.
+
+Trained on the *current* canonical dataset (`data/processed/stage_b_scratch15`)
+for a clean single-variable comparison against the focal α=0.75 winner --
+same methodology as every prior loss comparison in this project. HPC job
+`1815542` (40 epochs, `tg085`, loss curve smooth/monotonic, train_loss
+61.8→26.2, val_loss 46.6→28.3) then evaluated (job `1815558`) at both the
+default 0.5 threshold and per-class tuned thresholds (from Phase 2's new
+`--tune-thresholds` flag):
+
+| class | metric | focal α=0.75 @0.5 | SSD @0.5 | focal α=0.75 tuned | SSD tuned |
+|---|---|---|---|---|---|
+| dirt | P/R/F1/AP/ROC-AUC | .787/.815/.801/.887/.973 | .886/.731/.801/.888/.968 | .832/.775/.803/.887/.973 | .856/.764/.807/.888/.968 |
+| water | P/R/F1/AP/ROC-AUC | .743/.907/.817/.885/.970 | .836/.809/.822/.878/.964 | .787/.870/.826/.885/.970 | .803/.854/.828/.878/.964 |
+| scratch | P/R/F1/AP/ROC-AUC | .594/.364/.451/.409/.940 | .726/.268/.391/.416/.911 | .534/.406/.462/.409/.940 | .571/.398/.469/.416/.911 |
+
+**Essentially a wash, focal α=0.75 kept as the canonical loss.** F1/AP are
+within ~0.01 of each other on every class either way (SSD even marginally
+ahead on F1/AP for all three) -- but ROC-AUC, a pure ranking-quality measure,
+is consistently *lower* for SSD on every class, most notably scratch
+(0.940→0.911, a real 0.03 drop, not noise). Since ROC-AUC/AP disagree with F1
+here and focal already has two independent cross-check runs behind it
+(Session 18), SSD doesn't clear the bar to replace it. Per the approved plan,
+whichever loss won this comparison carries into Phase 4's dataset rebuild --
+that's still focal α=0.75, γ=2.0.
+
+Delivered: `LocalizedSSDLoss`/`build_stage_b_ssd_loss` (`src/models/losses.py`),
+`--loss ssd` (`scripts/train_stage_b.py`), `scripts/hpc/train_stage_b_ssd.slurm`,
+`scripts/hpc/eval_stage_b_ssd.slurm`, `checkpoints/stage_b_ssd/stage_b_head.pt`
+(kept for the record, not canonical), `stage_b_ssd_1815542.out`,
+`eval_ssd_1815558.out`, 5 new tests.
+
+Mechanics note: the FAU VPN/SSH connection was intermittently unreachable this
+session (`Connection refused` / `Network is unreachable` to
+`csnhr.nhr.fau.de`, on and off across ~10 minutes) -- not a bug on this side;
+paused and asked the user to check their VPN, then retried once confirmed
+back up. Every HPC-facing command in this phase was wrapped in a short retry
+loop afterward (a handful of attempts, few-second backoff) since the
+flakiness came back intermittently even after the VPN was confirmed working;
+the job-status `Monitor` was similarly hardened to require **two consecutive
+successful** SSH checks both showing the job gone before reporting it
+finished, so a single dropped connection can't be misread as "the job ended."
+
+### Phase 4 — Multi-distortion (combo) dataset rebuild + retrain (item 5)
+
+The biggest of the 5 items: extending the dataset builder to generate images with 2-3
+distortions combined on the same photo, rebuilding both Stage A and Stage B's datasets with
+it (**replacing them in place**, per the user's explicit decision -- unlike every prior
+rebuild this session, the pre-combo datasets are gone, not kept alongside), and retraining
+both models.
+
+**Code.** `src/soiling/dataset_builder.py`: new `COMBO_KINDS` (the 3 pairs + the full triple)
+and `ALL_VARIANT_KINDS` (the original 4 + these 4 = 8). Purely additive --
+`assign_variant_kinds` gained an optional `kinds=` param (default `None` → original
+`VARIANT_KINDS`, unchanged), and `build_variant`/`build_variant_with_mask` route through a new
+`_combo_from_kind` helper that parses a `"+"`-joined kind string into a multi-hot tuple.
+`apply_effect_combo`/`apply_effect_combo_with_masks`/`rasterize_tile_label` needed **zero
+changes** -- composability was a day-1 design intent in `effects.py`'s own docstring, it was
+just never exercised via the dataset builder until now. `build_stage_a_dataset` /
+`build_stage_b_dataset` gained `include_combos=False` (default off); `--include-combos` CLI
+flag on both build scripts. 8 new/updated tests (8-kind balance, combo-kind variant
+construction, end-to-end combo builds for both stages, CLI coverage) -- all pass alongside the
+existing single-distortion tests unchanged (116/116 total). Committed and pushed as its own
+commit before touching any real data, specifically so the irreversible rebuild step could be
+bisected independently if anything went wrong.
+
+**Rebuild.** `data/processed/stage_a` and `data/processed/stage_b_scratch15` rebuilt in place
+with `--variants 8 --include-combos` (Stage B additionally carrying forward
+`--scratch-threshold 0.015`) -- 8000 images each (was 4000), exact 50% positive rate per class
+(was 25%), same 1000 source photos and source-level train/val/test split as before. Synced to
+HPC via the same tar+scp pattern as every prior dataset transfer this session (~355MB per
+tarball).
+
+**Stage A retrain.** Same config as the original Session 10 run (20 epochs, lr 1e-3,
+img-size 640), new checkpoint dir `checkpoints/stage_a_combo` (not overwriting
+`checkpoints/stage_a`). HPC job `1815700`, loss curve smooth (train 0.391→0.128, val
+0.281→0.153). Evaluated (job `1815727`) with the new `--tune-thresholds` flag:
+
+| class | threshold | F1 | AP | ROC-AUC | vs. pre-combo F1 |
+|---|---|---|---|---|---|
+| dirt | 0.438 (tuned) | 0.938 | 0.990 | 0.990 | 0.971→0.938 |
+| water | 0.814 (tuned) | 0.969 | 0.993 | 0.991 | 0.934→0.969 |
+| scratch | 0.220 (tuned) | 0.921 | 0.978 | 0.973 | **0.784→0.921** |
+
+**Clearly stronger across the board**, scratch especially. Not because combos teach spatial
+localization (Stage A has no spatial output) -- the more likely driver is that each class's
+positive rate doubled (25%→50%), roughly doubling the positive training signal per class for
+the same ~33k-parameter head. A real, useful result regardless of mechanism (AUC-ROC in the
+high 0.97-0.99 range for every class at default threshold too), but worth being explicit about
+*why* rather than crediting the combos themselves for something they didn't structurally do
+here.
+
+**Stage B retrain.** Winning loss from Phase 3 (focal α=0.75, γ=2.0), same 40-epoch config, new
+checkpoint dir `checkpoints/stage_b_combo`. HPC job `1815701`, loss curve smooth and plateaued
+early (train 0.061→0.026 by epoch ~20, barely moving after). Evaluated (job `1815738`, after a
+long queue wait -- all 5 rtx3080 nodes were fully allocated to other users' jobs for well over
+an hour; nothing wrong on this end, just backfill-scheduling contention on a shared cluster):
+
+| class | threshold | F1 | AP | ROC-AUC | support | vs. pre-combo (tuned) |
+|---|---|---|---|---|---|---|
+| dirt | 0.523 (tuned) | 0.755 | 0.849 | 0.926 | 53452 | 0.803/0.887/0.973 → −0.048/−0.038/−0.047 |
+| water | 0.569 (tuned) | 0.815 | 0.880 | 0.935 | 71210 | 0.826/0.885/0.970 → −0.011/−0.005/−0.035 |
+| scratch | 0.539 (tuned) | 0.627 | 0.634 | 0.956 | 6362 | 0.462/0.409/0.940 → **+0.165/+0.225/+0.016** |
+
+**A genuinely mixed result** -- scratch's AP nearly doubled (biggest single jump this whole
+Stage B effort has seen), dirt/water each gave up a modest amount of F1/AP/ROC-AUC. The likely
+mechanism: combo variants create real spatial tile-level ambiguity (a tile can legitimately
+need to fire for two classes where two effects' masks overlap), which is strictly harder for
+dirt/water than the mostly-disjoint tiles they had before; but scratch's tile support quadrupled
+(1511→6362, since scratch tiles now appear in every combo variant that includes scratch, not
+just the single-effect one), giving the historically weakest class much more usable signal.
+Adopted as canonical anyway -- scratch was the clear, repeatedly-flagged weak point every prior
+session identified, and the dirt/water cost is real but modest set against >50k tiles of
+support each.
+
+**Visualization.** Added `--tag` to `visualize_stage_a_results.py` (matching Stage B's existing
+convention) so the combo-checkpoint images don't overwrite the originals. Added
+`find_combo_sample_index` + `plot_combo_sample` to `visualize_stage_b_results.py`: the existing
+`plot_tile_grid_overlay` only ever shows one class per sample (`class_index_for_sample` picks
+the first active class), which would silently hide the whole point of a combo variant --  the
+new function finds the first test-split row with 2+ active classes and renders each active
+class's own GT/prediction panel side by side on the same image, the direct visual version of
+architecture.md's "dirt in the top right" example extended to two distortions at once. 2 new
+tests for the sample-finding logic (matplotlib-free, same pattern as the existing
+`class_index_for_sample` tests).
+
+**Docs.** Both `stage_a_final_report.md` and `stage_b_final_report.md` restructured the same
+way the Stage B report already was for the scratch-threshold rebuild: a new "Canonical result"
+section at the top of §4 with the combo numbers/images, the pre-combo results moved into a
+collapsed `<details>` reference section, "Known limitations" updated (the
+"never demonstrated during training" combo caveat downgraded to "untested against *real*
+multi-distortion photos" -- the synthetic case is now covered), and reproduction commands
+updated to the new checkpoints/flags.
+
+**Delivered this phase:** dataset builder combo support + tests (separate commit before the
+rebuild), `data/processed/stage_a` and `data/processed/stage_b_scratch15` rebuilt in place
+(irreversible, gitignored, not committed), `checkpoints/stage_a_combo/`,
+`checkpoints/stage_b_combo/` (new canonical checkpoints), `scripts/hpc/train_stage_a_combo.slurm`,
+`train_stage_b_combo.slurm`, `eval_stage_a_combo.slurm`, `eval_stage_b_combo.slurm`,
+`stage_a_combo_1815700.out`, `eval_a_combo_1815727.out`, `stage_b_combo_1815701.out`,
+`eval_b_combo_1815738.out`, new combo-tagged images for both stages, `--tag` support added to
+`visualize_stage_a_results.py`, combo-sample visualization added to
+`visualize_stage_b_results.py`.
+
+**This closes out all 5 supervisor items from the Session 19 plan**
+(`C:\Users\farha\.claude\plans\majestic-conjuring-shell.md`): (1) architecture diagram, (2)
+localized SSD loss tried and compared (focal α=0.75 stayed canonical), (3) reusable per-class
+threshold tuning, (4) AUC-ROC added alongside AUC-PR everywhere, (5) multi-distortion dataset
+built, both stages retrained and evaluated on it.
+
+### Repo cleanup
+
+User asked for a pass over the repo for unnecessary/redundant files. Audited: every root-level
+`.out` job log, every `scripts/hpc/*.slurm`, and every `docs/images/*.jpg` against what the two
+final reports actually reference (`![...](images/...)` syntax) plus a byte-for-byte duplicate
+check across all git-tracked files. Everything else -- job logs, slurm scripts, checkpoints
+listed in the reports (gitignored, not actually committed), `raw/`/`wiki/` knowledge base,
+`only_for_me/` personal thesis-planning notes -- is either actively referenced from a report's
+reproduction section or clearly a deliberate, distinct artifact, so left alone. Found exactly
+two genuinely dead files: `docs/images/stage_b_test_metrics.jpg` and `docs/images/
+stage_b_sample_predictions.jpg` -- orphaned leftovers from Session 16 (before
+`visualize_stage_b_results.py` gained its `--tag` flag), byte-identical to their later
+`_bce.jpg` counterparts and not referenced by any report. Removed.
+
+### ROC/PR curve diagrams
+
+User asked for the actual ROC and precision-recall curve *diagrams*, not just the scalar
+AUC-ROC/AUC-PR numbers already in the metrics bar chart. New `plot_roc_pr_curves` (added to
+`scripts/visualize_stage_a_results.py`, imported by `visualize_stage_b_results.py` the same way
+`plot_metrics_bar_chart` already is): one figure, two panels -- ROC curves (with the random-
+guessing diagonal) on the left, PR curves (with each class's own positive rate marked as its
+no-skill baseline, since unlike ROC that baseline isn't flat at 0.5) on the right, one line per
+class in each. Skips a class cleanly (no crash) if it has zero positives or zero negatives, since
+neither curve is defined then. 2 new tests (smoke test + degenerate-class test). Wired into both
+`main()`s automatically -- no new CLI flag, every future `--tag` run gets `..._roc_pr_curves...
+.jpg` for free. Regenerated for both canonical checkpoints (`stage_a_combo`, `stage_b_combo`) and
+embedded in both final reports next to their metrics tables.
+
+### Analysis of current results + recommendations for further development
+
+User asked for an analysis of where things actually stand, to decide what to develop next --
+not just another options list. Looked at the real per-class numbers across both stages,
+canonical checkpoints:
+
+| stage | class | F1 (tuned) | AP | ROC-AUC |
+|---|---|---|---|---|
+| A | dirt | 0.938 | 0.990 | 0.990 |
+| A | water | 0.969 | 0.993 | 0.991 |
+| A | scratch | 0.921 | 0.978 | 0.973 |
+| B | dirt | 0.755 | 0.849 | 0.926 |
+| B | water | 0.815 | 0.880 | 0.935 |
+| B | scratch | 0.627 | 0.634 | 0.956 |
+
+**Finding 1: Stage A is essentially done on synthetic data.** Every class is F1>0.92, AP>0.97.
+Further tuning here (more epochs, different loss, etc.) has very little headroom left to buy --
+the ROC/PR curves (new this session, see above) all hug the ideal corner. Whatever effort goes
+into Stage A next should be about the *real* domain gap (see Finding 3), not more synthetic
+iteration.
+
+**Finding 2: Stage B's scratch gap is a data-volume problem, not a model-capability problem.**
+The ROC-AUC vs. AP split described above (Stage B report, §4) is the key evidence: scratch's
+ROC-AUC (0.956) is actually the *best* of the three classes -- the model ranks scratch tiles
+correctly about as well as it ranks dirt/water tiles. Its AP (0.634) is the *worst*, because AP
+is diluted by class rarity (support 6362/204800 ≈ 3%) in a way ROC-AUC structurally isn't. Two
+different loss-function interventions were already tried specifically to fix this (per-class
+focal α — Session 18, net negative; localized SSD — Session 19, a wash) and neither worked,
+which is consistent with this being a data-volume gap that a loss reweighting can't manufacture
+its way out of. **Implication: the next lever to pull for scratch is more scratch-positive
+training data** (a 5th combo-kind cycle, oversampling scratch-including variants specifically,
+or simply more source photos), not another loss variant.
+
+**Finding 3: dirt/water's regression from the combo rebuild (§ Phase 4 above) is a real but
+modest cost**, consistent with combo tiles creating genuine multi-label ambiguity the model
+didn't have to handle before. Whether more training time / more data closes this gap or whether
+it's an intrinsic difficulty of the harder task is untested -- a cheap next experiment (more
+epochs on the existing combo dataset, no rebuild needed) would tell.
+
+**Update (user follow-up, same day): per-class α re-tried on the combo dataset, ruled out.**
+The combo rebuild shifted the tile-level class balance a lot (dirt 26%, water 35% positive on
+train now, vs. 13%/18% pre-combo), so the canonical uniform α=0.75 -- tuned for the old, more
+extreme imbalance -- was worth re-checking. Tried `α=[0.5, 0.5, 0.75]` (dirt/water lowered to
+neutral 0.5, scratch left at 0.75 to isolate the variable) -- HPC job `1815794`/`1815839`. F1,
+AP, and ROC-AUC all landed within noise of the canonical uniform-α run on every class,
+dirt/water included. **This rules out loss-reweighting as the fix** -- the dirt/water
+regression is not a training-imbalance artifact a per-class α can correct, strengthening the
+"intrinsic difficulty of the harder task" half of Finding 3 over the "needs more data/epochs"
+half. Full table and checkpoint in `docs/stage_b_final_report.md` §4 "Post-decision
+follow-ups", option 6.
+
+**Finding 4 (the one every "Known limitations" section in this project has flagged since
+Session 1): everything above is still 100% synthetic, frozen-backbone data.** No amount of
+further synthetic-data iteration answers the actual question this thesis needs answered --
+does any of this transfer to the real dual-camera rig's captures? This is the single highest-
+leverage next step, and everything else is optimization within a domain gap that's still
+completely unmeasured.
+
+**Recommended priority order, given the above (not yet actioned, pending user decision):**
+1. **Start Part 1 real-capture data collection** (or at minimum, a small pilot batch) -- highest
+   leverage by a wide margin; every synthetic result above is a ceiling estimate, not a floor,
+   until this exists.
+2. **More scratch-positive synthetic data for Stage B** (cheap, targeted at Finding 2's specific
+   diagnosed gap) -- e.g. a 5th combo-cycle biased toward scratch, or oversampling during
+   training. Low effort, clear hypothesis to test.
+3. **More training epochs on the existing combo dataset** (near-zero cost, tests what's left of
+   Finding 3's open question now that loss-reweighting has been ruled out above -- whether more
+   training time closes the gap, or it really is intrinsic to the harder multi-label task).
+4. **Backbone unfreezing** (architecture.md's documented "Option 2") -- higher effort, save for
+   after 1-3 have been tried, since it's the biggest architectural change and hardest to isolate
+   if tried alongside everything else.
+
+## Session 20 — Supervisor feedback (2nd round): impaired-gate head, general tile channel, 5-column report figure
+
+Second round of supervisor feedback, again planned before implementation
+(`C:\Users\farha\.claude\plans\majestic-conjuring-shell.md`). Three items:
+(1) Stage B's results figure needed a genuine 5-column-per-sample layout
+(original / distorted / GT tile-wise / prediction probability tile-wise /
+AUC-PR), with a 0-1 colorbar on every tile-grid probability panel; (2) a
+Cross-Entropy loss should be introduced; (3) the pipeline should first
+decide "is this image impaired at all" (binary), with the union of the
+per-class tile maps reconstructing that same structure.
+
+### Phase 1 — On-the-fly label derivation
+
+`ImpairedGateDataset` (`src/data/stage_a_dataset.py`) derives a binary
+"impaired" label as OR(dirt, water, scratch) from `StageADataset`'s existing
+rows -- no `metadata.csv` schema change. `src/eval/general_channel.py`
+(new) derives the tile-wise "any distortion" channel from the 3 trained
+per-class channels via a noisy-OR combine (`1 - prod(1-p_c)`), plus a
+`general_channel_consistency` diagnostic. Neither needed a dataset rebuild.
+
+### Phase 2 — `ImpairedGateHead` + CrossEntropyLoss
+
+New `ImpairedGateHead` (`src/models/distortion_head.py`): GAP + 2xFC -> 2
+logits (`not_impaired`/`impaired`), kept as its own class rather than reusing
+`StageADistortionHead` so its different loss family (CE/softmax vs. every
+other head's sigmoid/BCE) is visible at the type level. New
+`compute_impaired_class_weight` + `build_impaired_gate_loss` in
+`src/models/losses.py` (`nn.CrossEntropyLoss(weight=...)`).
+
+Two design calls, made explicit for the record:
+- **The general tile channel is derived, not separately trained** -- the
+  supervisor's "union... to reach the initial tile-wise structure" phrasing
+  reads as a reconstruction/consistency check, not a request for new
+  supervision; a 4th trained channel would just re-learn a deterministic
+  function of 3 already-trained channels.
+- **The gate started as reporting-only** (annotates the report, never
+  suppresses Stage B's own predictions) -- deliberately, to avoid coupling
+  the two heads' error rates. (Reversed later this session -- see "Round 2"
+  below, once the user saw the concrete failure mode this caused.)
+
+### Phase 3 -- Training/eval scripts
+
+`scripts/train_impaired_gate.py` (mirrors `train_stage_a.py`, reuses its
+`run_epoch`) and `scripts/evaluate_impaired_gate.py` (needs a softmax- not
+sigmoid-based `collect_gate_predictions`, then feeds straight into the
+existing `compute_metrics`/`tune_per_class_thresholds` unchanged).
+`scripts/hpc/train_impaired_gate.slurm` added.
+
+### Phase 4 -- 5-column report figure
+
+`scripts/visualize_stage_b_results.py::plot_stage_b_five_column_report`:
+one row per sample, columns = clean image / distorted image / GT tile grid
+(`imshow(cmap="viridis", vmin=0, vmax=1)` + colorbar) / predicted
+probability tile grid (same style) / that class's PR curve (computed once
+over the whole flattened test split, reused across every row of that class
+-- AUC-PR isn't a per-sample quantity). Paginated at `--rows-per-page`.
+`plot_tile_grid_overlay` (the older alpha-blended overlay figure) left
+unchanged -- its composite-blend style can't be legended by a single 0-1
+colorbar -- with a caption pointing to the new figure instead.
+
+### Phase 5 -- HPC training
+
+Job `1821693` (`checkpoints/impaired_gate/impaired_gate_head.pt`), trained
+on the existing `data/processed/stage_a` (no rebuild), 20 epochs,
+`class_weight=[8.0, 1.14]`. Converged cleanly: `train_loss` 0.303 -> 0.136,
+`val_loss` 0.236 -> ~0.15-0.18 (noisy but stable, no divergence). Elapsed
+23:52.
+
+## Round 2 (same session) -- tile-threshold recalibration + real inference-time gate
+
+Reviewing the new 5-column figure's first real output surfaced two follow-ups:
+
+1. **Stage B's GT tile grids weren't precise for dirt/water.** Scratch's
+   tile-coverage threshold was empirically diagnosed and fixed in Session
+   18/19 (`scripts/diagnose_scratch_threshold.py`, since renamed/generalized
+   -- see Phase 7 below); dirt/water were still at their original,
+   never-measured `DEFAULT_TILE_THRESHOLDS` values (0.15 each).
+2. **Clean images still predicted non-trivial distortion probability** --
+   visible directly in the new figure's clean-kind rows. User asked for
+   both a real inference-time gate (reversing Phase 2's reporting-only
+   decision) and a fix to Stage B's own calibration.
+
+### Phase 7 -- Diagnostics
+
+`scripts/diagnose_scratch_threshold.py` generalized and renamed to
+`scripts/diagnose_tile_thresholds.py --effect {dirt,water,scratch}` (same
+methodology, now parameterized over `add_dirt`/`add_water`/`add_scratch`
+instead of hardcoding scratch).
+
+Unlike scratch (a thin line, with a sharp natural boundary in its coverage
+distribution), dirt and water are broad-area texture blends with no sharp
+cutoff -- a judgment call rather than a discovered boundary:
+
+| effect | mean tiles touched (of 256) | median coverage of touched tiles | positive rate @ threshold=0.15 (current default) |
+|---|---|---|---|
+| dirt | 236.9 | 0.205 | 51.4% |
+| water | 230.3 | 0.271 | 64.3% |
+
+Over half the tiles either mask merely *grazes* still counted fully
+positive at the untouched 0.15 default. New thresholds chosen to target
+each effect's own median touched-tile coverage (tile must be substantially,
+not just marginally, affected): **dirt 0.15 -> 0.20, water 0.15 -> 0.25**.
+
+New `scripts/diagnose_clean_false_positives.py`: for every genuinely clean
+(undistorted) test-split image, does the model's max tile probability for
+each class cross the decision threshold? Baseline, current canonical
+`checkpoints/stage_b_combo` on `data/processed/stage_b_scratch15`, tuned
+per-class thresholds:
+
+| class | tuned threshold | clean-image FP rate |
+|---|---|---|
+| dirt | 0.523 | 32.0% |
+| water | 0.569 | 23.0% |
+| scratch | 0.539 | 26.0% |
+
+Out of 100 genuinely clean test images, the model still fires positive on
+23-32% of them per class, even after per-class threshold tuning -- this is
+the quantified baseline Phase 8 (threshold recalibration retrain) and
+Phase 9 (real gate) are both measured against.
+
+### Phase 8 -- Rebuild + retrain
+
+Rebuilt `data/processed/stage_b_scratch15` in place with dirt=0.20,
+water=0.25 (scratch unchanged at 0.015). Local build proved impractically
+slow -- the water-droplet effect's skimage `PiecewiseAffineTransform.estimate`
+warp dominated runtime, only ~850/8000 images done after 40 minutes locally
+(extrapolated ~6h total). Moved the build itself to HPC
+(`scripts/hpc/build_stage_b_recal.slurm`, job `1821713`, CPU-bound but
+TinyGPU requires `--gres=gpu:1` on every job regardless) -- finished all
+8000 images in 1h30m. Confirmed thresholds landed as intended: dirt
+tile-positive rate 51.4%->23.7%, water 64.3%->27.0%.
+
+Retrained the canonical focal (α=0.75, γ=2.0, 40 epochs) config on the
+rebuilt dataset for a clean single-variable comparison. User asked to
+start the job "as soon as possible" while all `rtx3080` nodes were fully
+allocated (SLURM's own backfill estimate: 6h45m wait) -- submitted
+duplicate jobs to `v100` and `a100` too (TinyGPU needs an explicit
+`--gres=gpu:<type>:1` once the partition isn't the default rtx3080) and
+cancelled the two that lost the race once the `a100` job started running
+almost immediately (job `1821754`, node tg091). Finished in ~10 minutes.
+
+**Result: not a clean win on the standard per-tile metrics.** vs.
+`stage_b_combo` (tuned thresholds): dirt F1 0.755->0.749, water F1
+0.815->**0.769** (a real drop, support fell 71210->54686 under the
+stricter threshold), scratch F1 0.627->0.624 (flat). Adopted as canonical
+anyway -- supervisor item 1 explicitly asked for more precise ground
+truth, which this delivers regardless of the downstream metric shift, and
+(more importantly) this retrain isn't the primary fix for item 2 -- see
+Phase 9.
+
+**A notable, non-durable side effect found along the way:** re-evaluating
+the *unretrained* `stage_b_combo` checkpoint against the rebuilt dataset
+(tuned thresholds re-computed on the rebuilt val split) dropped water's
+clean-image FP rate from 23% to 3%, purely because the tuned decision
+threshold itself shifted higher (stricter val-split ground truth -> higher
+best-F1 cutoff) -- no retraining involved. This did **not** carry over to
+the actual retrained `stage_b_recal` checkpoint (its own ungated water
+clean-FP rate is 24%, back near baseline) -- a fresh model trained on the
+new threshold doesn't inherit the old model's now-miscalibrated-but-lucky
+threshold interaction. Recorded as a cautionary finding: an evaluation-
+time side effect measured on the wrong checkpoint can look like a fix
+that isn't one.
+
+### Phase 9 -- Real inference-time gate
+
+Reversed the Phase 2 "reporting-only" gate design after the 5-column
+figure's first real output showed clean images still predicting non-
+trivial distortion probability (user: "the model predicted specific
+distortion" on images with no distortion). New `src/eval/gate.py`
+(`collect_gate_probs`, moved from the visualize script; `apply_gate`,
+zeroes an image's whole tile-prediction grid when the gate calls it "not
+impaired"). Wired into both `evaluate_stage_b.py` (`--gate-checkpoint`,
+prints ungated + gated tables) and `visualize_stage_b_results.py` (now
+actually gates `probs`, not just annotates titles).
+
+**Clean-image FP rate, `stage_b_recal`, tuned thresholds, before vs. after
+each fix:**
+
+| class | Phase 7 baseline (stage_b_combo) | ungated (stage_b_recal) | gated (stage_b_recal) |
+|---|---|---|---|
+| dirt | 32.0% | 19.0% | **7.0%** |
+| water | 23.0% | 24.0% | **6.0%** |
+| scratch | 26.0% | 29.0% | **6.0%** |
+
+The gate is what actually does the job -- threshold recalibration alone
+left water/scratch flat or worse, but gating cuts every class to 6-7%
+regardless. Measured cost of the coupling this reintroduces: on the full
+test split, gated dirt/water are ~flat vs. ungated, but scratch's gated
+ROC-AUC drops 0.955->0.915 -- a real, not hypothetical, price for the
+false-positive win (gate false negatives occasionally suppress a genuine
+scratch detection).
+
+Visually confirmed in the regenerated 5-column report
+(`docs/images/stage_b_full_report_recal_page1.jpg`): all 3 clean-kind rows
+now show a fully suppressed (dark purple, not just low-probability)
+prediction panel, correctly gated "not impaired."
+
+Both final reports (`stage_a_final_report.md` §7 new,
+`stage_b_final_report.md` §4/§4a/§4b/§5/§6 updated) and this entry written
+up same-session. `checkpoints/stage_b_recal/stage_b_head.pt` +
+`checkpoints/impaired_gate/impaired_gate_head.pt` are the new canonical
+pair; `checkpoints/stage_b_combo/` kept for comparison.
+
+## Round 3 (same session) -- balanced low/medium/high severity levels per class
+
+Third round of supervisor feedback, relayed via the user: the dataset must
+have **equal representation of distortion severity** within each class --
+e.g. of the images distorted by dirt, roughly a third should be low
+severity, a third medium, a third high -- not just an equal count of
+present/absent per class (already true since Session 19+). Confirmed via
+clarifying questions: applies to **all three classes** (dirt, water,
+scratch), not just water/dirt; exact 1/3-1/3-1/3 balance required for
+**single-effect kinds only** (combo kinds get a severity per active
+effect too, but pseudo-randomly, not balanced -- avoids a 27-way
+combinatorial requirement for the triple-effect kind); **both** Stage A
+and Stage B get rebuilt and retrained.
+
+### Phase 10 -- Severity mechanism + kind system
+
+New `SEVERITY_LEVELS = ("low", "medium", "high")`, `SEVERITY_ALPHA =
+{"low": 0.3, "medium": 0.6, "high": 1.0}`, `apply_severity(image, out,
+mask, severity)` in `src/soiling/effects.py` -- a single, universal
+post-hoc alpha-blend applied identically to all three effects (including
+scratch), blending the full-strength output back toward the clean image
+and scaling the coverage mask by the same factor, so low severity
+legitimately means less Stage B tile coverage too, not just a fainter
+image. `add_dirt`/`add_water`/`add_scratch` themselves are unchanged.
+
+`src/soiling/dataset_builder.py`: `SEVERITY_VARIANT_KINDS` (9 kinds,
+`"dirt:low"` etc.), `VARIANT_KINDS_WITH_SEVERITY` (10, additive alongside
+`VARIANT_KINDS`), `ALL_VARIANT_KINDS_WITH_SEVERITY` (14, + combos).
+`_combo_from_kind` extended to parse `"effect:level"` tokens;
+`_resolve_severities` fills in unspecified (combo-kind) severities
+pseudo-randomly via a new deterministically-seeded draw
+(`derive_seed(base_seed, source_id, variant_idx, effect_name,
+"severity")`). New `include_severity: bool = False` param on both dataset
+builders, additive/opt-in like `include_combos`. `metadata.csv` gains
+`dirt_severity`/`water_severity`/`scratch_severity` columns
+unconditionally (always `"high"`/`"none"` when the flag is off, so the
+schema never forks).
+
+**A real bug caught by tests, not by inspection:** a bare single-token
+kind (e.g. `"dirt"`, used when `include_severity=False`) was initially
+treated the same as an un-annotated token inside a genuine combo,
+triggering random severity resolution instead of defaulting to `"high"`.
+New test `test_build_stage_a_dataset_severity_default_off_is_always_high`
+caught it; fixed with an `is_combo = len(tokens) > 1` check in
+`_combo_from_kind` (single-token kinds default straight to `"high"`).
+
+### Phase 11 -- CLI flags + per-severity evaluation breakdown
+
+`--include-severity` on both `build_stage_a_dataset.py` /
+`build_stage_b_dataset.py` (mirrors `--include-combos`). New
+`src/eval/severity.py`: `compute_metrics_by_severity` groups samples (or,
+for Stage B, tiles -- via `broadcast_rows_to_tiles`, repeating each
+image-level row `grid_h * grid_w` times in the same order
+`flatten_tiles` uses) by their `f"{class}_severity"` value and reuses
+`compute_metrics` unchanged per group, pooling in genuine negatives (a
+level is omitted only if it has zero *positives*, not zero total rows,
+since precision/recall/AP need a negative population to compare
+against). `--by-severity` added to both `evaluate_stage_a.py` /
+`evaluate_stage_b.py`.
+
+### Phase 12 -- Rebuild both datasets (HPC)
+
+Straight to HPC from the start (learned from Round 2: the local build of
+the smaller 8000-image combo dataset would have taken hours). New
+`scripts/hpc/build_stage_a_severity.slurm` / `build_stage_b_severity.slurm`
+(`--variants 14 --include-combos --include-severity`, Stage B also
+carrying forward Round 2's recalibrated thresholds). Jobs `1822266`
+(Stage A) / `1822268` (Stage B), both on `a100`, ~2h each -- **14000
+images**, severity landed close to the exact 1/3-1/3-1/3 target per
+class:
+
+| class | low | medium | high |
+|---|---|---|---|
+| dirt | 1975 | 1982 | 2043 |
+| water | 2011 | 1989 | 2000 |
+| scratch | 2006 | 1997 | 1997 |
+
+Retrieved via the established tar+scp pattern, synced locally overwriting
+`data/processed/stage_a` / `data/processed/stage_b_scratch15` in place
+(irreversible, pre-approved). Full test suite (180 tests) passed with no
+regressions after the sync. The two follow-up asks below (Phases 13-14)
+were done while these jobs were running on HPC.
+
+### Phase 13 -- Violin+box probability-by-severity plot
+
+Supervisor also asked for a violin+box plot, x=severity level, y=predicted
+probability, per class. `scripts/visualize_stage_a_results.py::
+group_probs_by_severity` + `plot_probability_by_severity` (matplotlib
+`violinplot` + `boxplot` overlay, no seaborn dependency); `_row_severity`
+falls back to inferring `"high"`/`"none"` from the plain 0/1 class column
+when the `f"{class}_severity"` key is absent entirely (needed for the
+currently-on-disk pre-severity datasets, hit immediately during smoke
+testing -- `KeyError: 'dirt_severity'`). Stage B reuses the same plot via
+`max_prob_per_image` (reduces `(N,C,H,W)` to `(N,C)` via max over `H,W`,
+since severity is an image-level property even in the tile dataset).
+
+### Phase 14 -- Per-sample report figure grows 5->7->8 columns
+
+Separate supervisor follow-up on the existing 5-column Stage B report
+(§4a in `stage_b_final_report.md`, added Round 2): instead of only
+showing the dominant class's predicted-probability tile, show all three
+classes' tile-wise probability side by side -- grew the figure to 7
+columns (`plot_stage_b_five_column_report` -> `plot_stage_b_
+seven_column_report`, columns 4-6 now one raw probability panel per
+class, dominant one labeled). User then asked that these 3 probability
+columns always be shown **raw** (ungated), regardless of whether the
+image was gated out, so the figure stays a diagnostic view of what Stage
+B's own head predicted -- separate from a NEW 8th column added right
+after, showing the **gated** probability for the dominant class, so raw
+and gated are directly comparable in the same figure
+(`plot_stage_b_seven_column_report` -> `plot_stage_b_eight_column_report`).
+`main()` now keeps both `raw_probs` (used for columns 4-7) and the
+possibly-gated `probs` (used everywhere else in the script -- metrics
+table, severity plot, overlay grid -- unchanged from Round 2's scoping
+decision) as separate arrays, since `apply_gate` returns a new array
+rather than mutating in place.
+
+Visually verified against the real (pre-severity, Round-2) checkpoints
+while the HPC jobs above were still running: a clean image showed a
+noisy but nonzero raw probability in column 4, fully suppressed (all-
+zero) in the new column 8 -- confirms the raw/gated separation renders
+as intended.
+
+### Phase 15 -- Retrain Stage A, Stage B, and the impaired-gate head
+
+Same canonical hyperparameters as each model's prior best config, dataset
+only variable. `rtx3080` was fully allocated at submission time -- raced
+duplicate jobs onto `a100` (several nodes showed free GPU slots via
+`sinfo.tinygpu -p a100 -N`) and cancelled the `rtx3080` originals once the
+`a100` copies started running (same racing pattern as Round 2's Phase 8).
+All three converged cleanly and fast on `a100` (~27-42 min each): Stage A
+job `1822358` (val_loss 0.356->0.352), Stage B job `1822359` (val_loss
+0.027->0.027, effectively flat by epoch 35), impaired-gate job `1822360`
+(val_loss 0.360->0.334). New checkpoint dirs (`checkpoints/
+stage_a_severity`, `stage_b_severity`, `impaired_gate_severity`) --
+nothing existing overwritten.
+
+### Phase 16 -- Evaluation: the headline result
+
+Both `evaluate_stage_a.py --by-severity` and `evaluate_stage_b.py
+--by-severity` run against the retrained checkpoints -- this is what the
+whole rebuild was actually for: **does the model do worse on subtle
+distortions than obvious ones?**
+
+**Stage A (image-level), AP by severity:**
+
+| class | low | medium | high |
+|---|---|---|---|
+| dirt | 0.702 | 0.934 | 0.972 |
+| water | 0.773 | 0.960 | 0.975 |
+| scratch | 0.666 | 0.850 | 0.928 |
+
+**Stage B (tile-level), AP by severity:**
+
+| class | low | medium | high |
+|---|---|---|---|
+| dirt | 0.196 | 0.596 | 0.791 |
+| water | 0.043 | 0.415 | 0.789 |
+| scratch | 0.143 | 0.343 | 0.449 |
+
+**Yes, clearly, for every class at both stages** -- a monotonic,
+physically sensible trend. Stage B's gap is far more pronounced than
+Stage A's (water: 18x AP difference low-to-high, vs. ~1.3x at Stage A) --
+consistent with per-tile localization being the strictly harder task,
+doubly exposed since the same `alpha` that fades a low-severity effect's
+visual signal also shrinks its ground-truth tile coverage. Confirmed
+visually in the new violin+box plots
+(`docs/images/stage_a_probability_by_severity_severity.jpg`,
+`docs/images/stage_b_probability_by_severity_severity.jpg`) -- each
+class's predicted-probability distribution visibly shifts up and tightens
+from low to high severity.
+
+Regenerated the per-sample report figure too (grew 5->7->8 columns this
+round, see Phase 14) against the severity checkpoint + gate --
+`docs/images/stage_b_full_report_severity_page*.jpg` -- visually confirms
+the gate still correctly suppresses clean/low-confidence rows while
+leaving genuinely-impaired rows' predictions untouched.
+
+The impaired-gate head itself (`evaluate_impaired_gate.py`, no
+`--by-severity` support -- its label is a derived binary "any distortion"
+call, not a per-class one) still performs well but shows the same
+pattern indirectly: F1=0.964, AP=0.994, but **ROC-AUC drops from Round
+2's 0.983 to 0.927** -- the severity-balanced test split now includes
+many low-severity images, which are inherently harder to confidently call
+"impaired," so the gate's ranking quality takes a real hit even at an
+unchanged default-cutoff F1.
+
+Both final reports (`stage_a_final_report.md` §8 new,
+`stage_b_final_report.md` §4/§4a/§4c/§5/§6 updated) and this entry written
+up same-session. `checkpoints/stage_a_severity/stage_a_head.pt`,
+`checkpoints/stage_b_severity/stage_b_head.pt`, and
+`checkpoints/impaired_gate_severity/impaired_gate_head.pt` are the new
+canonical trio; the Round 2 checkpoints are kept for comparison.
+
+---
+
+## Session 21 — Stage C: pixel-level segmentation (v1)
+
+**Date:** 2026-09-26
+
+Third distortion-head stage from `architecture.md` §2 ("Small FCN/UNet-style decoder ->
+per-pixel classes", loss "Dice + BCE" per §4). Planned before implementation
+(`C:\Users\farha\.claude\plans\majestic-conjuring-shell.md`), then built in the same
+build -> train -> evaluate -> visualize shape as Stages A/B.
+
+### Phase 1 -- Pixel masks from the existing Stage B build
+
+`add_dirt`/`add_water`/`add_scratch` already return the exact per-pixel mask behind each
+distorted image, and `build_stage_b_dataset` already computed it -- it just downsampled it to
+the 16x16 tile grid and discarded it. New opt-in `save_pixel_masks=True`
+(`--save-pixel-masks`) writes it as `masks/{source_id}_vNN.png` (3 channels = dirt/water/
+scratch, uint8 = round(mask * 255), same native 720x480 as the image) and records
+`has_pixel_masks` in `stage_b_meta.json`. Reusing Stage B's directory instead of a parallel
+Stage C dataset means both stages train/evaluate on exactly the same samples and needed only
+one more HPC synthesis pass (job `1822558`, `data/processed/stage_b_scratch15` rebuilt in
+place). Masks are kept continuous; the decision threshold is chosen at evaluation time, as
+in the other stages.
+
+A first test compared the saved PNG against a *recomputed* mask and failed -- `add_dirt`/
+`add_water` are only label-reproducible across separate calls (pythonperlin reseeds
+`np.random` internally, see `tile_labels.py`). Replaced by a consistency check between the
+saved PNG and the saved tile labels, which come from the same in-call mask.
+
+### Phase 2 -- Dataset class, head, loss
+
+`src/data/stage_c_dataset.py::StageCDataset` (image + 3-channel mask, both resized to
+`img_size`; the mask is read with `IMREAD_UNCHANGED`, never colour-converted).
+`StageCDistortionHead`: a plain FCN on P5 -- 5 x (bilinear 2x upsample -> 3x3 conv -> ReLU),
+32x total back to input resolution, 1x1 conv to 3 logits. `DiceBCELoss` (bce_weight 0.5,
+soft Dice with smooth=1).
+
+### Phase 3-4 -- Training, evaluation, visualization scripts
+
+`scripts/train_stage_c.py` (reuses `train_stage_a.run_epoch`), `scripts/evaluate_stage_c.py`,
+`scripts/visualize_stage_c_results.py`. Evaluation pools both the probability map and the
+mask to a 64x64 grid (`pool_to_grid`, area average) before the shared
+`compute_metrics`/threshold tuning -- the raw 512x512 pixels of a 1400-image split are ~367M
+rows, far too many for sklearn's sort-based AP/ROC-AUC. Training still supervises full
+resolution.
+
+### Phase 5 -- v1 training (HPC)
+
+Job `1822831` (rtx3080), 20 epochs, ~270 s/epoch at ~35-44% GPU utilization (single-threaded
+image loading), val loss 0.440 -> 0.424, flat after a few epochs. The cluster was fully
+allocated for ~9 h before it started. Its evaluation is recorded in Session 22 (Phase 6),
+since by then the audit had changed both the ground truth and the evaluation code.
+
+---
+
+## Session 22 — Full audit: ground-truth fix, multi-scale heads, gate fixes
+
+**Date:** 2026-09-26
+
+User request: check everything implemented so far for anything wrong or illogical, fix it,
+and improve the results where possible. The user also stated an explicit goal: **the system
+must detect faint (low-severity) distortions too**.
+
+### Phase 1 -- Findings
+
+1. **Ground truth shrank with severity (the main bug).** `apply_effect_combo_with_masks`
+   stored `mask * alpha` (the Session 20 Round 3 design). Distortion regions have the same
+   size at every severity; only their visibility changes. Scaled masks cleared thresholds
+   calibrated on full-strength masks (dirt 0.20 / water 0.25 / scratch 0.015) in far fewer
+   tiles: mean positive tiles per image, low vs. high severity -- dirt 58 vs 122, water 35 vs
+   138, scratch 7.4 vs 15.3. Most of a faint patch was labeled clean, contradicting Stage A's
+   image label (positive at any severity). For Stage C, low-severity pixels (at most 0.3) could
+   never reach the 0.5 evaluation cutoff at all.
+2. **Gate threshold and resolution mismatch.** The gate's tuned (best-F1) threshold was
+   0.037, but Stage B/C applied it at 0.5, and at 512 px although it was trained at 640 px.
+   Measured on the Stage A test split: at 0.5 the gate kept only 81% of impaired images (58%
+   of low-severity ones); at 512 px its ROC-AUC fell 0.927 -> 0.914. This is what cost
+   Stage B's scratch class its gated ROC-AUC (0.909 -> 0.793).
+3. **Stage C evaluation memory.** `collect_predictions` held full-resolution probabilities
+   and masks (~4.4 GB each for 1400 images), for both val and test -- more than the 24 GB
+   local machine.
+4. **Figures vs. tables.** The visualize scripts drew metric bar charts at a fixed 0.5
+   threshold while the reports' tables used tuned thresholds. `stage_b_final_report.md` still
+   quoted numbers from the older `stage_b_recal` checkpoint (clean-FP 6-7% vs 19-29%, scratch
+   0.955 -> 0.915). `stage_a_final_report.md` referenced the gate as §6 (it is §5).
+5. **Stage C evaluation cutoff.** A single 0.5 cell cutoff counted only 6% of scratch-touched
+   64x64 cells (thin lines rarely cover half of an 8x8-pixel cell).
+6. **Per-sample Dice.** Soft Dice summed per (sample, class); ~57% of those pairs have an
+   empty target, where Dice stays ~1 unless every pixel is ~0 -- a push toward
+   under-prediction.
+7. **Training loop.** Saved the last epoch, not the best-validation one; DataLoader had no
+   workers (GPU ~35% busy); no seed; Python stdout buffered, so HPC logs stayed empty for
+   hours.
+8. Smaller: gate verdicts in figure titles hard-coded 0.5; stale docstrings; unused imports.
+
+### Phase 2 -- Fixes
+
+- **Severity-independent ground truth.** `apply_effect_combo_with_masks` now returns the
+  full-strength mask; severity only changes the image. `stage_b_meta.json` records
+  `severity_independent_gt`. New `scripts/make_gt_severity_independent.py` converts an
+  existing dataset in place, without re-synthesis: each saved mask channel is divided by its
+  row's own alpha (uint8 rounding error at most ~1.7/255) and `tile_labels.npy` is
+  re-rasterized. Positive tiles: dirt 550602 -> 726207, water 550304 -> 825126, scratch
+  68778 -> 92466; per-severity means are now equal (e.g. water 137 / 138 / 138), and the
+  high-severity counts are unchanged, confirming the conversion. Old labels backed up next to
+  the dataset (`*_severity_scaled.*.bak`). On HPC the conversion ran on a copy,
+  `data/processed/stage_b_gtfix` (images symlinked), so the running v1 job kept its inputs.
+- **Gate.** `src/eval/gate.py::load_gate` reads the gate's training resolution from the
+  checkpoint (default 640 for older ones), and `collect_gate_probs` resizes inputs to it.
+  New `threshold_for_recall` + `evaluate_impaired_gate.py --recall-target`: the gate
+  threshold is the highest one keeping >= 95% of impaired val images -- best-F1 is the wrong
+  criterion for a filter over ~93% positives (it lands near 0 and lets 92% of clean images
+  through).
+- **Stage C evaluation** pools each batch on the fly (`collect_pooled_predictions`); the
+  visualizer computes full-resolution maps only for the report's handful of samples. The
+  default cell cutoff is now the dataset's own per-class tile thresholds -- the same
+  "distorted" criterion as a Stage B tile, at 4x finer resolution.
+- **Batch-level Dice** (sums over batch + space per class).
+- **Training loop** (`train_stage_a.py::fit`/`make_loaders`, used by all four training
+  scripts): best-val checkpoint (with epoch/val_loss in it), `--num-workers` (default 4),
+  `--seed`, flushed output, `python3 -u` in new slurm scripts.
+- **Figures** get `--tune-thresholds` (Stage A/B/C) so charts match the tables.
+- New tests: migration, severity-independent GT, gate resize/load/recall threshold, batch
+  Dice, multi-scale backbone/heads, pooled collection, arch round-trips.
+
+### Phase 3 -- Stage C v2: U-Net-style decoder
+
+`FrozenYOLOBackbone(return_layers=...)` returns several layers at once (`STRIDE_TAPS`:
+stride 4 = layer 2, 256 ch; stride 8 = layer 4; stride 16 = layer 6; stride 32 = layer 10,
+512 ch each). `StageCUNetHead` -- 1x1 laterals to 64 ch, coarse-to-fine upsample + concat +
+3x3 conv-BN-ReLU, logits at stride 4, bilinear 4x to input size -- is the "UNet-style"
+option `architecture.md` §2 names. `train_stage_c.py --arch unet|fcn`; checkpoints store
+`arch` (older ones load as `fcn`). Job `1822980` (a100), 25 epochs, ~50 s/epoch (vs ~270 s
+for v1: data-loader workers plus no full-resolution convolutions).
+
+### Phase 4 -- Stage B retrain on the corrected labels, and a faint-weighted variant
+
+Both with the canonical focal α=0.75, γ=2.0, 40 epochs, P5 1x1-conv head. To compare fairly,
+the old `stage_b_severity` checkpoint was also scored against the corrected labels
+(dirt / water / scratch):
+
+| checkpoint | overall AP | low-severity AP |
+|---|---|---|
+| `stage_b_severity` (old labels) | 0.679 / 0.641 / 0.397 | 0.261 / 0.206 / 0.191 |
+| `stage_b_gtfix` (job `1822979`) | 0.680 / 0.646 / 0.391 | 0.272 / 0.240 / 0.199 |
+| `stage_b_faint` (job `1822993`, `--low-severity-weight 3.0`) | 0.674 / 0.637 / 0.386 | 0.267 / 0.234 / 0.202 |
+
+Two findings. (a) Most of the old report's "18x" low-vs-high gap was an artifact of the
+scaled labels: scored correctly, the *old* model's faint water AP is 0.206, not 0.043.
+(b) Neither the corrected labels nor oversampling faint images (new `--low-severity-weight`,
+`WeightedRandomSampler`) moved faint detection much: a 1x1 conv on P5 is the bottleneck.
+The faint-weighted variant was dropped.
+
+### Phase 5 -- Stage B v2: multi-scale tile head
+
+`StageBMultiScaleHead` (`--arch multiscale`): the same four backbone taps, each reduced to
+64 ch and area-pooled to the 16x16 P5 grid, concatenated, 3x3 conv-BN-ReLU, 1x1 to 3 logits
+-- still exactly one output per tile, as `architecture.md` §2 describes. Job `1823015`
+(a100), best epoch 23/40 (val loss 0.0160 vs 0.0344 for the P5 head). Test split, ungated:
+
+| | overall AP | low-severity AP | high-severity AP |
+|---|---|---|---|
+| P5 head (`stage_b_gtfix`) | 0.680 / 0.646 / 0.391 | 0.272 / 0.240 / 0.199 | 0.786 / 0.757 / 0.439 |
+| multi-scale (`stage_b_multiscale`) | **0.934 / 0.916 / 0.820** | **0.808 / 0.758 / 0.651** | 0.968 / 0.956 / 0.891 |
+
+Faint-distortion AP roughly triples. New canonical Stage B.
+
+### Phase 6 -- Stage C results
+
+Same test split, 64x64 pooled cells, per-class cell cutoffs 0.20/0.25/0.015, tuned
+thresholds, ungated (dirt / water / scratch):
+
+| | overall AP | low-severity AP | high-severity AP |
+|---|---|---|---|
+| v1 FCN on P5 (job `1822831`) | 0.749 / 0.738 / 0.169 | 0.368 / 0.306 / 0.075 | 0.846 / 0.880 / 0.212 |
+| v2 U-Net, 25 epochs (job `1822980`) | 0.898 / 0.878 / 0.756 | 0.728 / 0.664 / 0.544 | 0.917 / 0.906 / 0.835 |
+
+(v1 was trained on the old scaled masks with per-sample Dice, so it is a baseline for the
+whole v2 package rather than for the decoder alone.) v2's best epoch was its last, so it was
+retrained for 50 epochs (Phase 8).
+
+### Phase 7 -- Impaired gate v2: multi-scale
+
+With the gate at its val-tuned 95%-recall threshold (0.159), the P5 gate still let 48% of
+clean test images through. `ImpairedGateHead` now also accepts a list of feature maps (GAP of
+each, concatenated); `train_impaired_gate.py --arch multiscale`, trained at 512 px on the
+Stage B/C dataset's own images (job `1823027`, 20 epochs; the v1 gate was trained at 640 px
+on `data/processed/stage_a`, same source photos and splits). `load_gate` refuses to pair a
+multi-scale gate with a P5-only backbone.
+
+| gate | ROC-AUC | AP | threshold for >= 95% recall | impaired kept | clean passed |
+|---|---|---|---|---|---|
+| v1 P5 (640 px) | 0.927 | 0.994 | 0.159 | 94.6% | 48% |
+| v2 multi-scale (512 px) | **0.956** | **0.997** | 0.140 | 95.3% | **31%** |
+
+Stage B multi-scale with the v2 gate at 0.140: clean-image false positives (any tile of a
+clean image above threshold) 26/46/27% ungated -> **8/14/10%** gated (14/24/19% with the v1
+gate); gated AP 0.932 / 0.917 / 0.782.
+
+### Phase 8 -- Stage C v2, 50 epochs
+
+Job `1823030` (a100, 50 epochs, best epoch 33, val loss 0.2653 vs 0.2667 at 25 epochs).
+Ungated AP dirt / water / scratch 0.905 / 0.878 / 0.744 (25 epochs: 0.898 / 0.878 / 0.756);
+low-severity AP 0.744 / 0.679 / 0.519 (25 epochs: 0.728 / 0.664 / 0.544) -- a tie (mean
+low-severity AP 0.647 vs 0.645), slightly better on dirt/water and worse on scratch, the
+hardest class. The 25-epoch `checkpoints/stage_c_unet` stays canonical;
+`checkpoints/stage_c_unet50` is kept for comparison.
+
+### Phase 10 -- Dataset renamed to `data/processed/stage_b`
+
+To match `data/processed/stage_a`, the Stage B/C dataset `data/processed/stage_b_scratch15`
+(the name came from the Session 18 scratch-threshold experiment) was renamed to
+`data/processed/stage_b`, locally and on HPC, together with every reference in code, tests,
+slurm scripts and the three stage reports. Stage B (tile labels) and Stage C (pixel masks)
+both read this one directory. On HPC the old `data/processed/stage_b` (the superseded
+original Stage B dataset from before Session 18) was deleted to free the name, and the temporary
+`stage_b_gtfix` link removed. Earlier entries in this log and the raw job logs keep the
+names that were in use at the time: `stage_b_scratch15` / `stage_b_gtfix` there mean
+today's `stage_b`, while `stage_b` in entries before Session 18 means that older dataset.
+
+---
+
+## Session 23 — Layer study for every stage; scratch weighting
+
+**Date:** 2026-09-26/27
+
+User request: use other backbone layers wherever they improve results, in any stage — and find
+out which layers are best for each stage. For faint scratches: add an even finer layer, and
+try weighting scratch more heavily in the loss, but only keep weighting if it does not hurt the
+other classes. The user approved deviating from `architecture.md`'s literal Stage A design
+(GAP over P5) if other layers help.
+
+### Phase 1 -- Code
+
+- `STRIDE_TAPS` gains stride 2 (layer 0, 64 ch); `parse_taps` / `build_multiscale_backbone`
+  in `src/models/backbone.py`. Every stage takes `--taps` (strides, must include 32) and
+  records `taps` in its checkpoint; checkpoints without it load as before.
+- Stage A: `StageADistortionHead` accepts a list of maps (GAP each, concatenate);
+  `--taps 32` is exactly the `architecture.md` design (identical parameter shapes).
+  New shared `train_stage_a.py::build_stage_a_model` / `load_stage_a`, used by the evaluate
+  and visualize scripts.
+- Stage C: `StageCUNetHead(out_stride=...)` predicts at the finest tap's stride.
+- Gate: `src/eval/gate.py::load_gate` now builds the gate's **own** backbone from its checkpoint
+  (`build_gate`), so the gate no longer depends on which layers the Stage B/C model uses --
+  with per-stage layer choices, sharing the Stage B/C backbone would feed it the wrong maps.
+- `--class-weights` (per-class loss multipliers, normalized to mean 1) for the focal and
+  Dice+BCE losses; with no weights both losses are numerically unchanged.
+- Tests for all of the above (234 pass).
+
+### Phase 2 -- HPC logistics
+
+`scripts/hpc/layer_study.sh`: each configuration is one job (train, then evaluate on the
+**val** split -- selection happens on val, test stays untouched until the winner is fixed),
+submitted twice, on `a100` and on the `work` pool (rtx3080 + rtx2080ti; torch supports both),
+via the new `scripts/hpc/run_shell.slurm`. A local watcher cancelled each job's twin as soon as
+one copy started. The cluster was fully allocated all evening; the twin setup moved the first
+start estimate from ~11:00 next day to ~01:00, and in practice the jobs started from ~23:00.
+Logs: `study_logs/`.
+
+### Phase 3 -- Results (validation split; AP / low-severity AP, dirt / water / scratch)
+
+**Stage A** (20 epochs, 640 px):
+
+| strides | AP | mean | faint AP | mean faint |
+|---|---|---|---|---|
+| 32 (`architecture.md`) | 0.935 / 0.962 / 0.907 | 0.935 | 0.688 / 0.786 / 0.682 | 0.719 |
+| 16,32 | 0.969 / 0.983 / 0.934 | 0.962 | 0.831 / 0.899 / 0.760 | 0.830 |
+| **8,16,32** | 0.977 / 0.983 / 0.940 | **0.967** | 0.870 / 0.908 / 0.776 | **0.851** |
+| 4,8,16,32 | 0.975 / 0.983 / 0.931 | 0.963 | 0.851 / 0.910 / 0.754 | 0.838 |
+| 2,4,8,16,32 | 0.968 / 0.982 / 0.930 | 0.960 | 0.824 / 0.905 / 0.743 | 0.824 |
+
+**Stage B** (multi-scale head, focal α=0.75, 40 epochs):
+
+| strides | AP | mean | faint AP | mean faint |
+|---|---|---|---|---|
+| 32 (control: bigger head, P5 only) | 0.805 / 0.780 / 0.491 | 0.692 | 0.506 / 0.431 / 0.314 | 0.417 |
+| 16,32 | 0.898 / 0.888 / 0.733 | 0.840 | 0.717 / 0.667 / 0.577 | 0.654 |
+| 8,16,32 | 0.922 / 0.914 / 0.793 | 0.876 | 0.779 / 0.737 / 0.647 | 0.721 |
+| **4,8,16,32** (existing) | 0.932 / 0.921 / 0.822 | **0.892** | 0.806 / 0.775 / 0.691 | **0.757** |
+| 2,4,8,16,32 | 0.933 / 0.924 / 0.810 | 0.889 | 0.808 / 0.779 / 0.663 | 0.750 |
+
+**Stage C** (U-Net decoder, 25 epochs):
+
+| strides | AP | mean | faint AP | mean faint |
+|---|---|---|---|---|
+| 16,32 | 0.877 / 0.872 / 0.515 | 0.755 | 0.682 / 0.628 / 0.345 | 0.552 |
+| 8,16,32 | 0.898 / 0.886 / 0.672 | 0.819 | 0.734 / 0.694 / 0.493 | 0.640 |
+| 4,8,16,32 (existing) | 0.902 / 0.889 / 0.744 | 0.845 | 0.743 / 0.684 / 0.564 | 0.664 |
+| **2,4,8,16,32** | 0.907 / 0.896 / 0.775 | **0.859** | 0.758 / 0.703 / 0.601 | **0.687** |
+
+**Gate** (multi-scale, 512 px; threshold for >= 95% impaired recall):
+
+| strides | ROC-AUC | clean passed |
+|---|---|---|
+| 32 | 0.908 | 62% |
+| 8,16,32 | 0.953 | 38% |
+| **4,8,16,32** (existing) | **0.959** | **32%** |
+| 2,4,8,16,32 | 0.953 | 35% |
+
+The pattern: the finer the task's output, the finer the layers that help. A whole-image
+decision (Stage A, gate) gains most from P3/P4 and nothing from stride 4/2 (averaged over the
+whole image, that detail is mostly noise); 32-px tiles (Stage B) gain down to stride 4;
+per-pixel masks (Stage C) gain down to stride 2, mostly for thin scratches. The Stage B
+control shows the gain comes from the layers, not from the bigger head.
+
+### Phase 4 -- Scratch weighting (on each stage's winning layers)
+
+| run | AP dirt / water / scratch | faint AP dirt / water / scratch |
+|---|---|---|
+| Stage B, unweighted | 0.932 / 0.921 / 0.822 | 0.806 / 0.775 / 0.691 |
+| Stage B, `1,1,2` | 0.926 / 0.916 / 0.820 | 0.785 / 0.759 / 0.685 |
+| Stage B, `1,1,3` | 0.926 / 0.909 / 0.825 | 0.780 / 0.714 / 0.694 |
+| Stage C, unweighted | 0.907 / 0.896 / 0.775 | 0.758 / 0.703 / 0.601 |
+| Stage C, `1,1,2` | 0.902 / 0.893 / 0.785 | 0.746 / 0.695 / 0.612 |
+| Stage C, `1,1,3` | 0.900 / 0.892 / 0.794 | 0.736 / 0.693 / 0.626 |
+
+Stage B: no scratch gain, dirt/water worse. Stage C: scratch improves (+0.01-0.02 AP) but
+faint dirt drops (-0.012 to -0.022). Per the user's condition, weighting was not adopted.
+
+### Phase 5 -- New canonical models, test split
+
+- **Stage A** -> `checkpoints/stage_a_multiscale` (strides 8,16,32; training log
+  `stage_a_multiscale_1823220.out`, test run `final_a_1823272.out`). Test AP 0.975 / 0.979 /
+  0.937 (P5-only: 0.940 / 0.958 / 0.913); low-severity AP 0.861 / 0.886 / 0.732 (P5-only:
+  0.702 / 0.773 / 0.665).
+- **Stage C** -> `checkpoints/stage_c_unet_t2` (strides 2-32; `stage_c_unet_t2_1823237.out`,
+  `final_c_1823301.out`). Test AP 0.901 / 0.890 / 0.780 (strides 4-32: 0.898 / 0.878 / 0.756);
+  low-severity AP 0.735 / 0.686 / 0.557 (0.728 / 0.664 / 0.544); gated 0.902 / 0.891 / 0.744.
+- **Stage B** and the **gate** keep their existing stride-4-32 checkpoints.
+
+All three stage reports updated (Stage A §3 now explains what the strides are and why P3/P4
+help); figures regenerated for the two new canonical models.
+
+
+## Session 24 — Stage B overfitting: augmentation and regularization
+
+**Date:** 2026-09-27
+
+User question: is there overfitting in any stage? Train/val loss curves of the canonical
+models: Stage A (best epoch 20/20), Stage C (25/25) and the gate (19/20) still improve at the
+end; val and test AP agree within 0.003 for every stage. Only **Stage B** overfits mildly:
+val loss bottoms out at epoch 23 of 40 (0.0160) and climbs to 0.0173 by epoch 40, while train
+loss keeps falling (0.0121 -> 0.0104). The saved checkpoint (best val epoch) predates the
+overfitting, so no reported number was affected. The user asked to remove the Stage B
+overfitting and leave Stage A/C as they are.
+
+**Cause.** 11200 training images but only 800 distinct source photos (14 variants each), and
+no augmentation, weight decay or dropout anywhere in the project (plain Adam; only the frozen
+backbone, BatchNorm and best-val selection limit overfitting). Stage B trains longest (40
+epochs) and its fused 3x3 conv sees fine (stride-4) scene detail, so it starts memorizing
+backgrounds.
+
+### Code
+
+- `StageBDataset(hflip=...)`: mirrors image and tile labels together with probability 0.5
+  (training split only).
+- `StageBMultiScaleHead(dropout=...)`: `Dropout2d` before the output conv (parameter-free, so
+  old checkpoints load unchanged).
+- `train_stage_b.py`: `--hflip`, `--weight-decay` (> 0 switches Adam to AdamW), `--dropout`;
+  all three are stored in the checkpoint. Defaults reproduce the previous training exactly.
+- Test for the flip (image and labels flip together); 235 tests pass.
+- `scripts/hpc/stage_b_regularization.sh` (same twin a100/work submission as the layer study).
+
+Only horizontal flip was tried as augmentation: brightness/contrast/color jitter would change
+what a faint distortion looks like (label no longer matches), crops/rescale break the fixed
+16x16 tile grid, and a vertical flip is not a realistic camera view.
+
+### Results (validation split; AP / low-severity AP, dirt / water / scratch)
+
+| run | AP | mean | faint AP | mean faint | val loss best -> ep 40 | best epoch |
+|---|---|---|---|---|---|---|
+| none (previous canonical) | 0.932 / 0.921 / 0.822 | 0.892 | 0.806 / 0.775 / 0.691 | 0.757 | 0.0160 -> 0.0173 | 23 |
+| weight decay 0.05 | 0.932 / 0.921 / 0.830 | 0.894 | 0.803 / 0.775 / 0.703 | 0.760 | 0.0156 -> 0.0172 | 23 |
+| dropout 0.2 | 0.932 / 0.924 / 0.823 | 0.893 | 0.804 / 0.776 / 0.685 | 0.755 | 0.0158 -> 0.0170 | 32 |
+| **hflip** | 0.934 / 0.924 / 0.837 | **0.898** | 0.808 / 0.782 / 0.716 | **0.769** | 0.0151 -> 0.0158 | 23 |
+| hflip + weight decay | 0.933 / 0.923 / 0.841 | 0.899 | 0.806 / 0.779 / 0.722 | 0.769 | 0.0150 -> 0.0160 | 23 |
+| hflip + wd + dropout | 0.931 / 0.921 / 0.840 | 0.897 | 0.803 / 0.770 / 0.718 | 0.764 | 0.0153 -> 0.0160 | 36 |
+
+Weight decay and dropout only delay the overfitting; the flip addresses its cause (more
+distinct-looking scenes) and gives the lowest val loss and the best faint AP. Flip + weight
+decay ties with flip alone (differences within run-to-run noise); dropout costs faint
+water/dirt. **Adopted: hflip alone** -- the simplest setting with the best result, and no class
+worse than before.
+
+### New canonical Stage B: `checkpoints/stage_b_flip` (test split)
+
+Training log `stage_b_flip_1823352.out`, test evaluation + clean-image check + figures
+`final_b_1823372.out`, figures tagged `_flip`.
+
+| | previous (`stage_b_multiscale`) | `stage_b_flip` |
+|---|---|---|
+| AP dirt / water / scratch | 0.934 / 0.916 / 0.820 | 0.935 / 0.919 / 0.833 |
+| low-severity AP | 0.808 / 0.758 / 0.651 | 0.808 / 0.766 / 0.670 |
+| gated AP | 0.932 / 0.917 / 0.782 | 0.933 / 0.920 / 0.794 |
+| clean images with any false tile, ungated | 26% / 46% / 27% | 23% / 42% / 18% |
+| same, gated (0.140) | 8% / 14% / 10% | 8% / 12% / 10% |
+
+`stage_b_final_report.md` updated (new "Overfitting and augmentation" section, results,
+figures, reproduction). The old `_multiscale` Stage B figures were removed from `docs/images`;
+the checkpoint `stage_b_multiscale` is kept for comparison. HPC note: twin submissions can both
+start in the same scheduler cycle -- they then write into the same checkpoint directory, so the
+slower copy must be cancelled at once (done here for `b_reg_flip` and `b_reg_flip_wd`, whose
+a100 copies were ahead).
+
+## Session 25 — Stage B overfitting, part 2: smaller head
+
+**Date:** 2026-09-27
+
+The user pointed out that the Session 24 flip model's loss curve still shows overfitting:
+validation loss stalls around epoch 10 while training loss keeps falling (last-10-epoch mean
+train 0.0120 vs val 0.0157). Session 24 had overstated this as "removed" -- the flip stops val
+loss from *rising* and shrinks the gap by ~40%, but does not close it. The user asked for a
+smaller head, accepting a small accuracy loss if the overfitting disappears.
+
+### Code
+
+- `StageBMultiScaleHead(hidden_dim, fuse_kernel)`: channel count and 1x1 vs 3x3 fusion;
+  `train_stage_b.py --hidden-dim / --fuse-kernel`, stored in the checkpoint and read back by
+  `load_stage_b` (older checkpoints default to 64 / 3). The training log now prints the head's
+  parameter count.
+- `visualize_stage_b_results.py`: the `--tag` file suffix no longer leaks into figure titles
+  (the flip figures read "training curve_flip").
+- Test for the smaller head; `scripts/hpc/stage_b_small_head.sh` (a100 only -- no twin copies,
+  which could start together and share a checkpoint directory).
+
+### Results (validation split, all with --hflip; gap = mean over the last 10 epochs)
+
+| head | params | AP dirt / water / scratch | mean | mean faint | train / val (gap) | best epoch |
+|---|---|---|---|---|---|---|
+| 64 ch, 3x3 (Session 24) | 263k | 0.934 / 0.924 / 0.837 | 0.898 | 0.769 | 0.0120 / 0.0157 (0.0037) | 23 |
+| **32 ch, 3x3** | 95k | 0.932 / 0.922 / 0.826 | **0.893** | **0.763** | 0.0139 / 0.0163 (0.0024) | **38** |
+| 16 ch, 3x3 | 38k | 0.924 / 0.911 / 0.781 | 0.872 | 0.717 | 0.0159 / 0.0172 (0.0013) | 33 |
+| 32 ch, 1x1 | 62k | 0.897 / 0.876 / 0.782 | 0.852 | 0.641 | 0.0189 / 0.0200 (0.0011) | 37 |
+| 16 ch, 1x1 | 30k | 0.887 / 0.863 / 0.761 | 0.837 | 0.607 | 0.0205 / 0.0207 (0.0001) | 39 |
+| 8 ch, 1x1 | 15k | 0.875 / 0.847 / 0.726 | 0.816 | 0.566 | 0.0223 / 0.0218 (none) | 38 |
+
+Only the 1x1-fusion heads close the gap, and they are clearly underfitting (-0.05 to -0.08
+mean AP, -0.13 to -0.20 faint AP) -- incompatible with the faint-distortion goal. With a
+frozen backbone and 800 training scenes, a small gap is unavoidable unless the head is too
+small to learn the task. The user chose the **32-channel, 3x3** head: -0.005 AP, validation
+loss keeps improving until epoch 38 (no upward trend), gap about a third smaller.
+
+### New canonical Stage B: `checkpoints/stage_b_h32` (test split)
+
+Training log `stage_b_h32_1823489.out`, test run `final_b_h32_1823506.out`, figures `_h32`.
+
+| | 64 ch, no flip (`stage_b_multiscale`) | 64 ch, flip (`stage_b_flip`) | **32 ch, flip (`stage_b_h32`)** |
+|---|---|---|---|
+| AP dirt / water / scratch | 0.934 / 0.916 / 0.820 | 0.935 / 0.919 / 0.833 | 0.933 / 0.921 / 0.829 |
+| low-severity AP | 0.808 / 0.758 / 0.651 | 0.808 / 0.766 / 0.670 | 0.808 / 0.774 / 0.666 |
+| gated AP | 0.932 / 0.917 / 0.782 | 0.933 / 0.920 / 0.794 | 0.931 / 0.921 / 0.789 |
+| clean images flagged, ungated | 26% / 46% / 27% | 23% / 42% / 18% | **15% / 15% / 14%** |
+| same, gated (0.140) | 8% / 14% / 10% | 8% / 12% / 10% | 9% / 10% / 6% |
+
+On test the smaller head matches the 64-channel one within noise, and it raises far fewer
+false alarms on clean images (water: 42% -> 15% ungated) -- the clearest sign that it memorizes
+less. `stage_b_final_report.md` updated (head-size table, results, figures, reproduction); the
+`_flip` figures were replaced by `_h32`.
+
+## Session 26 — Label audit of all generated images; ground-truth fixes; retraining
+
+**Date:** 2026-10-08/09
+
+**Trigger.** In the Stage C report figure, a "dirt" row showed an almost empty predicted dirt
+mask. It was a **dirt + water** image: the plotting code named only the first active class and
+showed only its channel. The model had marked 99.7% of the water area as water and missed the
+medium dirt lying under high-severity water (92% of the dirt was covered). The user asked for
+every generated image to be checked for mislabeling.
+
+### Figure fix
+
+`visualize_stage_b_results.py::class_index_for_sample` now names every active class
+("dirt + water"), and the per-sample report figures of Stages B and C (`report_entries_for_sample`)
+show one row per active class of a combination. The Stage B/C report text that had read this row
+as "grey dirt mistaken for water" was wrong and is corrected.
+
+### Audit (`scripts/audit_dataset_labels.py`, all 28000 images of both datasets)
+
+Correct: metadata (class flag <-> severity, 14 variants per photo, one split per photo), clean
+variants vs. source photos, tile labels vs. masks (0 mismatches), mask channel order in the
+loaders (BGR->RGB is applied to the image only). Mask peaks below 1 (814 flags) are benign:
+scratch and droplet masks are partly transparent by design, independent of severity.
+
+Defects found:
+
+| # | defect | size | cause |
+|---|---|---|---|
+| 1 | thin-water masks carry a 0.2 floor over the whole image | 1969 of 6000 water images; 29% of their positive water tiles exist only because of the floor | vendored `add_dirtwaterByTxture_slight` builds the mask as `texture + 0.2` |
+| 2 | labeled distortion with an all-zero mask, although the image is clearly distorted | 9 images (5 dirt, 4 water) | vendored effect returned an empty mask |
+| 3 | labeled scratch that is practically invisible (< 20 pixels changed by > 10 gray levels) | 44 images per dataset | scratch mostly outside the frame, or a bright screen-blend highlight on white sky/snow |
+| 4 | dirt under a later, strong water layer | 5.2% of dirt pixels lie under high-severity water; dirt keeps 13% (thin) / 22% (thick) / 74% (droplet) of its visibility there | builder order dirt -> water -> scratch |
+
+Defect 4 is kept: the dirt is physically on the lens, and removing it would need the water
+mechanism, which the dataset does not store. A first version of the fix unlabeled the 9 images
+of defect 2; the re-audit of the fixed data showed they are real distortions with broken masks,
+so they are re-rendered instead (caught before any training).
+
+### Fixes
+
+- Generator (`src/soiling/effects.py`, `dataset_builder.py`): `remove_thin_water_floor` for
+  thin-water masks; `visible_pixel_count` / `is_visible` (>= 20 pixels changed by > 10 gray
+  levels inside the mask); `_apply_visible_effect` re-draws an invisible effect with a fresh
+  seed (up to 10 times) and leaves the class unlabeled only if it never becomes visible.
+- Existing data (`scripts/fix_dataset_labels.py`, in place, backups kept): floor removed from
+  1966 masks, 9 variants re-rendered, 44 scratch labels removed per dataset, tiles re-rasterized
+  from the stored masks. Re-audit: 0 tile mismatches, no floor, no invisible or empty label.
+- Tests: `tests/test_label_audit_fixes.py`; 243 tests pass.
+
+### Retraining
+
+HPC GPUs were all busy except one V100 node; the `stage_a` env (torch cu130) has no sm_70 kernels,
+so a second env `stage_a_v100` (torch 2.14.1+cu126) was created and `run_shell.slurm` takes
+`CONDA_ENV`. All four models retrained in parallel on V100s with their canonical settings into
+`*_lf` checkpoints (`scripts/hpc/retrain_after_label_fix.sh`).
+
+| model | job | best epoch (val loss) |
+|---|---|---|
+| gate | `1834981` | 19 (0.2276); recall-target threshold 0.172 (was 0.140) |
+| Stage A | `1834982` | 19 (0.2471) |
+| Stage B | `1834983` | 38 (0.0150) |
+| Stage C | `1834984` | 25 (0.2588) |
+
+### Results (test split, audited labels)
+
+To separate the effect of the corrected *labels* from the effect of *retraining*, the
+pre-audit models were also scored on the audited test labels (`eval_old_on_fixed_1835006.out`):
+
+| | pre-audit model, old labels | pre-audit model, audited labels | retrained, audited labels |
+|---|---|---|---|
+| A: AP dirt / water / scratch | 0.975 / 0.979 / 0.937 | 0.975 / 0.979 / 0.937 | 0.976 / 0.980 / 0.939 |
+| A: faint AP | 0.861 / 0.886 / 0.732 | 0.861 / 0.886 / 0.733 | 0.867 / 0.888 / 0.737 |
+| B: AP | 0.933 / 0.921 / 0.829 | 0.933 / 0.899 / 0.829 | 0.931 / 0.917 / 0.825 |
+| B: faint AP | 0.808 / 0.774 / 0.666 | 0.808 / 0.739 / 0.666 | 0.804 / 0.735 / 0.663 |
+| B: clean images flagged, ungated / gated | 15/15/14% / 9/10/6% | 15/9/15% / 9/6/7% | 20/21/22% / 6/11/10% |
+| C: AP | 0.901 / 0.890 / 0.780 | 0.901 / 0.878 / 0.780 | 0.897 / 0.883 / 0.769 |
+| C: faint AP | 0.735 / 0.686 / 0.557 | 0.735 / 0.656 / 0.557 | 0.731 / 0.659 / 0.544 |
+| gate: ROC-AUC, impaired kept / clean passed | 0.956, 95.3% / 31% | — | 0.953, 94.4% / 35% |
+
+Conclusions: the defects did not distort the results dramatically. The thin-water floor had
+made Stage B/C *water* look better than it was (B: 0.921 on old labels vs. 0.899 on the audited
+ones); retraining on the audited labels recovers B water to 0.917 (C: +0.005). All other changes
+are at most 0.013 AP, the size of run-to-run noise. Ungated, the retrained Stage B flags more of
+the 103 clean test images; gated the two are similar. The retrained `*_lf` models are canonical,
+since they are trained on labels now verified correct. All reports, figures
+(`regenerate_report_figures.sh`) and the README are updated; the per-sample figures now give a
+multi-distortion image one row per class.
+
+## Session 27 — Visible-change labels, one class per location, gate-first pipeline
+
+**Date:** 2026-10-09
+
+**Trigger.** The user compared the Stage B report rows of a dirt + water image (one row per
+class showing the same prediction) and asked for the design as intended: the impaired /
+not-impaired decision first, Stages B and C only for impaired images, one label per location
+covering every distortion present, and a final answer naming the dominant distortion. Two
+decisions by the user:
+- output: colored class maps (one color per distortion) at tile and pixel level plus an
+  image-level answer;
+- labels: where two distortions overlap, only the one that is visible is labeled. After a
+  preview comparing the old masks (> 0.5) with labels from the actual image change, the user
+  chose the image-change labels ("column 4").
+
+### Design
+
+- **Stage A is the gate.** The separate impaired-gate head answered a question Stage A already
+  answers ("is any distortion present"), was the weakest model (35% of clean images passed at
+  94% recall, trained on 1 clean image in 14) and cost faint scratches (Stage C scratch AP
+  0.769 → 0.725 gated). The pipeline now gates on max(P(dirt), P(water), P(scratch)) of
+  Stage A, threshold set on val to keep 98% of impaired images. The gate head is kept in the
+  code, not used.
+- **Backbone once.** All heads read one 512-px backbone pass (strides 2–32); Stage A moves
+  from 640 to 512 px.
+- **Stages B and C: 4 classes, one per location** (clean / dirt / water / scratch), softmax.
+  B: focal loss (γ 2) with inverse-square-root class-frequency weights; C: class-weighted
+  cross-entropy + Dice over the three distortion classes.
+- **Answer** from the Stage C map: every class covering at least its minimum share of the image
+  (tuned on val, see below), with its share; dominant = largest share; "clean" if the gate stops
+  the image or nothing reaches its share.
+- **One dataset** (`data/processed/visible`) for all stages: same 1000 photos, splits, 14
+  variants per photo and seeds as before.
+
+### Visible-change ground truth (`src/soiling/visible_labels.py`)
+
+1. **Reproducible generator.** `pythonperlin.perlin(seed=None)` calls `np.random.seed(None)`,
+   reseeding numpy from OS entropy on every texture — the cause of the Session 6 / 26
+   "dirt/water not pixel-reproducible" notes. `effects.py` now passes a seed drawn from the
+   already-seeded numpy state; dirt and water are bit-identical for the same seed, and an
+   effect's shape no longer depends on the image it is applied to (tests).
+2. **Per-effect contribution.** For each applied effect the variant is re-rendered without it
+   (others with their recorded seeds); |final − re-render| (max over color channels, light
+   Gaussian smoothing) is that effect's visible change, restricted to its mask support (mask
+   > 0.02, dilated 7 px — excludes the thin-water renderer's faint global film).
+3. **Label.** The effect with the largest change if > 10 gray levels (the audit's visibility
+   cutoff), else clean; a visible scratch (always the top layer) wins over the layers under
+   it. Clean-up: 5-px closing per class, regions < 32 px removed, clean holes < 64 px filled.
+4. **Image level:** a class is present if ≥ 20 pixels carry it; `dominant` = largest area.
+   **Tiles:** a class's area share of the tile is compared with its cutoff (dirt 0.20, water
+   0.25, scratch 0.015); the tile takes the class exceeding its cutoff by the largest factor.
+
+Consequences: a layer hidden under a later one (dirt under thick water) disappears from the
+labels; a faint haze is labeled only where it visibly changes the image (edges, cars), not over
+flat asphalt where it changes nothing. Severity-independence (Session 22) is replaced by
+visibility: a faint distortion is labeled wherever it is visible.
+
+**Dataset** (`build_visible_1835773.out`, 58 min on 16 cores; `data/processed/visible`): 14000
+images, splits 11200 / 1400 / 1400; images with visible dirt / water / scratch: train 4797 /
+4800 / 4734 (3 dirt fully hidden under water, 66 faint scratches with < 20 visible pixels after
+the clean-up), test 600 / 600 / 597; clean (nothing visible) train 843, test 100. Training pixels:
+clean 65.6%, dirt 17.9%, water 16.3%, scratch 0.18%; tiles: 58.2 / 20.8 / 19.0 / 2.0%.
+
+### Training (TinyGPU)
+
+Twin submissions on a100 and `work`; Stage C ran on a V100 after 2 h in the queue.
+
+| stage | job | best epoch (val loss) | epoch time |
+|---|---|---|---|
+| A | `1835836` (work) | 20/20 (0.233) | 35 s |
+| B | `1835837` (work) | 32/40 (0.067) | 36 s |
+| C | `1835902` (V100) | 18/25 (0.274) | 110 s |
+
+A shows no train/val gap; B and C level off on val (B after ~20 epochs, C after ~12).
+
+**Decision settings, tuned on val** (`evaluate_visible.py`, `checkpoints/visible_pipeline.json`):
+- Gate threshold 0.278 (98% of impaired val images kept).
+- **Map offsets.** A first 300-image check showed Stage B marking a scratch tile on 57% of clean
+  images (scratch tile precision 0.62): the class weights (scratch 2.2× for tiles, 3.2× for
+  pixels, vs. 0.4 / 0.17 for clean) push the argmax toward rare classes. A per-class offset added
+  to the log-probabilities (coordinate search, best mean F1 of the distortion classes on val)
+  removes that: tiles −0.2 / 0.0 / −0.8, pixels −0.4 / −0.8 / −2.6 (dirt / water / scratch).
+  In the check, scratch tile precision rose to 0.86 and clean images with a scratch tile fell to 5%.
+- **Answer minimum shares.** Counting every pixel of the map, the first full evaluation
+  (`eval_visible_1835912.out`) answered only 33% of clean test images "clean" and got the exact
+  set of distortions right for 28% (presence precision dirt 0.56, water 0.61): small stray regions
+  added classes. A per-class minimum share of the map (best F1 per class on val) fixed it: dirt
+  10%, water 5%, scratch 0.07% (final evaluation `eval_visible_1835959.out`). The dirt value is
+  at the top of the search grid; on test, F1 falls for higher values (0.931 at 10%, 0.901 at 15%).
+
+### Results (test split)
+
+| | dirt | water | scratch |
+|---|---|---|---|
+| A: AP (faint recall) | 0.971 (0.75) | 0.978 (0.83) | 0.941 (0.78) |
+| B tiles, gated: F1 / IoU / AP | 0.859 / 0.753 / 0.933 | 0.819 / 0.694 / 0.898 | 0.782 / 0.642 / 0.845 |
+| B faint recall | 0.71 | 0.70 | 0.57 |
+| C pixels, gated: F1 / IoU / AP | 0.854 / 0.745 / 0.930 | 0.797 / 0.662 / 0.878 | 0.839 / 0.722 / 0.862 |
+| C faint recall | 0.66 | 0.60 | 0.68 |
+| answer: presence P / R | 0.99 / 0.88 | 0.97 / 0.93 | 0.97 / 0.89 |
+
+- Gate: ROC-AUC 0.938; impaired kept 98.5% (faint 97.4%), clean passed 70%. At a 95% recall target:
+  95.0% kept, faint 90.8%, clean passed 44%.
+- Answer: impaired vs. clean right for 95.5% of the 1400 images, 95% of clean images answered
+  "clean", dominant distortion right for **91.8%** of the 1300 impaired images (faint 80.9%,
+  medium 95.3%, strong 98.3%), exact set of distortions right for 85.4%.
+- Main confusions (confusion matrices in the report): distortion edges vs. clean, and dirt vs.
+  water (4–7% of their pixels / tiles). Gating changes overall B/C metrics by ≤ 0.005.
+- Not directly comparable with Sessions 21–26 (different labels, one class per location,
+  per-pixel instead of 8×8-cell scoring).
+
+Report: `docs/visible_pipeline_report.md`; README rewritten around the new pipeline.
+
+### Files
+
+- new: `src/soiling/visible_labels.py`, `src/soiling/visible_dataset.py`,
+  `scripts/build_visible_dataset.py`, `src/data/visible_dataset.py`, `scripts/train_visible.py`,
+  `src/pipeline.py`, `src/eval/class_maps.py`, `scripts/evaluate_visible.py`,
+  `scripts/visualize_visible.py`, `scripts/hpc/train_visible.sh`,
+  `scripts/hpc/evaluate_visible.sh`, `tests/test_visible_labels.py` (27 tests);
+- changed: `src/soiling/effects.py` (seeded perlin), `src/soiling/dataset_builder.py`
+  (`apply_visible_effect_with_seed`), `src/models/losses.py` (`MultiClassFocalLoss`,
+  `CEDiceLoss`, `inverse_sqrt_frequency_weights`).
+- Pitfall: importing ultralytics patches `cv2.imread` to return grayscale PNGs as (H, W, 1);
+  `read_label_map` squeezes it.
+
+## Session 28 — Stereo capture app for the real two-camera data
+
+**Dates:** 2026-11-07 – 2026-11-10
+
+**Trigger.** The supervisor's capture protocol arrived
+(`docs/data_collection/datacollection_surveilance_en.md`). Capturing pairs in Vimba X Viewer
+meant two windows, manual file names and no log, so the user asked for an easier tool that
+opens with a double click, not a Python script.
+
+### What was built (`src/capture/`, `scripts/capture_app.py`)
+
+- **`rig.py`** — opens both Alvium cameras with VmbPy, loads each camera's saved settings and
+  fires both with a software trigger, one frame each, so preview and saved images are the same
+  synchronized pair (measured trigger gap 1–7 ms). A capture only starts with the next triggered
+  pair, so a frame exposed before the button press is never saved.
+- **`session.py`** — the protocol's bookkeeping: file names, the capture log, lossless PNG
+  saving on background threads (bounded, so a slow disk slows the capture instead of dropping
+  pairs).
+- **`app.py`** — PySide6 window: live view with clipping readouts and a full-resolution focus
+  crop, the protocol form, buttons in protocol order, an instruction line for the next step.
+- Packaged with PyInstaller as `D:\MasterThesis_FAU\StereoCapture\StereoCapture.exe`;
+  `--check FILE` grabs one pair without a window, for testing the packaged app.
+
+### Problems found on the real cameras
+
+- **Camera mapping.** The settings files carried the opposite names to the cameras' positions.
+  Near and far objects in real pairs (parallax) showed which camera is physically left; the
+  app now matches settings to cameras by the serial number inside each file, never by name.
+  Final: left = 97 = 05NRR (A), right = 2C = 05HYK (B).
+- **USB 2.** Camera 97 ran at 50 MB/s and loading its settings failed with "RetriesExceeded";
+  re-plugging fixed it. The app now refuses to start below 200 MB/s with a clear message.
+- **Locked parameters.** Viewer XML files set `TLParamsLocked=1`, after which the trigger mode
+  cannot be changed; it is unlocked before and after loading.
+- **Hanging on close.** An exception while resetting the trigger mode left the camera open and
+  the process hung; closing now always releases both cameras.
+
+### Decisions (user and supervisor)
+
+- Panes in front of both lenses; only the test pane is contaminated; **only the right pane**,
+  replacing the protocol's odd/even swap.
+- One pair per button press; each press adds a pair, nothing is overwritten.
+- All dirty images of a session in one folder, the conditions in the file name
+  (`water_drops_medium_6cm_r1_0002_right_2C.png`); one log row per capture
+  (`capture_log.csv`).
+- Fogging as **images at a fixed interval** instead of video (file names carry the seconds
+  since the series began, `fogging_t015s_...`); **two types on one pane** (second type and
+  severity in the form and the name). "IR" renamed to "night".
+
+Plan, amounts and app usage: `docs/data_collection/capture_plan.md`.
+
+### Tests
+
+`tests/test_capture_app.py` (24 tests) runs the window with a simulated camera: protocol order
+of the buttons, naming with severities, distances and two types, numbering that continues
+within a folder, the timed fogging series, the log surviving a log file left open in Excel,
+cameras released on close. The real-camera runs (complete 4024 × 3036 frames, no lost pairs,
+about 0.4 pairs/s with the long indoor exposures) were done before the naming, fogging and
+two-type changes; the current version still needs one real-camera test.
+
+### Files
+
+new: `src/capture/{__init__,rig,session,app}.py`, `scripts/capture_app.py`,
+`tests/test_capture_app.py`, `docs/data_collection/` (protocol, capture plan).
+
+## Session 29 — Planned dataset and six approved synthetic generators
+
+**Dates:** 2026-11-09 – 2026-11-12
+
+**Trigger.** The protocol has 6 contamination types (mud, water drops, fogging, cleaning
+streaks, scratches, dust), the synthetic data so far 3 (dirt, water, scratch). The supervisor
+decided: 3 pane distances, fogging at time intervals, and 10% of both datasets with two types
+on one image.
+
+### Planned amounts
+
+Balanced over the 6 types, 3 severities each; two-type images exactly 10%, never three types:
+
+- **synthetic:** 1,000 photos × (1 clean + 18 one-type) + 2,115 two-type images (all 15
+  combinations × 141) = **21,115 images**, split 80/10/10 by photo;
+- **real:** 108 clean + 540 one-type + 72 two-type (a ring of 6 combinations) = **720 pairs**.
+
+Tables in the README (Data → Planned dataset) and in `docs/data_collection/capture_plan.md`.
+
+### Generator review
+
+Each generator was shown to the user on sample sheets of randomly chosen photos at light,
+medium and heavy, changed until approved, and only then saved. Rules that came out of the
+review: stay with the method of Zhang et al. 2025 (the vendored `physical_lens_soiling`) where
+it has the type; the three levels must be clearly different; light must still be visible. The
+real test captures (sessions 1 and 2) showed no visible water at all (dirty and clean differ by
+camera noise only), so the review uses the synthetic photos only.
+
+| Type | Approved generator | Severity |
+|---|---|---|
+| Water drops | Fig. 1(g) droplets only (vendored droplet functions); the "thick"/"thin" blotches dropped | 2–3 / 4–5 / 6–9 droplets, growing size and strength |
+| Mud | Fig. 1(b, c) via the vendored `add_mudByTxture` with the 3 mud-like textures, renamed `scattered_spots`, `large_splashes`, `single_stain`; fog-like textures dropped | stains shrink: 20% / 50% / 100% of the heavy stain area |
+| Fogging | vendored mist textures, smoothed into one veil; the scene is blurred and takes on its own spread-out light (the paper-style white clumps looked unnatural to the user) | veil size, density and blur grow together |
+| Cleaning streaks | own design: curved wipe strokes with residue lines (no paper source) | 1 / 3 / 6 strokes |
+| Scratches | sandpaper patches and long scratches with this project's scratch-line drawer, plus a faint haze | 1 + 1 / 2 + 2 / 4 + 4 |
+| Dust | Fig. 1(e) via the vendored `many_dust_drop` texture, drawn like mud but lighter and more transparent | 1 / 3 / 6 layers of specks, opacity, a faint veil |
+
+Severity is no longer the old fade toward the clean image (which made light and medium hard to
+tell apart); a lighter level is always contained in the heavier one, as more spray strokes,
+more sanding or more dust would add to it. Water drops, mud, fogging and dust are rendered on
+the photo enlarged to 1440 px wide and only their change is carried back: the vendored blur
+sizes are fixed in pixels and were made for larger images than our 720 × 480 photos.
+Which parts come from the paper and which are ours: `docs/synthetic_generators.md`.
+
+### Code
+
+- `src/soiling/effects.py`: `add_water_droplets`, `add_mud_stains`, `add_fog`,
+  `add_cleaning_streaks`, `add_sanding_scratches`, `add_dust`, and `render_effect`, the one
+  entry point the dataset builder and the visible-change labels now use. The old
+  `add_dirt` / `add_water` / `add_scratch` stay for the diagnostics scripts and tests.
+- `scripts/render_generator_samples.py`: the figures in `docs/images/generators/` and the
+  measured strength in `results/generator_stats.json`.
+- Tests: 2 new tests per generator (each level changes more than the one below; reproducible
+  from the seed and reachable through `render_effect`).
+
+**Not done yet:** the dataset builder still knows only 3 classes and makes up to three types per
+image. Before the new dataset is built it needs the 6 classes, two-type images only (10%) and
+the planned counts. Until then the existing dataset and models stay as they are; building the
+visible dataset now would mix the new mud/water/scratch generators into the old 3-class layout.

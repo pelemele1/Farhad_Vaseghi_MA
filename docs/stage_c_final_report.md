@@ -1,0 +1,227 @@
+# Stage C Final Report — Pixel-Level Distortion Segmentation
+
+> **Superseded design (Session 27).** The current pipeline — gate first (Stage A), one visible
+> class per tile/pixel, color-coded maps and an image-level answer — is described in
+> [`visible_pipeline_report.md`](visible_pipeline_report.md). This report remains the record of
+> the multi-label models and of how the layers, heads and losses were chosen.
+
+**Status:** complete. Canonical checkpoint: `checkpoints/stage_c_unet_t2_lf/stage_c_head.pt`
+(U-Net-style decoder on all five backbone depths, strides 2–32, Dice + BCE), trained on the pixel masks of
+`data/processed/stage_b` (the same 14000 images, splits and severities as Stage B, with the
+audited masks of Session 26), gated at inference time by
+`checkpoints/impaired_gate_multiscale_lf/impaired_gate_head.pt` at threshold **0.172**
+([`stage_a_final_report.md`](stage_a_final_report.md) §5). The full
+history — the P5-only v1 decoder, the ground-truth fix, the layer study, the scratch-weighting
+test, the label audit — is in [`development_log.md`](development_log.md) Sessions 21–23 and 26; this document reports only the
+current, final result.
+
+---
+
+## 1. Goal
+
+`architecture.md` §2's third and most precise stage: a "small FCN/UNet-style decoder →
+per-pixel classes" that outputs, for every pixel, how likely it is to be covered by dirt,
+water or scratch. Loss per `architecture.md` §4: **Dice + BCE**. Same frozen COCO-pretrained
+YOLOv11-m backbone as Stages A/B; only the decoder is trained.
+
+---
+
+## 2. Pipeline overview
+
+| Step | What | Where |
+|---|---|---|
+| 1 | Pixel-mask ground truth, written by the Stage B builder (`--save-pixel-masks`) | `src/soiling/dataset_builder.py`, `scripts/build_stage_b_dataset.py` |
+| 2 | Dataset (image + 3-channel mask, both at 512×512) | `src/data/stage_c_dataset.py` |
+| 3 | Model: frozen multi-scale backbone + U-Net-style decoder | `src/models/backbone.py`, `src/models/distortion_head.py::StageCUNetHead` |
+| 4 | Loss: Dice + BCE (0.5 / 0.5, batch-level Dice) | `src/models/losses.py::DiceBCELoss` |
+| 5 | Training (keeps the best-validation epoch) | `scripts/train_stage_c.py --arch unet`, `scripts/hpc/train_stage_c_unet.slurm` |
+| 6 | Evaluation (pooled-cell precision/recall/F1/AP/ROC-AUC, tuned thresholds, gate, per-severity) | `scripts/evaluate_stage_c.py`, `scripts/hpc/evaluate_stage_c.slurm` |
+| 7 | Visualization (per-sample report at full resolution) | `scripts/visualize_stage_c_results.py` |
+
+---
+
+## 3. Key details
+
+### Ground truth
+
+The distortion effects already produce the exact per-pixel mask behind each synthetic image,
+so no annotation or pseudo-labeling is needed. The Stage B builder stores it as
+`masks/<image>.png` (one channel per class, 0–255). The mask marks where each distortion is
+at full strength, **independent of severity**: a faint patch is labeled as fully present,
+because the goal is to find faint distortions too; severity only changes the image.
+
+The masks were audited against the images (Session 26, see
+[`stage_b_final_report.md`](stage_b_final_report.md) §3): the vendored thin-water mask carried
+a 0.2 floor over the whole image (1966 masks), 9 variants had an all-zero mask for a rendered
+distortion, and 44 scratch labels named an invisible scratch. The floor is removed, the 9
+variants are re-rendered and the 44 labels removed; the generator now prevents all three.
+
+### Model
+
+The frozen backbone is tapped at five depths (`--taps 2,4,8,16,32`). At 512×512 input:
+
+| stride | backbone layer | map size | channels |
+|---|---|---|---|
+| 2 | 0 | 256×256 | 64 |
+| 4 | 2 | 128×128 | 256 |
+| 8 | 4 (P3) | 64×64 | 512 |
+| 16 | 6 (P4) | 32×32 | 512 |
+| 32 | 10 (P5) | 16×16 | 512 |
+
+`StageCUNetHead` reduces each map to 64 channels (1×1 conv), then works from coarse to fine:
+upsample to the next map's size, concatenate that finer map, 3×3 conv-BN-ReLU. Logits are
+predicted at stride 2 and bilinearly upsampled 2× to the 512×512 input. The skip connections
+are what make it work: P5's 16×16 grid alone cannot represent a 1–7 px scratch (a P5-only FCN
+decoder reached scratch AP 0.17, see `development_log.md`).
+
+### Layer study and scratch weighting
+
+Identical training (25 epochs, best-validation epoch kept), compared on the **validation**
+split before the label audit (relative comparison; AP dirt / water / scratch):
+
+| layers (strides) | AP | mean AP | faint (low-severity) AP | mean faint AP |
+|---|---|---|---|---|
+| 16 + 32 | 0.877 / 0.872 / 0.515 | 0.755 | 0.682 / 0.628 / 0.345 | 0.552 |
+| 8 + 16 + 32 | 0.898 / 0.886 / 0.672 | 0.819 | 0.734 / 0.694 / 0.493 | 0.640 |
+| 4 + 8 + 16 + 32 (previous) | 0.902 / 0.889 / 0.744 | 0.845 | 0.743 / 0.684 / 0.564 | 0.664 |
+| **2 + 4 + 8 + 16 + 32 (canonical)** | **0.907 / 0.896 / 0.775** | **0.859** | **0.758 / 0.703 / 0.601** | **0.687** |
+
+For per-pixel output every finer map helps, and the finest one (stride 2) helps thin
+scratches most. Weighting scratch more heavily in the loss (`--class-weights 1,1,2` / `1,1,3`)
+raised scratch AP to 0.785 / 0.794 but lowered faint-dirt AP to 0.746 / 0.736, so it was not
+adopted — the goal was a scratch gain that costs the other classes nothing.
+
+### Loss
+
+`DiceBCELoss`: 0.5 × BCE + 0.5 × soft Dice. Dice is summed over the whole batch per class,
+not per image — most (image, class) pairs have an empty mask, and per-image Dice on an empty
+mask stays near 1 unless every pixel is ~0, pushing the model to under-predict.
+
+### Evaluation
+
+The 367M pixels of the test split are too many for the sort-based AP/ROC-AUC, so both the
+probability map and the mask are area-pooled to a **64×64 grid** (8×8-pixel cells) during
+evaluation only; training uses full resolution. A cell counts as distorted with the same
+per-class coverage cutoffs as a Stage B tile (**dirt 0.20, water 0.25, scratch 0.015**) — a
+thin scratch rarely fills half of a cell, so a single 0.5 cutoff would ignore most of it.
+Decision thresholds are tuned per class on the val split (best F1). Scratch's tuned
+threshold is very low (0.009) because a thin predicted line covers only a small part of each
+cell, so its pooled probability is small.
+
+---
+
+## 4. Results
+
+HPC job `1834984` (V100), 25 epochs on the audited masks, best validation loss at the last
+epoch (0.2588). (Training the earlier stride-4–32 model for 50 instead of 25 epochs gave no
+gain.)
+
+![Stage C training curve](images/stage_c_training_curve_unet_t2.jpg)
+
+**Pooled-cell metrics (held-out test split, 1400 images, 5.7M cells, tuned thresholds)**
+
+![Stage C pooled-pixel metrics](images/stage_c_test_metrics_unet_t2.jpg)
+
+| class | threshold | precision | recall | F1 | AP | ROC-AUC | support | gated F1 | gated AP | gated ROC-AUC |
+|---|---|---|---|---|---|---|---|---|---|---|
+| dirt | 0.099 | 0.864 | 0.785 | 0.822 | 0.897 | 0.960 | 1137437 | 0.825 | 0.899 | 0.959 |
+| water | 0.264 | 0.788 | 0.827 | 0.807 | 0.883 | 0.958 | 1148292 | 0.809 | 0.885 | 0.959 |
+| scratch | 0.009 | 0.861 | 0.738 | 0.795 | 0.769 | 0.964 | 53179 | 0.773 | 0.725 | 0.890 |
+
+**Effect of the label audit.** The same decoder trained on the old masks scores AP 0.901 /
+0.890 / 0.780 on the old test masks and 0.901 / 0.878 / 0.780 on the audited ones. Trained on
+the audited masks: water +0.005, dirt −0.004, scratch −0.011 — all close to run-to-run noise.
+
+![Stage C ROC and precision-recall curves](images/stage_c_roc_pr_curves_unet_t2.jpg)
+
+The gate leaves dirt and water unchanged and costs scratch some AP (0.769→0.725): when it
+wrongly calls a scratched image clean, the whole correct scratch mask is erased.
+
+**Per-severity breakdown** (`--by-severity`, ungated) — how well are faint distortions found?
+
+| class | severity | precision | recall | F1 | AP | ROC-AUC | support |
+|---|---|---|---|---|---|---|---|
+| dirt | low | 0.758 | 0.603 | 0.672 | 0.731 | 0.933 | 397373 |
+| dirt | medium | 0.779 | 0.852 | 0.814 | 0.887 | 0.982 | 373754 |
+| dirt | high | 0.799 | 0.913 | 0.852 | 0.920 | 0.990 | 366310 |
+| water | low | 0.621 | 0.641 | 0.631 | 0.659 | 0.931 | 379173 |
+| water | medium | 0.702 | 0.897 | 0.788 | 0.879 | 0.982 | 371546 |
+| water | high | 0.768 | 0.940 | 0.845 | 0.937 | 0.991 | 397573 |
+| scratch | low | 0.728 | 0.550 | 0.626 | 0.544 | 0.926 | 16302 |
+| scratch | medium | 0.793 | 0.771 | 0.782 | 0.751 | 0.978 | 18796 |
+| scratch | high | 0.802 | 0.875 | 0.837 | 0.833 | 0.992 | 18081 |
+
+Faint distortions are found reasonably well for dirt and water (low-severity AP 0.73 / 0.66)
+and less well for scratch (0.54, recall 0.55) — a faint, thin line is the hardest target.
+
+![Stage C predicted probability by ground-truth severity (max per image)](images/stage_c_probability_by_severity_unet_t2.jpg)
+
+### Per-sample report figure
+
+`plot_stage_c_report` — one row per sample and class: original / distorted (with the gate's
+verdict) / ground-truth mask / predicted mask / gated mask, all at full 512×512 resolution. A
+multi-distortion image gets one row per class it contains, and its title names all of them.
+
+![Stage C per-sample report, page 1](images/stage_c_full_report_unet_t2_page1.jpg)
+![Stage C per-sample report, page 2](images/stage_c_full_report_unet_t2_page2.jpg)
+![Stage C per-sample report, page 3](images/stage_c_full_report_unet_t2_page3.jpg)
+
+What the pages show: dirt patches (page 1 row 4, page 2 row 1), scratches (page 2 rows 2–3)
+and water blobs (page 2 rows 5–6) are traced closely, including their shape; water is drawn a
+little wider than labeled. Clean images get few false marks: tiny scratch dots (page 1 row 1)
+and water blobs on a night and a snowy scene (rows 2–3), both removed by the gate. Page 1 rows
+5–6 are one **dirt + water** image: the water on top is segmented well, the medium dirt
+underneath it is almost entirely missed — the model reports the visible distortion. Page 2
+row 4 is a faint scratch the model finds but the gate erases. Page 3 is a water + scratch night
+image: the scratch is found, the faint water film only in patches.
+
+---
+
+## 5. Known limitations
+
+- **Faint scratches** remain the weakest case (low-severity AP 0.54, recall 0.55). Weighting
+  scratch in the loss improves it slightly but costs faint-dirt accuracy (§3), so it is not used.
+- **Overlapping distortions.** Dirt under a strong water layer stays in the ground truth but
+  is mostly invisible (13% of its visibility left under high-severity thin water, 22% under
+  thick water); the decoder segments the water and misses that dirt. About 3–4% of dirt pixels
+  are affected.
+- **Faint water films at night** are segmented only in patches (page 3).
+- **Clean-image false alarms and gate misses.** Some clean images get spurious marks that the
+  gate lets through, and the gate occasionally erases a real, correct scratch mask.
+- **Metrics are on 8×8-pixel cells**, not individual pixels (§3); they measure localization
+  at that granularity.
+- **Synthetic distortions only**; the real camera-pair pseudo-masks `architecture.md` §5
+  describes (difference image + threshold/morphology) are not yet tested. Small pilot dataset
+  (1000 source photos) — same caveats as the other stages.
+
+---
+
+## 6. Reproducing this report
+
+> **Code version.** These commands reproduce the numbers below only with the code of
+> commit `0438bff` (`git checkout 0438bff`). Since Session 29 the dataset builders call the
+> six new synthetic generators ([`synthetic_generators.md`](synthetic_generators.md)), so
+> rebuilding the dataset with the current code gives different images.
+
+```bash
+python scripts/build_stage_b_dataset.py --source data/raw/mio_tcd/images \
+    --out data/processed/stage_b --variants 14 --include-combos --include-severity \
+    --dirt-threshold 0.20 --water-threshold 0.25 --scratch-threshold 0.015 --save-pixel-masks
+python scripts/train_stage_c.py --data data/processed/stage_b --arch unet --taps 2,4,8,16,32 \
+    --epochs 25 --batch-size 16 --img-size 512 --device cuda --out checkpoints/stage_c_unet_t2_lf
+python scripts/evaluate_stage_c.py --checkpoint checkpoints/stage_c_unet_t2_lf/stage_c_head.pt \
+    --data data/processed/stage_b --split test --tune-thresholds --by-severity \
+    --gate-checkpoint checkpoints/impaired_gate_multiscale_lf/impaired_gate_head.pt --gate-threshold 0.172
+python scripts/visualize_stage_c_results.py --checkpoint checkpoints/stage_c_unet_t2_lf/stage_c_head.pt \
+    --data data/processed/stage_b --split test --tune-thresholds \
+    --gate-checkpoint checkpoints/impaired_gate_multiscale_lf/impaired_gate_head.pt --gate-threshold 0.172 \
+    --log-file stage_c_lf_1834984.out --tag _unet_t2 --out-dir docs/images
+```
+
+The gate is trained as in [`stage_a_final_report.md`](stage_a_final_report.md) §5. The layer
+study and weighting runs are `scripts/hpc/layer_study.sh` (logs in `study_logs/`).
+`stage_c_lf_1834984.out` (training) and `eval_lf_1834990.out` (test evaluation and figures) are
+the raw stdout of the TinyGPU jobs; `eval_old_on_fixed_1835006.out` scores the pre-audit decoder
+on the audited masks. The pre-audit decoder (`checkpoints/stage_c_unet_t2`) and earlier ones
+(`checkpoints/stage_c`, `checkpoints/stage_c_unet`, `checkpoints/stage_c_unet50`) are kept for
+comparison.

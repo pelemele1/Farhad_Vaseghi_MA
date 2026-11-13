@@ -1,0 +1,91 @@
+### Starting TaskPrologue of job 1822979 on tg090 at Sat Sep 26 06:10:33 PM CEST 2026
+Running on cores 0-31 with governor ondemand
+Sat Sep 26 18:10:33 2026       
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 610.57.04              KMD Version: 610.57.04     CUDA UMD Version: 13.3     |
++-----------------------------------------+------------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  NVIDIA A100-SXM4-40GB          On  |   00000000:01:00.0 Off |                    0 |
+| N/A   47C    P0             58W /  400W |       0MiB /  40960MiB |      0%      Default |
+|                                         |                        |             Disabled |
++-----------------------------------------+------------------------+----------------------+
+
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
+|        ID   ID                                                               Usage      |
+|=========================================================================================|
+|  No running processes found                                                             |
++-----------------------------------------------------------------------------------------+
+### Finished TaskPrologue
+
+/home/woody/iwnt/iwnt196h/software/private/conda/envs/stage_a/lib/python3.11/site-packages/pythonperlin/__init__.py:4: UserWarning: pkg_resources is deprecated as an API. See https://setuptools.pypa.io/en/latest/pkg_resources.html. The pkg_resources package is slated for removal as early as 2025-11-30. Refrain from using this package or pin to Setuptools<81.
+  from pkg_resources import get_distribution
+train=11200 val=1400 loss=focal alpha=0.75 gamma=2.0
+epoch 1/40  train_loss=0.0377  val_loss=0.0361  (22.6s)  *saved
+epoch 2/40  train_loss=0.0354  val_loss=0.0351  (19.1s)  *saved
+epoch 3/40  train_loss=0.0349  val_loss=0.0349  (19.2s)  *saved
+epoch 4/40  train_loss=0.0347  val_loss=0.0349  (19.3s)
+epoch 5/40  train_loss=0.0346  val_loss=0.0349  (19.3s)
+epoch 6/40  train_loss=0.0345  val_loss=0.0346  (19.2s)  *saved
+epoch 7/40  train_loss=0.0345  val_loss=0.0345  (19.3s)  *saved
+epoch 8/40  train_loss=0.0343  val_loss=0.0349  (19.3s)
+epoch 9/40  train_loss=0.0344  val_loss=0.0346  (19.5s)
+epoch 10/40  train_loss=0.0343  val_loss=0.0348  (19.3s)
+epoch 11/40  train_loss=0.0343  val_loss=0.0345  (20.6s)  *saved
+epoch 12/40  train_loss=0.0343  val_loss=0.0345  (20.6s)  *saved
+epoch 13/40  train_loss=0.0343  val_loss=0.0345  (19.6s)
+epoch 14/40  train_loss=0.0343  val_loss=0.0348  (19.6s)
+epoch 15/40  train_loss=0.0342  val_loss=0.0344  (19.6s)  *saved
+epoch 16/40  train_loss=0.0342  val_loss=0.0348  (19.3s)
+epoch 17/40  train_loss=0.0342  val_loss=0.0346  (19.5s)
+epoch 18/40  train_loss=0.0342  val_loss=0.0348  (19.5s)
+epoch 19/40  train_loss=0.0342  val_loss=0.0344  (19.5s)
+epoch 20/40  train_loss=0.0342  val_loss=0.0345  (19.7s)
+epoch 21/40  train_loss=0.0342  val_loss=0.0347  (19.7s)
+epoch 22/40  train_loss=0.0342  val_loss=0.0353  (19.6s)
+epoch 23/40  train_loss=0.0342  val_loss=0.0345  (19.4s)
+epoch 24/40  train_loss=0.0342  val_loss=0.0344  (19.4s)  *saved
+epoch 25/40  train_loss=0.0342  val_loss=0.0352  (19.6s)
+epoch 26/40  train_loss=0.0342  val_loss=0.0346  (19.6s)
+epoch 27/40  train_loss=0.0341  val_loss=0.0346  (19.5s)
+epoch 28/40  train_loss=0.0342  val_loss=0.0345  (19.5s)
+epoch 29/40  train_loss=0.0342  val_loss=0.0347  (19.6s)
+epoch 30/40  train_loss=0.0342  val_loss=0.0344  (19.5s)
+epoch 31/40  train_loss=0.0342  val_loss=0.0345  (19.4s)
+epoch 32/40  train_loss=0.0341  val_loss=0.0348  (19.5s)
+epoch 33/40  train_loss=0.0341  val_loss=0.0345  (19.4s)
+epoch 34/40  train_loss=0.0342  val_loss=0.0348  (19.5s)
+epoch 35/40  train_loss=0.0342  val_loss=0.0347  (19.5s)
+epoch 36/40  train_loss=0.0342  val_loss=0.0345  (20.3s)
+epoch 37/40  train_loss=0.0341  val_loss=0.0351  (20.5s)
+epoch 38/40  train_loss=0.0342  val_loss=0.0347  (20.6s)
+epoch 39/40  train_loss=0.0342  val_loss=0.0345  (21.0s)
+epoch 40/40  train_loss=0.0342  val_loss=0.0345  (19.6s)
+wrote checkpoints/stage_b_gtfix/stage_b_head.pt (best val_loss=0.0344)
+=== JOB_STATISTICS ===
+=== current date     : Sat Sep 26 06:23:55 PM CEST 2026
+= Job-ID             : 1822979 on tinygpu
+= Job-Name           : stage_b_gtfix
+= Job-Command        : /home/woody/iwnt/iwnt196h/Farhad_Vaseghi_MA/scripts/hpc/train_stage_b_gtfix.slurm
+= Initial workdir    : /home/woody/iwnt/iwnt196h/Farhad_Vaseghi_MA
+= Queue/Partition    : a100
+= Slurm account      : iwnt with QOS=normal
+= Requested resources:  for 06:00:00
+= Elapsed runtime    : 00:13:34
+= Total RAM usage    : 3.9 GiB of requested  GiB (%)   
+= Node list          : tg090
+= Subm/Elig/Start/End: 2026-09-26T18:04:54 / 2026-09-26T18:04:54 / 2026-09-26T18:10:21 / 2026-09-26T18:23:55
+======================
+=== Quota infos ======
+    Path                 Used     SoftQ    HardQ    Gracetime  Filec    FileQ    FiHaQ    FileGrace    
+    /home/woody            11.9G  1000.0G  1500.0G        N/A     119K   5,000K   7,500K        N/A    
+    /home/hpc               6.0G   104.9G   209.7G        N/A   1,449      500K   1,000K        N/A    
+    /home/vault             0.0K  1048.6G  2097.2G        N/A       1      200K     400K        N/A    
+======================
+=== GPU utilization ==
+gpu_name, gpu_bus_id, pid, gpu_utilization [%], mem_utilization [%], max_memory_usage [MiB], time [ms]
+NVIDIA A100-SXM4-40GB, 00000000:01:00.0, 34619, 66 %, 44 %, 2180 MiB, 793077 ms

@@ -1,0 +1,84 @@
+### Starting TaskPrologue of job 1823240 on tg066 at Sat Sep 26 11:58:32 PM CEST 2026
+Running on cores 6-7,14-15,22-23,30-31 with governor ondemand
+Sat Sep 26 23:58:32 2026       
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 610.57.04              KMD Version: 610.57.04     CUDA UMD Version: 13.3     |
++-----------------------------------------+------------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  NVIDIA GeForce RTX 2080 Ti     On  |   00000000:AF:00.0 Off |                  N/A |
+| 35%   46C    P5              4W /  250W |       1MiB /  11264MiB |      0%      Default |
+|                                         |                        |                  N/A |
++-----------------------------------------+------------------------+----------------------+
+
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
+|        ID   ID                                                               Usage      |
+|=========================================================================================|
+|  No running processes found                                                             |
++-----------------------------------------------------------------------------------------+
+### Finished TaskPrologue
+
+/home/woody/iwnt/iwnt196h/software/private/conda/envs/stage_a/lib/python3.11/site-packages/pythonperlin/__init__.py:4: UserWarning: pkg_resources is deprecated as an API. See https://setuptools.pypa.io/en/latest/pkg_resources.html. The pkg_resources package is slated for removal as early as 2025-11-30. Refrain from using this package or pin to Setuptools<81.
+  from pkg_resources import get_distribution
+arch=multiscale img_size=512
+train=11200 val=1400 class_weight=[14.0, 1.076923131942749]
+epoch 1/20  train_loss=0.5339  val_loss=0.4721  (48.3s)  *saved
+epoch 2/20  train_loss=0.4603  val_loss=0.4252  (45.9s)  *saved
+epoch 3/20  train_loss=0.4302  val_loss=0.4092  (45.9s)  *saved
+epoch 4/20  train_loss=0.4162  val_loss=0.4013  (45.9s)  *saved
+epoch 5/20  train_loss=0.4068  val_loss=0.3942  (45.9s)  *saved
+epoch 6/20  train_loss=0.3936  val_loss=0.3813  (45.9s)  *saved
+epoch 7/20  train_loss=0.3819  val_loss=0.3778  (46.0s)  *saved
+epoch 8/20  train_loss=0.3812  val_loss=0.4004  (45.8s)
+epoch 9/20  train_loss=0.3699  val_loss=0.4470  (45.9s)
+epoch 10/20  train_loss=0.3591  val_loss=0.3730  (46.0s)  *saved
+epoch 11/20  train_loss=0.3538  val_loss=0.4455  (45.9s)
+epoch 12/20  train_loss=0.3530  val_loss=0.3686  (45.8s)  *saved
+epoch 13/20  train_loss=0.3472  val_loss=0.3825  (46.0s)
+epoch 14/20  train_loss=0.3433  val_loss=0.3547  (45.9s)  *saved
+epoch 15/20  train_loss=0.3489  val_loss=0.3594  (46.0s)
+epoch 16/20  train_loss=0.3245  val_loss=0.6080  (45.9s)
+epoch 17/20  train_loss=0.3284  val_loss=0.3706  (45.9s)
+epoch 18/20  train_loss=0.3316  val_loss=0.4866  (45.9s)
+epoch 19/20  train_loss=0.3294  val_loss=0.3616  (45.9s)
+epoch 20/20  train_loss=0.3271  val_loss=0.3717  (45.8s)
+wrote checkpoints/study/g_t32/impaired_gate_head.pt (best val_loss=0.3547)
+/home/woody/iwnt/iwnt196h/software/private/conda/envs/stage_a/lib/python3.11/site-packages/pythonperlin/__init__.py:4: UserWarning: pkg_resources is deprecated as an API. See https://setuptools.pypa.io/en/latest/pkg_resources.html. The pkg_resources package is slated for removal as early as 2025-11-30. Refrain from using this package or pin to Setuptools<81.
+  from pkg_resources import get_distribution
+Tuned threshold (best-F1 on val split):
+  impaired  0.096
+Evaluated 1400 images from split='val', threshold=tuned
+class      threshold precision    recall        f1        AP   ROC-AUC   support
+impaired       0.096     0.936     0.994     0.964     0.992     0.908      1300
+
+Gate threshold for recall >= 0.95 (tuned on val): 0.166
+  val:  impaired kept=0.950  clean passed=0.620
+  val: impaired kept=0.950  clean passed=0.620
+=== JOB_STATISTICS ===
+=== current date     : Sun Sep 27 12:14:47 AM CEST 2026
+= Job-ID             : 1823240 on tinygpu
+= Job-Name           : g_t32
+= Job-Command        : /home/woody/iwnt/iwnt196h/Farhad_Vaseghi_MA/scripts/hpc/run_shell.slurm
+= Initial workdir    : /home/woody/iwnt/iwnt196h/Farhad_Vaseghi_MA
+= Queue/Partition    : work
+= Slurm account      : iwnt with QOS=normal
+= Requested resources:  for 03:00:00
+= Elapsed runtime    : 00:16:17
+= Total RAM usage    : 3.8 GiB of requested  GiB (%)   
+= Node list          : tg066
+= Subm/Elig/Start/End: 2026-09-26T22:41:52 / 2026-09-26T22:41:52 / 2026-09-26T23:58:30 / 2026-09-27T00:14:47
+======================
+=== Quota infos ======
+    Path                 Used     SoftQ    HardQ    Gracetime  Filec    FileQ    FiHaQ    FileGrace    
+    /home/woody            10.5G  1000.0G  1500.0G        N/A     101K   5,000K   7,500K        N/A    
+    /home/hpc               6.0G   104.9G   209.7G        N/A   1,449      500K   1,000K        N/A    
+    /home/vault             0.0K  1048.6G  2097.2G        N/A       1      200K     400K        N/A    
+======================
+=== GPU utilization ==
+gpu_name, gpu_bus_id, pid, gpu_utilization [%], mem_utilization [%], max_memory_usage [MiB], time [ms]
+NVIDIA GeForce RTX 2080 Ti, 00000000:AF:00.0, 2340354, 91 %, 56 %, 1830 MiB, 928136 ms
+NVIDIA GeForce RTX 2080 Ti, 00000000:AF:00.0, 2340353, 67 %, 42 %, 3312 MiB, 26738 ms
