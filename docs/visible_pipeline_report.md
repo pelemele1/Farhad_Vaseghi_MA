@@ -292,12 +292,12 @@ python scripts/visualize_visible.py --data data/processed/visible \
     --a checkpoints/visible_a_w/stage_a_head.pt --b checkpoints/visible_b_w/stage_b_head.pt \
     --c checkpoints/visible_c_v/stage_c_head.pt --config checkpoints/visible_pipeline.json \
     --results results/visible_eval.json \
-    --logs visible_a_w_1835836.out,visible_b_w_1835837.out,visible_c_v_1835902.out --out-dir docs/images
+    --logs logs/jobs/visible_a_w_1835836.out,logs/jobs/visible_b_w_1835837.out,logs/jobs/visible_c_v_1835902.out --out-dir docs/images
 ```
 
 On TinyGPU: `scripts/hpc/train_visible.sh` and `scripts/hpc/evaluate_visible.sh`. Job logs:
-`build_visible_1835773.out` (dataset), `visible_a_w_1835836.out`, `visible_b_w_1835837.out`,
-`visible_c_v_1835902.out` (training), `eval_visible_1835912.out` (evaluation and figures).
+`logs/jobs/build_visible_1835773.out` (dataset), `logs/jobs/visible_a_w_1835836.out`, `logs/jobs/visible_b_w_1835837.out`,
+`logs/jobs/visible_c_v_1835902.out` (training), `logs/jobs/eval_visible_1835912.out` (evaluation and figures).
 
 Using the pipeline in code:
 

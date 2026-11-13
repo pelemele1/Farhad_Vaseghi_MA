@@ -2139,7 +2139,7 @@ submitted twice, on `a100` and on the `work` pool (rtx3080 + rtx2080ti; torch su
 via the new `scripts/hpc/run_shell.slurm`. A local watcher cancelled each job's twin as soon as
 one copy started. The cluster was fully allocated all evening; the twin setup moved the first
 start estimate from ~11:00 next day to ~01:00, and in practice the jobs started from ~23:00.
-Logs: `study_logs/`.
+Logs: `logs/studies/`.
 
 ### Phase 3 -- Results (validation split; AP / low-severity AP, dirt / water / scratch)
 
@@ -2603,7 +2603,9 @@ opens with a double click, not a Python script.
   since the series began, `fogging_t015s_...`); **two types on one pane** (second type and
   severity in the form and the name). "IR" renamed to "night".
 
-Plan, amounts and app usage: `docs/data_collection/capture_plan.md`.
+Plan and amounts: `docs/data_collection/capture_plan.md`; the app with an annotated screenshot
+and every feature: `docs/capture_app.md` (screenshot rendered with a simulated camera pair by
+`scripts/render_capture_app_figure.py`).
 
 ### Tests
 
@@ -2678,3 +2680,7 @@ Which parts come from the paper and which are ours: `docs/synthetic_generators.m
 image. Before the new dataset is built it needs the 6 classes, two-type images only (10%) and
 the planned counts. Until then the existing dataset and models stay as they are; building the
 visible dataset now would mix the new mud/water/scratch generators into the old 3-class layout.
+
+**Repository tidy-up (2026-11-13).** The 70 job logs that were at the repository root are now
+in `logs/jobs/`, and `study_logs/` is now `logs/studies/`; file names are unchanged, so the
+names quoted in this log are found there. The HPC scripts write new logs to these folders.

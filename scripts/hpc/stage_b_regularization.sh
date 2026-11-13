@@ -7,7 +7,7 @@
 #   bash scripts/hpc/stage_b_regularization.sh
 set -e
 OUT=checkpoints/study
-mkdir -p study_logs
+mkdir -p logs/studies
 
 submit() {  # name, extra train flags
     local name=$1
@@ -19,7 +19,7 @@ submit() {  # name, extra train flags
         local gres=gpu:1
         [ "$part" = a100 ] && gres=gpu:a100:1
         sbatch.tinygpu -p "$part" --gres="$gres" --time=3:00:00 --job-name="$name" \
-            --output="study_logs/${name}_%j.out" scripts/hpc/run_shell.slurm "$cmd" >/dev/null
+            --output="logs/studies/${name}_%j.out" scripts/hpc/run_shell.slurm "$cmd" >/dev/null
     done
     echo "$name submitted (a100 + work)"
 }

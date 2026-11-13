@@ -12,9 +12,10 @@ ENV=stage_a
 GRES=gpu:$PART:1
 [ "$PART" = v100 ] && ENV=stage_a_v100
 [ "$PART" = work ] && GRES=gpu:1
+mkdir -p logs/jobs
 submit() {  # stage, time
     sbatch.tinygpu -p "$PART" --gres=$GRES --time="$2" $DEP --export=NONE,CONDA_ENV=$ENV \
-        --job-name="visible_$1$SUFFIX" --output="visible_${1}${SUFFIX}_%j.out" \
+        --job-name="visible_$1$SUFFIX" --output="logs/jobs/visible_${1}${SUFFIX}_%j.out" \
         scripts/hpc/run_shell.slurm "python3 -u scripts/train_visible.py --stage $1 --data $DATA --device cuda --out checkpoints/visible_$1$SUFFIX"
 }
 submit a 3:00:00

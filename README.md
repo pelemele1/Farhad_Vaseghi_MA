@@ -258,7 +258,12 @@ The **Stereo Capture** app (`src/capture/`, `scripts/capture_app.py`, packaged a
 `.exe`) replaces Vimba X Viewer for capturing: live view of both cameras, the protocol form,
 synchronized pairs saved as lossless PNG with the conditions in the file name
 (`water_drops_medium_3cm_r1_0002_right_2C.png`), timed series for fogging, two-type captures,
-and one log row per capture (`data/real_captures/capture_log.csv`).
+and one log row per capture (`data/real_captures/capture_log.csv`). Window, features and use:
+[`docs/capture_app.md`](docs/capture_app.md).
+
+![Stereo Capture window](docs/images/capture_app/window.png)
+*The capture app during a session: left camera behind the clean pane, right camera behind the
+test pane, the protocol form and the capture buttons on the right.*
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -435,7 +440,8 @@ Practical notes: a100/v100 jobs need a typed GPU request (`--gres=gpu:a100:1`); 
 the second environment `stage_a_v100` (PyTorch built for CUDA 12.6, which still supports them),
 selected with `--export=NONE,CONDA_ENV=stage_a_v100`; Slurm scripts must have LF line
 endings and use `python3 -u` so logs appear immediately. The raw stdout of every job behind the
-reported numbers is kept at the repository root (`*_<jobid>.out`) and in `study_logs/`.
+reported numbers is kept in `logs/jobs/` (`<name>_<jobid>.out`) and, for the layer and
+regularization studies, in `logs/studies/`.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -454,12 +460,13 @@ reported numbers is kept at the repository root (`*_<jobid>.out`) and in `study_
 │   ├── soiling/             # distortion effects (6 approved generators), dataset builders, visible-change labels
 │   ├── models/              # frozen backbone, all heads, losses
 │   └── eval/                # metrics (class_maps.py: one-class-per-location maps), thresholds, gate
-├── scripts/                 # build_*, train_*, evaluate_*, visualize_*, capture_app.py, render_generator_samples.py
+├── scripts/                 # build_*, train_*, evaluate_*, visualize_*, capture_app.py, render_*
 │   └── hpc/                 # TinyGPU Slurm/shell scripts
 ├── tests/                   # pytest suite (310 tests)
 ├── docs/
 │   ├── visible_pipeline_report.md   # current pipeline (Session 27)
 │   ├── synthetic_generators.md      # the six approved generators (Session 29)
+│   ├── capture_app.md               # the Stereo Capture app (Session 28)
 │   ├── data_collection/     # supervisor's capture protocol + our capture plan and app usage
 │   ├── stage_a_final_report.md, stage_b_final_report.md, stage_c_final_report.md
 │   ├── development_log.md   # full session-by-session history
@@ -470,7 +477,7 @@ reported numbers is kept at the repository root (`*_<jobid>.out`) and in `study_
 ├── third_party/physical_lens_soiling/   # vendored dirt/water generator
 ├── notebooks/               # Colab notebook used for one Stage B run
 ├── results/                 # visible_eval.json (current report), generator_stats.json
-├── study_logs/, *_<jobid>.out           # raw HPC job logs behind the reported numbers
+├── logs/                  # raw HPC job logs behind the reported numbers (jobs/, studies/)
 ├── raw/, wiki/              # personal reading knowledge base (see CLAUDE.md), not code
 └── data/, checkpoints/, weights/        # git-ignored: datasets, trained heads, YOLO weights
 ```
@@ -579,7 +586,8 @@ Effect of the main improvements on faint-distortion AP (test split, dirt / water
 | [`docs/stage_c_final_report.md`](docs/stage_c_final_report.md) | Stage C: U-Net decoder, layer study, pooled-cell evaluation, results, figures |
 | [`docs/synthetic_generators.md`](docs/synthetic_generators.md) | The six approved contamination generators: method, source (paper or own), severity parameters, one sample each, measured strength |
 | [`docs/data_collection/datacollection_surveilance_en.md`](docs/data_collection/datacollection_surveilance_en.md) | The supervisor's capture protocol (unchanged) |
-| [`docs/data_collection/capture_plan.md`](docs/data_collection/capture_plan.md) | Decisions that change the protocol, amounts to capture per category, capture app usage, file names |
+| [`docs/data_collection/capture_plan.md`](docs/data_collection/capture_plan.md) | Decisions that change the protocol, amounts to capture per category, the capture procedure |
+| [`docs/capture_app.md`](docs/capture_app.md) | The Stereo Capture app: annotated window, every feature, a session step by step, files and log, packaging |
 | [`docs/development_log.md`](docs/development_log.md) | Complete chronological development history (Sessions 1–29) |
 | [`architecture.md`](architecture.md) | Design concept the stages follow |
 | [`docs/data_collection_pipeline.md`](docs/data_collection_pipeline.md) | Earlier field protocol for the two-camera rig (Sessions 6–14; partly replaced by the two documents above) |

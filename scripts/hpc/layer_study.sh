@@ -9,14 +9,14 @@ set -e
 # on a100 and on the rtx2080ti/rtx3080 "work" pool -- and whichever copy starts
 # first wins; the other copy is cancelled (by hand or by a watcher) once one runs.
 OUT=checkpoints/study
-mkdir -p study_logs
+mkdir -p logs/studies
 
 submit() {  # name, time, "train cmd", "eval cmd"
     local name=$1 time=$2 cmd="python3 -u $3 && python3 -u $4"
     for part in a100 work; do
         local gres=gpu:1
         [ "$part" = a100 ] && gres=gpu:a100:1
-        sbatch.tinygpu -p "$part" --gres="$gres" --time="$time" --job-name="$name"             --output="study_logs/${name}_%j.out" scripts/hpc/run_shell.slurm "$cmd" >/dev/null
+        sbatch.tinygpu -p "$part" --gres="$gres" --time="$time" --job-name="$name"             --output="logs/studies/${name}_%j.out" scripts/hpc/run_shell.slurm "$cmd" >/dev/null
     done
     echo "$name submitted (a100 + work)"
 }
@@ -26,7 +26,7 @@ evaluate_only() {  # name, "eval cmd" -- the existing 4,8,16,32 models, scored o
     for part in a100 work; do
         local gres=gpu:1
         [ "$part" = a100 ] && gres=gpu:a100:1
-        sbatch.tinygpu -p "$part" --gres="$gres" --time=1:00:00 --job-name="$name"             --output="study_logs/${name}_%j.out" scripts/hpc/run_shell.slurm "$cmd" >/dev/null
+        sbatch.tinygpu -p "$part" --gres="$gres" --time=1:00:00 --job-name="$name"             --output="logs/studies/${name}_%j.out" scripts/hpc/run_shell.slurm "$cmd" >/dev/null
     done
     echo "$name submitted (a100 + work)"
 }
