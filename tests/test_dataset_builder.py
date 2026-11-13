@@ -404,14 +404,14 @@ def test_build_stage_a_dataset_labels_are_reproducible(tmp_path):
 # --- Stage B (tile-grid) -----------------------------------------------
 
 
-def test_apply_effect_combo_with_masks_ground_truth_is_severity_independent():
-    # Severity changes how visible an effect is in the image, not where it
-    # is: the ground-truth mask must be identical at every level. Uses
-    # scratch, which is pixel-reproducible for a fixed seed (dirt/water are
-    # not, see tile_labels.py).
+def test_apply_effect_combo_with_masks_ground_truth_grows_with_severity():
+    # Since Session 29 severity is the amount of contamination: the mask is the
+    # effect's own full-strength mask, and a lighter level is part of the
+    # heavier one (more sanding adds scratches). Before, severity only faded
+    # one pattern and the mask was identical at every level.
     from src.soiling.dataset_builder import apply_effect_combo_with_masks
 
-    img = np.random.default_rng(6).integers(0, 255, size=(48, 64, 3), dtype=np.uint8)
+    img = np.full((96, 128, 3), 40, dtype=np.uint8)  # dark, so every level is visible on the first try
     results = {
         level: apply_effect_combo_with_masks(img, (False, False, True), {"scratch": 7}, {"scratch": level})
         for level in ("low", "medium", "high")
@@ -420,8 +420,9 @@ def test_apply_effect_combo_with_masks_ground_truth_is_severity_independent():
     for level in ("low", "medium"):
         out, labels, masks = results[level]
         assert labels["scratch_severity"] == level
-        assert np.array_equal(masks["scratch"], high_masks["scratch"])
-        assert not np.array_equal(out, high_out)  # the image itself is fainter
+        assert np.all(masks["scratch"] <= high_masks["scratch"] + 1e-6)  # contained in heavy
+        assert (masks["scratch"] > 0.5).sum() < (high_masks["scratch"] > 0.5).sum()
+        assert not np.array_equal(out, high_out)
 
 
 def test_build_stage_b_dataset_meta_records_severity_independent_gt(tmp_path):
