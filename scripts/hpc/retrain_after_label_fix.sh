@@ -10,9 +10,9 @@ DEP=${1:+--dependency=afterok:$1}
 PART=${PART:-a100}
 ENV=stage_a
 [ "$PART" = v100 ] && ENV=stage_a_v100
-mkdir -p study_logs
+mkdir -p logs/studies logs/jobs
 submit() {  # name, time, command
-    sbatch.tinygpu -p "$PART" --gres=gpu:$PART:1 --time="$2" $DEP --export=NONE,CONDA_ENV=$ENV         --job-name="$1" --output="$1_%j.out" \
+    sbatch.tinygpu -p "$PART" --gres=gpu:$PART:1 --time="$2" $DEP --export=NONE,CONDA_ENV=$ENV         --job-name="$1" --output="logs/jobs/$1_%j.out" \
         scripts/hpc/run_shell.slurm "$3"
 }
 submit gate_lf 2:00:00 "python3 -u scripts/train_impaired_gate.py --data data/processed/stage_b --arch multiscale --img-size 512 --epochs 20 --device cuda --out checkpoints/impaired_gate_multiscale_lf && python3 -u scripts/evaluate_impaired_gate.py --checkpoint checkpoints/impaired_gate_multiscale_lf/impaired_gate_head.pt --data data/processed/stage_b --split test --tune-thresholds --recall-target 0.95 --device cuda"

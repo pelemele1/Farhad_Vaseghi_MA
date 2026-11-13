@@ -16,6 +16,7 @@ GRES=gpu:$PART:1
 CK="--a $A/stage_a_head.pt --b $B/stage_b_head.pt --c $C/stage_c_head.pt"
 FIGS=""
 [ -n "$LOGS" ] && FIGS="--logs $LOGS"
+mkdir -p logs/jobs
 sbatch.tinygpu -p "$PART" --gres=$GRES --time=3:00:00 $DEP --export=NONE,CONDA_ENV=$ENV \
-    --job-name=eval_visible --output="eval_visible_%j.out" scripts/hpc/run_shell.slurm \
+    --job-name=eval_visible --output="logs/jobs/eval_visible_%j.out" scripts/hpc/run_shell.slurm \
     "python3 -u scripts/evaluate_visible.py --data $DATA $CK --device cuda --config checkpoints/visible_pipeline.json --out-json results/visible_eval.json && python3 -u scripts/visualize_visible.py --data $DATA $CK --config checkpoints/visible_pipeline.json --results results/visible_eval.json $FIGS --device cuda --out-dir docs/images"

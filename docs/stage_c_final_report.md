@@ -215,13 +215,13 @@ python scripts/evaluate_stage_c.py --checkpoint checkpoints/stage_c_unet_t2_lf/s
 python scripts/visualize_stage_c_results.py --checkpoint checkpoints/stage_c_unet_t2_lf/stage_c_head.pt \
     --data data/processed/stage_b --split test --tune-thresholds \
     --gate-checkpoint checkpoints/impaired_gate_multiscale_lf/impaired_gate_head.pt --gate-threshold 0.172 \
-    --log-file stage_c_lf_1834984.out --tag _unet_t2 --out-dir docs/images
+    --log-file logs/jobs/stage_c_lf_1834984.out --tag _unet_t2 --out-dir docs/images
 ```
 
 The gate is trained as in [`stage_a_final_report.md`](stage_a_final_report.md) §5. The layer
-study and weighting runs are `scripts/hpc/layer_study.sh` (logs in `study_logs/`).
-`stage_c_lf_1834984.out` (training) and `eval_lf_1834990.out` (test evaluation and figures) are
-the raw stdout of the TinyGPU jobs; `eval_old_on_fixed_1835006.out` scores the pre-audit decoder
+study and weighting runs are `scripts/hpc/layer_study.sh` (logs in `logs/studies/`).
+`logs/jobs/stage_c_lf_1834984.out` (training) and `logs/jobs/eval_lf_1834990.out` (test evaluation and figures) are
+the raw stdout of the TinyGPU jobs; `logs/jobs/eval_old_on_fixed_1835006.out` scores the pre-audit decoder
 on the audited masks. The pre-audit decoder (`checkpoints/stage_c_unet_t2`) and earlier ones
 (`checkpoints/stage_c`, `checkpoints/stage_c_unet`, `checkpoints/stage_c_unet50`) are kept for
 comparison.

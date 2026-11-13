@@ -300,13 +300,13 @@ python scripts/train_stage_a.py --data data/processed/stage_a --taps 8,16,32 --e
 python scripts/evaluate_stage_a.py --checkpoint checkpoints/stage_a_multiscale_lf/stage_a_head.pt \
     --data data/processed/stage_a --split test --tune-thresholds --by-severity
 python scripts/visualize_stage_a_results.py --checkpoint checkpoints/stage_a_multiscale_lf/stage_a_head.pt \
-    --data data/processed/stage_a --split test --tune-thresholds --log-file stage_a_lf_1834982.out \
+    --data data/processed/stage_a --split test --tune-thresholds --log-file logs/jobs/stage_a_lf_1834982.out \
     --tag _multiscale --out-dir docs/images
 ```
 
-The layer study is `scripts/hpc/layer_study.sh` (its logs are in `study_logs/`).
-`build_a_severity_1822266.out` (dataset build), `stage_a_lf_1834982.out` (training and test
-evaluation), `gate_lf_1834981.out` (gate) and `eval_lf_1834990.out` (figures) are the raw stdout
+The layer study is `scripts/hpc/layer_study.sh` (its logs are in `logs/studies/`).
+`logs/jobs/build_a_severity_1822266.out` (dataset build), `logs/jobs/stage_a_lf_1834982.out` (training and test
+evaluation), `logs/jobs/gate_lf_1834981.out` (gate) and `logs/jobs/eval_lf_1834990.out` (figures) are the raw stdout
 of the TinyGPU jobs; the labels were fixed in place by `scripts/fix_dataset_labels.py`. The
 pre-audit model (`checkpoints/stage_a_multiscale`), the earlier P5-only checkpoint
 (`checkpoints/stage_a_severity`) and older intermediate results are recorded in

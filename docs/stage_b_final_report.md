@@ -321,18 +321,18 @@ python scripts/diagnose_clean_false_positives.py --checkpoint checkpoints/stage_
 python scripts/visualize_stage_b_results.py --checkpoint checkpoints/stage_b_h32_lf/stage_b_head.pt \
     --data data/processed/stage_b --split test --tune-thresholds \
     --gate-checkpoint checkpoints/impaired_gate_multiscale_lf/impaired_gate_head.pt --gate-threshold 0.172 \
-    --log-file stage_b_lf_1834983.out --tag _h32 --out-dir docs/images
+    --log-file logs/jobs/stage_b_lf_1834983.out --tag _h32 --out-dir docs/images
 ```
 
 The current builder writes severity-independent, audited ground truth directly. The on-disk
 dataset was built earlier and converted in place: `scripts/make_gt_severity_independent.py`
 (Session 22), then `scripts/fix_dataset_labels.py` (Session 26; its changes are listed in the
-dataset's `label_fixes.csv`). `build_b_severity_1822268.out` / `build_b_pixel_masks_1822558.out`
-(dataset build), `stage_b_lf_1834983.out` (training) and `eval_lf_1834990.out` (test evaluation,
+dataset's `label_fixes.csv`). `logs/jobs/build_b_severity_1822268.out` / `logs/jobs/build_b_pixel_masks_1822558.out`
+(dataset build), `logs/jobs/stage_b_lf_1834983.out` (training) and `logs/jobs/eval_lf_1834990.out` (test evaluation,
 clean-image check and figures; `scripts/hpc/evaluate_after_label_fix.sh`) are the raw stdout of
-the TinyGPU jobs; `eval_old_on_fixed_1835006.out` scores the pre-audit models on the audited
+the TinyGPU jobs; `logs/jobs/eval_old_on_fixed_1835006.out` scores the pre-audit models on the audited
 labels; the overfitting study is `scripts/hpc/stage_b_regularization.sh` and
-`stage_b_small_head.sh` (logs `study_logs/b_reg_*`, `study_logs/b_small_*`). The pre-audit
+`stage_b_small_head.sh` (logs `logs/studies/b_reg_*`, `logs/studies/b_small_*`). The pre-audit
 model is kept as `checkpoints/stage_b_h32`, the earlier 64-channel models as
 `checkpoints/stage_b_multiscale` (no flips) and `checkpoints/stage_b_flip`. Superseded checkpoints and their numbers are in
 `docs/development_log.md`.

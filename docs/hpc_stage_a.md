@@ -94,7 +94,7 @@ sinfo.tinygpu
 
 ```bash
 squeue.tinygpu -u $USER          # job status
-tail -f stage_a_<jobid>.out      # live training log (written to the repo root)
+tail -f stage_a_<jobid>.out      # live training log (written to the repo root; move finished logs to logs/jobs/)
 ```
 
 The trained head lands at `checkpoints/stage_a/stage_a_head.pt` (a dict with
