@@ -62,7 +62,7 @@
         "visible_first_try": "20/20"
       }
     },
-    "fogging": {
+    "steamy": {
       "light": {
         "mean_pct": 9.0,
         "min_pct": 1.2,

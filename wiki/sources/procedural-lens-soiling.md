@@ -65,7 +65,7 @@ project's single `water` class.
 
 The project now uses this paper for four of its six contamination types (see
 `docs/synthetic_generators.md` in the repo): water drops = Fig. 1(g) droplets only (the
-per-droplet steps of `add_distort`), mud = Fig. 1(b, c) via `add_mudByTxture`, fogging = the
+per-droplet steps of `add_distort`), mud = Fig. 1(b, c) via `add_mudByTxture`, steamy pane (called fogging until 2026-11-15) = the
 mist textures `r_fog` / `thick_fog` with a project-own scattering-veil rendering (the paper's
 "mist drawn like water stains, whiter" gave unnatural clumps), dust = Fig. 1(e), written from
 the paper's description ("like mud stains but lighter and more transparent") with the

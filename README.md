@@ -23,7 +23,7 @@ A standing project goal is to also catch **faint** (low-severity) distortions, s
 is reported per severity level as well.
 
 **Next step (in preparation).** The supervisor's capture protocol has **6 contamination
-types**: mud, water drops, fogging, cleaning streaks, scratches and dust. Synthetic generators
+types**: mud, water drops, steamy pane, cleaning streaks, scratches and dust. Synthetic generators
 for all six are built and approved ([`docs/synthetic_generators.md`](docs/synthetic_generators.md)),
 the amounts of synthetic and real data are planned ([Planned dataset](#planned-dataset-target-amounts)),
 and a capture app for the real two-camera data is ready
@@ -195,7 +195,7 @@ from the paper and which are ours, one sample per type and measured strength:
 |---|---|---|---|
 | Water drops | `add_water_droplets` | Zhang et al. 2025, Fig. 1(g): vendored droplet code | 2–3 → 4–5 → 6–9 droplets |
 | Mud | `add_mud_stains` | Fig. 1(b, c): vendored `add_mudByTxture` | stains shrink to 20% → 50% → 100% |
-| Fogging | `add_fog` | vendored mist shapes (Fig. 1 f), own veil rendering | larger, denser, blurrier veil |
+| Steamy pane | `add_steam` | vendored mist shapes (Fig. 1 f), own veil rendering | larger, denser, blurrier veil |
 | Cleaning streaks | `add_cleaning_streaks` | own design | 1 → 3 → 6 wipe strokes |
 | Scratches | `add_sanding_scratches` | own design (sandpaper, as in the protocol) | 1+1 → 2+2 → 4+4 sanding patches + long scratches |
 | Dust | `add_dust` | Fig. 1(e): vendored dust texture | 1 → 3 → 6 layers of specks + a faint veil |
@@ -213,7 +213,8 @@ real amounts are captured (button presses, combinations, file names) is in
 - **3 severities** per type: light, medium, heavy.
 - **Two-type images** are 10% of each dataset and hold exactly 2 types; 3 types together are not used.
 - **3 pane distances** for the real data. The exact distances are still to be found in practice.
-- **Fogging** is captured as images at different time intervals, not as video. The exact
+- **Steamy panes** (the protocol's "fogging") are captured as images at different time
+  intervals, not as video. The exact
   intervals are still to be found in practice.
 - **Only the right pane** (camera 2C) is ever contaminated. Only right-camera images are network
   input; the left image (camera 97) is the clean reference for making the labels.
@@ -225,7 +226,7 @@ real amounts are captured (button presses, combinations, file names) is in
 | Clean | – | – | – | 800 | 100 | 100 | **1,000** |
 | Mud | 1,000 | 1,000 | 1,000 | 2,400 | 300 | 300 | **3,000** |
 | Water drops | 1,000 | 1,000 | 1,000 | 2,400 | 300 | 300 | **3,000** |
-| Fogging | 1,000 | 1,000 | 1,000 | 2,400 | 300 | 300 | **3,000** |
+| Steamy pane | 1,000 | 1,000 | 1,000 | 2,400 | 300 | 300 | **3,000** |
 | Cleaning streaks | 1,000 | 1,000 | 1,000 | 2,400 | 300 | 300 | **3,000** |
 | Scratches | 1,000 | 1,000 | 1,000 | 2,400 | 300 | 300 | **3,000** |
 | Dust | 1,000 | 1,000 | 1,000 | 2,400 | 300 | 300 | **3,000** |
@@ -239,7 +240,7 @@ real amounts are captured (button presses, combinations, file names) is in
 | Clean | – | – | – | 36 | **108** | 216 |
 | Mud | 30 | 30 | 30 | 30 | **90** | 180 |
 | Water drops | 30 | 30 | 30 | 30 | **90** | 180 |
-| Fogging | 30 | 30 | 30 | 30 | **90** | 180 |
+| Steamy pane | 30 | 30 | 30 | 30 | **90** | 180 |
 | Cleaning streaks | 30 | 30 | 30 | 30 | **90** | 180 |
 | Scratches | 30 | 30 | 30 | 30 | **90** | 180 |
 | Dust | 30 | 30 | 30 | 30 | **90** | 180 |
@@ -257,7 +258,7 @@ the decisions that change it, the amounts and the procedure are in
 The **Stereo Capture** app (`src/capture/`, `scripts/capture_app.py`, packaged as a double-click
 `.exe`) replaces Vimba X Viewer for capturing: live view of both cameras, the protocol form,
 synchronized pairs saved as lossless PNG with the conditions in the file name
-(`water_drops_medium_3cm_r1_0002_right_2C.png`), timed series for fogging, two-type captures,
+(`water_drops_medium_3cm_r1_0002_right_2C.png`), timed series for steamy panes, two-type captures,
 and one log row per capture (`data/real_captures/capture_log.csv`). Window, features and use:
 [`docs/capture_app.md`](docs/capture_app.md).
 
@@ -400,7 +401,7 @@ python scripts/render_generator_samples.py --source data/raw/mio_tcd/images \
     --out-dir docs/images/generators --stats-json results/generator_stats.json
 ```
 In code: `render_effect(name, image, seed, severity)` from `src/soiling/effects.py`, with
-`name` in `water`, `dirt` (mud), `fogging`, `cleaning_streaks`, `scratch`, `dust` and
+`name` in `water`, `dirt` (mud), `steamy`, `cleaning_streaks`, `scratch`, `dust` and
 `severity` in `low`, `medium`, `high`; it returns the image and the effect's mask.
 
 **Capture app** (real data; close Vimba X Viewer first)
@@ -504,8 +505,9 @@ The full record — every decision, dead end and intermediate number — is in
 | 2026-09/10 | — | Report figures cleaned up (legends, titles, axis labels); branch renamed from `feature/stage-a-mio-tcd` to `feature/stages-a-b-c`. |
 | 2026-10-08/09 | 26 | **Label audit of all 28,000 images.** A report figure called a dirt + water image "dirt"; checking every label then found three generator defects: thin-water masks with a 0.2 floor over the whole image (1966 masks), 9 rendered distortions with an all-zero mask, and 44 practically invisible scratches per dataset. Fixed in the generator and in place; all four models retrained (on V100s, via a second CUDA-12.6 environment). Effect: Stage B water AP was overstated by ~0.02 on the old labels; everything else moved by ≤ 0.013. |
 | 2026-10-09 | 27 | **Gate-first pipeline with visible-change labels.** The gate now comes first (Stage A itself), Stages B and C give one class per location as color-coded maps, and an image-level answer names the dominant distortion. Labels mark only what is visible, measured by re-rendering each image without each distortion (made possible by fixing the generator's hidden reseeding). New dataset, all three heads retrained; dominant distortion correct for 91.8% of impaired test images. |
-| 2026-11-07 – 11-10 | 28 | **Stereo Capture app** for the real two-camera data, following the supervisor's protocol: synchronized pairs, conditions in the file names, per-capture log, timed fogging series, two-type captures, packaged as a double-click app. Real-camera problems fixed (camera mapping by serial, USB 2 check, locked parameters, hang on close). Decisions: panes on both lenses, only the right pane contaminated. |
+| 2026-11-07 – 11-10 | 28 | **Stereo Capture app** for the real two-camera data, following the supervisor's protocol: synchronized pairs, conditions in the file names, per-capture log, timed series for steamy panes, two-type captures, packaged as a double-click app. Real-camera problems fixed (camera mapping by serial, USB 2 check, locked parameters, hang on close). Decisions: panes on both lenses, only the right pane contaminated. |
 | 2026-11-09 – 11-12 | 29 | **Planned dataset and six approved generators.** Amounts for 6 types × 3 severities (21,115 synthetic images, 720 real pairs, 10% with two types). One generator per protocol type, each approved by the user on sample sheets; severity as the amount of contamination. The dataset builder is not yet updated, so no data was regenerated. |
+| 2026-11-15 | 30 | Supervisor's edits: the contamination type **"fogging" is renamed "steamy pane"** (app, generator, file names, documents), and the capture's Day / Night field gets a third option, **foggy** (fog in the scene). |
 
 Effect of the main improvements on faint-distortion AP (test split, dirt / water / scratch):
 
@@ -560,8 +562,8 @@ Effect of the main improvements on faint-distortion AP (test split, dirt / water
   to three types per image; it needs the 6 classes, two-type images only (10%) and the planned
   counts before the new dataset is built and all heads are retrained.
 - **Capture app** — tested with a simulated camera (24 tests); its current version (new file
-  names, timed fogging, two types) has not yet run on the real cameras. The 3 pane distances
-  and the fogging interval are still to be measured.
+  names, timed steam series, two types) has not yet run on the real cameras. The 3 pane distances
+  and the steam interval are still to be measured.
 - **Small pilot dataset** — 1000 source scenes. Stage B still shows a small train/val gap that
   only more distinct scenes (e.g. more MIO-TCD images) would close without losing accuracy.
 - **Faint distortions** remain the hardest case at every level; faint water at pixel level is
@@ -588,7 +590,7 @@ Effect of the main improvements on faint-distortion AP (test split, dirt / water
 | [`docs/data_collection/datacollection_surveilance_en.md`](docs/data_collection/datacollection_surveilance_en.md) | The supervisor's capture protocol (unchanged) |
 | [`docs/data_collection/capture_plan.md`](docs/data_collection/capture_plan.md) | Decisions that change the protocol, amounts to capture per category, the capture procedure |
 | [`docs/capture_app.md`](docs/capture_app.md) | The Stereo Capture app: annotated window, every feature, a session step by step, files and log, packaging |
-| [`docs/development_log.md`](docs/development_log.md) | Complete chronological development history (Sessions 1–29) |
+| [`docs/development_log.md`](docs/development_log.md) | Complete chronological development history (Sessions 1–30) |
 | [`architecture.md`](architecture.md) | Design concept the stages follow |
 | [`docs/data_collection_pipeline.md`](docs/data_collection_pipeline.md) | Earlier field protocol for the two-camera rig (Sessions 6–14; partly replaced by the two documents above) |
 | [`docs/hpc_stage_a.md`](docs/hpc_stage_a.md) | How to run on NHR@FAU TinyGPU |
@@ -606,7 +608,7 @@ Each report ends with the exact commands that reproduce its numbers and figures.
 - **physical_lens_soiling** — https://github.com/JannLi/physical_lens_soiling (dirt and water
   effects, vendored with permission), the code of Zhang et al., "Procedural generation of lens
   soiling data via physics-based simulation", The Visual Computer 41, 2025 — the source of the
-  water-drop, mud, fogging and dust generators.
+  water-drop, mud, steamy-pane and dust generators.
 - **SIDL** — Choi, Park and Kim, "SIDL: A Real-World Dataset for Restoring Smartphone Images
   with Dirty Lenses", AAAI 2025 (fingerprint smears blur and defocus the image; basis for the
   cleaning-streak rendering).
