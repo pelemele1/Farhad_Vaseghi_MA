@@ -30,7 +30,7 @@ from src.soiling.effects import MIN_PIXEL_CHANGE, is_visible, render_effect  # n
 TYPES = {
     "water": "water drops",
     "dirt": "mud",
-    "fogging": "fogging",
+    "steamy": "steamy pane",
     "cleaning_streaks": "cleaning streaks",
     "scratch": "scratches",
     "dust": "dust",

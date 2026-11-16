@@ -2599,7 +2599,7 @@ opens with a double click, not a Python script.
 - All dirty images of a session in one folder, the conditions in the file name
   (`water_drops_medium_6cm_r1_0002_right_2C.png`); one log row per capture
   (`capture_log.csv`).
-- Fogging as **images at a fixed interval** instead of video (file names carry the seconds
+- Fogging (renamed steamy pane in Session 30) as **images at a fixed interval** instead of video (file names carry the seconds
   since the series began, `fogging_t015s_...`); **two types on one pane** (second type and
   severity in the form and the name). "IR" renamed to "night".
 
@@ -2611,9 +2611,9 @@ and every feature: `docs/capture_app.md` (screenshot rendered with a simulated c
 
 `tests/test_capture_app.py` (24 tests) runs the window with a simulated camera: protocol order
 of the buttons, naming with severities, distances and two types, numbering that continues
-within a folder, the timed fogging series, the log surviving a log file left open in Excel,
+within a folder, the timed fogging (now steamy) series, the log surviving a log file left open in Excel,
 cameras released on close. The real-camera runs (complete 4024 × 3036 frames, no lost pairs,
-about 0.4 pairs/s with the long indoor exposures) were done before the naming, fogging and
+about 0.4 pairs/s with the long indoor exposures) were done before the naming, fogging (now steamy) and
 two-type changes; the current version still needs one real-camera test.
 
 ### Files
@@ -2625,9 +2625,9 @@ new: `src/capture/{__init__,rig,session,app}.py`, `scripts/capture_app.py`,
 
 **Dates:** 2026-11-09 – 2026-11-12
 
-**Trigger.** The protocol has 6 contamination types (mud, water drops, fogging, cleaning
+**Trigger.** The protocol has 6 contamination types (mud, water drops, fogging — renamed steamy pane in Session 30, cleaning
 streaks, scratches, dust), the synthetic data so far 3 (dirt, water, scratch). The supervisor
-decided: 3 pane distances, fogging at time intervals, and 10% of both datasets with two types
+decided: 3 pane distances, fogging (now steamy) at time intervals, and 10% of both datasets with two types
 on one image.
 
 ### Planned amounts
@@ -2653,14 +2653,14 @@ camera noise only), so the review uses the synthetic photos only.
 |---|---|---|
 | Water drops | Fig. 1(g) droplets only (vendored droplet functions); the "thick"/"thin" blotches dropped | 2–3 / 4–5 / 6–9 droplets, growing size and strength |
 | Mud | Fig. 1(b, c) via the vendored `add_mudByTxture` with the 3 mud-like textures, renamed `scattered_spots`, `large_splashes`, `single_stain`; fog-like textures dropped | stains shrink: 20% / 50% / 100% of the heavy stain area |
-| Fogging | vendored mist textures, smoothed into one veil; the scene is blurred and takes on its own spread-out light (the paper-style white clumps looked unnatural to the user) | veil size, density and blur grow together |
+| Fogging (now steamy pane) | vendored mist textures, smoothed into one veil; the scene is blurred and takes on its own spread-out light (the paper-style white clumps looked unnatural to the user) | veil size, density and blur grow together |
 | Cleaning streaks | own design: curved wipe strokes with residue lines (no paper source) | 1 / 3 / 6 strokes |
 | Scratches | sandpaper patches and long scratches with this project's scratch-line drawer, plus a faint haze | 1 + 1 / 2 + 2 / 4 + 4 |
 | Dust | Fig. 1(e) via the vendored `many_dust_drop` texture, drawn like mud but lighter and more transparent | 1 / 3 / 6 layers of specks, opacity, a faint veil |
 
 Severity is no longer the old fade toward the clean image (which made light and medium hard to
 tell apart); a lighter level is always contained in the heavier one, as more spray strokes,
-more sanding or more dust would add to it. Water drops, mud, fogging and dust are rendered on
+more sanding or more dust would add to it. Water drops, mud, fogging (now steamy) and dust are rendered on
 the photo enlarged to 1440 px wide and only their change is carried back: the vendored blur
 sizes are fixed in pixels and were made for larger images than our 720 × 480 photos.
 Which parts come from the paper and which are ours: `docs/synthetic_generators.md`.
@@ -2684,3 +2684,26 @@ visible dataset now would mix the new mud/water/scratch generators into the old 
 **Repository tidy-up (2026-11-13).** The 70 job logs that were at the repository root are now
 in `logs/jobs/`, and `study_logs/` is now `logs/studies/`; file names are unchanged, so the
 names quoted in this log are found there. The HPC scripts write new logs to these folders.
+
+## Session 30 — "Steamy pane" and "foggy" (supervisor's edits)
+
+**Date:** 2026-11-15
+
+**Trigger.** After a meeting, the supervisor asked for two changes everywhere:
+
+- The contamination type **"fogging" is now "steamy"** (a steamed-up pane), so it is not confused
+  with fog in the scene. Capture app: type `steamy`, field "Steam interval", file names
+  `steamy_t015s_...`, instruction "Steam the test pane". Generator: `add_steam`,
+  `STEAM_SHAPES` (`patchy_steam`, `dense_steam`; still the vendored `r_fog` / `thick_fog`
+  textures), `render_effect("steamy", ...)`; figure `docs/images/generators/steamy.jpg`. The
+  rendering and its parameters are unchanged, so the measured strength in
+  `results/generator_stats.json` still holds (only its key was renamed).
+- The **Day / Night field gets a third option, "foggy"** — fog in the scene, a weather condition
+  of the capture, logged in the `day_night` column. The field is now labelled
+  "Day / Night / Foggy".
+
+The supervisor's protocol (`docs/data_collection/datacollection_surveilance_en.md`) stays
+unchanged and still says "fogging"; the capture plan's decision table records the rename.
+README, capture plan, capture app report, generator report, tests, the app screenshot and the
+packaged `StereoCapture.exe` are updated. Sessions 28–29 above keep the old name, as written at
+the time.

@@ -105,11 +105,11 @@ def test_log_keeps_every_capture_in_order(tmp_path):
 
 def test_file_names_carry_the_conditions():
     assert cs.capture_prefix("dirty", "water_drops", "medium", 3.0, 1) == "water_drops_medium_3cm_r1"
-    assert cs.capture_prefix("dirty", "fogging", "heavy", 2.5, 2, elapsed_s=12.4) == "fogging_t012s_2.5cm_r2"
+    assert cs.capture_prefix("dirty", "steamy", "heavy", 2.5, 2, elapsed_s=12.4) == "steamy_t012s_2.5cm_r2"
     assert (cs.capture_prefix("dirty", "water_drops", "light", 3.0, 1, "mud", "heavy")
             == "water_drops_light_and_mud_heavy_3cm_r1")
-    assert (cs.capture_prefix("dirty", "fogging", "heavy", 3.0, 1, "mud", "light", elapsed_s=5)
-            == "fogging_t005s_and_mud_light_3cm_r1")
+    assert (cs.capture_prefix("dirty", "steamy", "heavy", 3.0, 1, "mud", "light", elapsed_s=5)
+            == "steamy_t005s_and_mud_light_3cm_r1")
     assert cs.capture_prefix("clean", "mud", "heavy", 6.0, 1, "dust", "light") == "clean_6cm_r1"
     assert cs.pair_file_name("clean_6cm_r1", 12, cs.RIG[1]) == "clean_6cm_r1_0012_right_2C.png"
 
@@ -285,13 +285,13 @@ def test_second_type_must_differ_from_the_first(window):
     assert window.dirty_button.isEnabled()
 
 
-def test_fogging_cannot_be_the_second_type(window):
-    assert window.second_type.findText("fogging") < 0
+def test_steamy_cannot_be_the_second_type(window):
+    assert window.second_type.findText("steamy") < 0
 
 
-def test_fogging_takes_one_pair_per_interval_until_stopped(window):
+def test_steamy_takes_one_pair_per_interval_until_stopped(window):
     window.pane_id.setText("P2")
-    window.ctype.setCurrentText("fogging")
+    window.ctype.setCurrentText("steamy")
     window.interval.setValue(0.5)
     _capture_clean(window)
     assert not window.dirty_button.isEnabled() and window.timed_button.isEnabled()
@@ -305,8 +305,8 @@ def test_fogging_takes_one_pair_per_interval_until_stopped(window):
         pairs = list(csv.DictReader(f))
     times = [datetime.fromisoformat(p["host_time"]) for p in pairs]
     assert all((b - a).total_seconds() >= 0.4 for a, b in zip(times, times[1:]))  # not every frame
-    assert pairs[0]["right_2C_file"] == "fogging_t000s_3cm_r1_0001_right_2C.png"
-    assert pairs[2]["right_2C_file"] == "fogging_t001s_3cm_r1_0003_right_2C.png"
+    assert pairs[0]["right_2C_file"] == "steamy_t000s_3cm_r1_0001_right_2C.png"
+    assert pairs[2]["right_2C_file"] == "steamy_t001s_3cm_r1_0003_right_2C.png"
     row = cs.read_log(window.root)[-1]
     assert (row["stage"], row["severity"], row["interval_s"]) == ("dirty", "", "0.5")
     assert row["pairs"] == str(len(pairs)) and row["file_right"] == pairs[0]["right_2C_file"]
@@ -315,7 +315,7 @@ def test_fogging_takes_one_pair_per_interval_until_stopped(window):
 
 def test_stopping_before_the_first_pair_saves_nothing_to_the_log(window):
     window.pane_id.setText("P2")
-    window.ctype.setCurrentText("fogging")
+    window.ctype.setCurrentText("steamy")
     _capture_clean(window)
     rows = len(cs.read_log(window.root))
     window.timed_button.click()
@@ -325,11 +325,11 @@ def test_stopping_before_the_first_pair_saves_nothing_to_the_log(window):
 
 
 def test_day_night_is_logged(window):
-    assert [window.day_night.itemText(i) for i in range(window.day_night.count())] == ["day", "night"]
+    assert [window.day_night.itemText(i) for i in range(window.day_night.count())] == ["day", "night", "foggy"]
     window.pane_id.setText("P4")
-    window.day_night.setCurrentText("night")
+    window.day_night.setCurrentText("foggy")
     _capture_clean(window)
-    assert cs.read_log(window.root)[-1]["day_night"] == "night"
+    assert cs.read_log(window.root)[-1]["day_night"] == "foggy"
 
 
 def test_log_entry_survives_a_locked_log_file(window, monkeypatch):

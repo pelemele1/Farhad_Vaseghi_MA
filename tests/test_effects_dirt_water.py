@@ -1,6 +1,6 @@
 import numpy as np
 
-from src.soiling.effects import MUD_SHAPES, add_cleaning_streaks, add_dirt, add_dust, add_fog, add_sanding_scratches, generate_sanding_mask, add_mud_stains, add_water, add_water_droplets, render_effect
+from src.soiling.effects import MUD_SHAPES, add_cleaning_streaks, add_dirt, add_dust, add_steam, add_sanding_scratches, generate_sanding_mask, add_mud_stains, add_water, add_water_droplets, render_effect
 
 
 def _sample_image(h=128, w=192):
@@ -109,20 +109,20 @@ def test_generator_uses_mud_stains_for_mud():
     assert np.array_equal(render_effect("dirt", image, 5, "low")[0], expected)
 
 
-def test_fog_covers_more_at_each_severity():
+def test_steam_covers_more_at_each_severity():
     image = _scene()
-    shares = [_changed_share(image, add_fog(image, s, seed=8, shape="dense_mist")[0])
+    shares = [_changed_share(image, add_steam(image, s, seed=8, shape="dense_steam")[0])
               for s in ("low", "medium", "high")]
     assert 0 < shares[0] < shares[1] < shares[2]
 
 
-def test_fog_is_reproducible_and_reachable_from_the_generator():
+def test_steam_is_reproducible_and_reachable_from_the_generator():
     image = _scene()
-    out1, mask1 = add_fog(image, "medium", seed=4)
-    out2, mask2 = add_fog(image, "medium", seed=4)
+    out1, mask1 = add_steam(image, "medium", seed=4)
+    out2, mask2 = add_steam(image, "medium", seed=4)
     assert np.array_equal(out1, out2) and np.array_equal(mask1, mask2)
     assert mask1.shape == image.shape[:2] and 0 <= mask1.min() and mask1.max() <= 1
-    assert np.array_equal(render_effect("fogging", image, 4, "medium")[0], out1)
+    assert np.array_equal(render_effect("steamy", image, 4, "medium")[0], out1)
 
 
 def test_cleaning_streaks_cover_more_at_each_severity():

@@ -9,7 +9,7 @@ so each file name carries its own conditions and the log has one row per capture
     session_0007/clean/clean_3cm_r1_0001_left_97.png, ..._right_2C.png, pairs.csv
     session_0007/dirty/water_drops_medium_6cm_r1_0002_left_97.png, ...
     session_0007/dirty/water_drops_light_and_mud_heavy_6cm_r1_0003_left_97.png, ...  (two types)
-    session_0007/dirty/fogging_t015s_3cm_r1_0004_left_97.png, ...  (seconds since the series began)
+    session_0007/dirty/steamy_t015s_3cm_r1_0004_left_97.png, ...  (seconds since the series began)
 The number counts up within the folder, so a capture never replaces another.
 """
 import csv
@@ -22,15 +22,15 @@ from pathlib import Path
 import cv2 as cv
 import numpy as np
 
-CONTAMINATION_TYPES = ("water_drops", "mud", "fogging", "cleaning_streaks", "scratches", "dust")
+CONTAMINATION_TYPES = ("water_drops", "mud", "steamy", "cleaning_streaks", "scratches", "dust")
 SEVERITIES = ("light", "medium", "heavy")
-LIGHTING_MODES = ("day", "night")
+LIGHTING_MODES = ("day", "night", "foggy")  # "foggy": fog in the scene, not on the pane
 STAGES = ("clean", "dirty")
-FOGGING = "fogging"
+STEAMY = "steamy"  # a steamed-up pane (the protocol's "fogging")
 
 LOG_FIELDS = [
     # The protocol's fields; type and severity are empty for a clean capture, and
-    # severity is empty for fogging, where the time in the file name stands in for it.
+    # severity is empty for a steamy pane, where the time in the file name stands in for it.
     "datetime", "session_no", "dirty_camera", "material", "pane_distance_cm", "type",
     "severity", "repetition", "pane_id", "day_night", "remarks",
     # A second contamination type on the same pane, and the spacing of a timed series.
@@ -119,8 +119,8 @@ def count_pairs(stage_dir):
 
 def capture_prefix(stage, contamination, severity, distance_cm, repetition,
                    second=None, second_severity=None, elapsed_s=None):
-    """The conditions part of a file name, e.g. water_drops_medium_3cm_r1. Fogging
-    carries `elapsed_s`, its seconds since the series began, in place of a severity."""
+    """The conditions part of a file name, e.g. water_drops_medium_3cm_r1. A steamy
+    pane carries `elapsed_s`, its seconds since the series began, in place of a severity."""
     conditions = f"{distance_cm:g}cm_r{repetition}"
     if stage == "clean":
         return f"clean_{conditions}"

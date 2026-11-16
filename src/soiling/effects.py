@@ -6,7 +6,7 @@ contamination type of the capture protocol, all reached through
 `render_effect(name, image, seed, severity)`:
     water            add_water_droplets     Zhang et al. 2025 droplets (Fig. 1 g)
     dirt  (mud)      add_mud_stains         vendored add_mudByTxture (Fig. 1 b, c)
-    fogging          add_fog                vendored mist shapes, our scattering veil
+    steamy           add_steam              vendored mist shapes, our scattering veil
     cleaning_streaks add_cleaning_streaks   our own design
     scratch          add_sanding_scratches  sandpaper patches, this module's line drawer
     dust             add_dust               Fig. 1 e, vendored dust texture
@@ -378,22 +378,22 @@ def add_mud_stains(image, severity, seed=None, shape=None):
     return result, cv.resize(_normalize_mask(mask), shrink, interpolation=cv.INTER_AREA)
 
 
-# The approved fogging class: the mist shapes of Zhang et al. 2025, Fig. 1(f) (the vendored
+# The approved steamy class (a steamed-up pane, the protocol's "fogging"): the mist shapes of Zhang et al. 2025, Fig. 1(f) (the vendored
 # mist textures), heavily smoothed into one continuous veil. Inside the veil the scene loses
 # sharpness and contrast and takes on its own spread-out light, a little brightened -- how
 # condensation scatters light. This rendering is ours; the repo has no mist function.
-FOG_SHAPES = {"patchy_mist": "r_fog", "dense_mist": "thick_fog"}
-# severity -> (share of the fogged area kept, density, veil start in the texture, blur sigma)
-FOG_SEVERITY = {
+STEAM_SHAPES = {"patchy_steam": "r_fog", "dense_steam": "thick_fog"}
+# severity -> (share of the steamed area kept, density, veil start in the texture, blur sigma)
+STEAM_SEVERITY = {
     "low": (0.40, 0.45, 0.20, 6),
     "medium": (0.70, 0.75, 0.12, 9),
     "high": (1.00, 1.00, 0.05, 12),
 }
-FOG_EDGE = 0.25  # texture value counted as fogged when shrinking the veil
-FOG_BRIGHTEN = 0.45  # how far the spread-out light is lifted toward white
+STEAM_EDGE = 0.25  # texture value counted as steamed when shrinking the veil
+STEAM_BRIGHTEN = 0.45  # how far the spread-out light is lifted toward white
 
 
-def _shrink_veil(texture, keep, edge=FOG_EDGE):
+def _shrink_veil(texture, keep, edge=STEAM_EDGE):
     """Lowers a smooth [0, 1] texture until its area above `edge` is `keep` of the
     original, then stretches it back to [0, 1]: the veil shrinks back from its edges."""
     full = (texture > edge).mean()
@@ -405,14 +405,14 @@ def _shrink_veil(texture, keep, edge=FOG_EDGE):
     return np.clip(texture - drop, 0, None) / (1 - drop)
 
 
-def add_fog(image, severity, seed=None, shape=None):
-    """Fogging on `image` at `severity`; `shape` is one of FOG_SHAPES (random if None).
+def add_steam(image, severity, seed=None, shape=None):
+    """A steamy pane on `image` at `severity`; `shape` is one of STEAM_SHAPES (random if None).
     Returns (distorted_image, full-strength mask)."""
     if seed is not None:
         _seed_all(seed)
-    keep, density, start, blur = FOG_SEVERITY[severity]
-    shape = shape or str(np.random.choice(sorted(FOG_SHAPES)))
-    texture = generate_texture(mod=FOG_SHAPES[shape])
+    keep, density, start, blur = STEAM_SEVERITY[severity]
+    shape = shape or str(np.random.choice(sorted(STEAM_SHAPES)))
+    texture = generate_texture(mod=STEAM_SHAPES[shape])
     texture = np.asarray(texture[0] if isinstance(texture, tuple) else texture, dtype=np.float32)
     texture = texture.max(axis=2) if texture.ndim == 3 else texture
     H, W = image.shape[:2]
@@ -428,7 +428,7 @@ def add_fog(image, severity, seed=None, shape=None):
     alpha = (mask * density)[:, :, np.newaxis]
     soft = cv.GaussianBlur(big, (0, 0), blur)
     light = cv.GaussianBlur(big, (0, 0), 0.08 * w)
-    light = light + (255 - light) * FOG_BRIGHTEN
+    light = light + (255 - light) * STEAM_BRIGHTEN
     out = big * (1 - alpha) + (soft * 0.5 + light * 0.5) * alpha
     shrink = (W, H)
     delta = cv.resize(out, shrink, interpolation=cv.INTER_AREA) - cv.resize(big, shrink, interpolation=cv.INTER_AREA)
@@ -598,8 +598,8 @@ def render_effect(name, image, seed, severity):
         return add_water_droplets(image, severity, seed=seed)
     if name == "dirt":
         return add_mud_stains(image, severity, seed=seed)
-    if name == "fogging":
-        return add_fog(image, severity, seed=seed)
+    if name == "steamy":
+        return add_steam(image, severity, seed=seed)
     if name == "cleaning_streaks":
         return add_cleaning_streaks(image, severity, seed=seed)
     if name == "scratch":

@@ -1,6 +1,6 @@
 """
 Capture window: live view of both cameras, the session form, and one-click
-capture of a clean pair, a dirty pair and a timed series for fogging. Files and
+capture of a clean pair, a dirty pair and a timed series for steamy panes. Files and
 the log are written as described in src/capture/session.py.
 """
 import os
@@ -276,8 +276,8 @@ class CaptureWindow(QMainWindow):
         self.severity = QComboBox()
         self.severity.addItems(cs.SEVERITIES)
         self.second_type = QComboBox()
-        self.second_type.addItems([NO_SECOND_TYPE, *(t for t in cs.CONTAMINATION_TYPES if t != cs.FOGGING)])
-        self.second_type.setToolTip("For a pane with two contaminations. If one of them is fogging, choose it as Type.")
+        self.second_type.addItems([NO_SECOND_TYPE, *(t for t in cs.CONTAMINATION_TYPES if t != cs.STEAMY)])
+        self.second_type.setToolTip("For a pane with two contaminations. If one of them is steamy, choose it as Type.")
         self.second_type.currentTextChanged.connect(self._refresh)
         self.second_severity = QComboBox()
         self.second_severity.addItems(cs.SEVERITIES)
@@ -307,10 +307,10 @@ class CaptureWindow(QMainWindow):
         for label, widget in [("Camera settings", profile_row), ("Session no.", self.session),
                               ("Type", self.ctype), ("Severity", self.severity),
                               ("Second type", self.second_type), ("Second severity", self.second_severity),
-                              ("Fog interval", self.interval),
+                              ("Steam interval", self.interval),
                               ("Pane distance", self.distance), ("Material", self.material),
                               ("Repetition", self.repetition), ("Pane ID", self.pane_id),
-                              ("Day / Night", self.day_night), ("Remarks", self.remarks)]:
+                              ("Day / Night / Foggy", self.day_night), ("Remarks", self.remarks)]:
             form.addRow(label, widget)
         session_box = QGroupBox("Session")
         session_box.setLayout(form)
@@ -473,7 +473,7 @@ class CaptureWindow(QMainWindow):
         clean, dirty_n = (self._stage_count(s) for s in cs.STAGES)
         if not self.busy:
             self.counts.setText(f"Saved: clean {clean}, dirty {dirty_n}")
-        fogging = self.ctype.currentText() == cs.FOGGING
+        steamy = self.ctype.currentText() == cs.STEAMY
         second = self._second_type()
         two_different = second != self.ctype.currentText()
         ready = self.connected and not self.busy
@@ -481,18 +481,18 @@ class CaptureWindow(QMainWindow):
         recording = self.timed_button.text() == STOP_TIMED
         can_record = ready and has_pane and clean > 0 and two_different
         self.clean_button.setEnabled(ready and has_pane)
-        self.dirty_button.setEnabled(can_record and not fogging)
-        self.timed_button.setEnabled(recording or (can_record and fogging))
-        self.severity.setEnabled(not self.busy and not fogging)
+        self.dirty_button.setEnabled(can_record and not steamy)
+        self.timed_button.setEnabled(recording or (can_record and steamy))
+        self.severity.setEnabled(not self.busy and not steamy)
         self.second_severity.setEnabled(not self.busy and second is not None)
-        self.interval.setEnabled(not self.busy and fogging)
-        self.instruction.setText(self._next_step(clean, dirty_n, fogging, has_pane, two_different, recording))
+        self.interval.setEnabled(not self.busy and steamy)
+        self.instruction.setText(self._next_step(clean, dirty_n, steamy, has_pane, two_different, recording))
 
     def _second_type(self):
         second = self.second_type.currentText()
         return None if second == NO_SECOND_TYPE else second
 
-    def _next_step(self, clean, dirty_n, fogging, has_pane, two_different, recording):
+    def _next_step(self, clean, dirty_n, steamy, has_pane, two_different, recording):
         spec = cs.camera_by_letter(cs.DIRTY_CAMERA)
         target = f"the {spec.position.upper()} camera ({spec.name})"
         if recording:
@@ -508,8 +508,8 @@ class CaptureWindow(QMainWindow):
         if not self._has_clean_at_this_distance():
             return (f"No clean pair at {self.distance.value():g} cm yet. Put clean panes in front of both "
                     "cameras and take one before the dirty images at this distance.")
-        if fogging:
-            return (f"Fog the test pane in front of {target}, then press Start timed capture straight away. "
+        if steamy:
+            return (f"Steam the test pane in front of {target}, then press Start timed capture straight away. "
                     "Keep the area closer than 5 m clear.")
         if dirty_n == 0:
             return (f"Clean pair done. Take the test pane out of {target}, contaminate it away from the "

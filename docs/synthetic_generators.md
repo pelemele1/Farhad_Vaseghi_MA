@@ -17,7 +17,7 @@ until the user approved it, and only then saved.
 
 - **One entry point.** `render_effect(name, image, seed, severity)` in `src/soiling/effects.py`
   returns `(distorted image, mask)`. Names: `water`, `dirt` (mud; the class keeps its old code
-  name until the builder is updated), `fogging`, `cleaning_streaks`, `scratch`, `dust`.
+  name until the builder is updated), `steamy`, `cleaning_streaks`, `scratch`, `dust`.
   Severities: `low`, `medium`, `high` (light, medium, heavy). The dataset builder
   (`dataset_builder.apply_visible_effect_with_seed`) and the visible-change labels
   (`visible_labels.render_chain`) both call it.
@@ -29,7 +29,7 @@ until the user approved it, and only then saved.
   more spray strokes, more sanding or more dust would add to what is already on the pane.
 - **Reproducible.** The same seed gives the same pixels (needed by the visible-change labels,
   which re-render an image without each effect).
-- **Rendered at 1440 px.** Water drops, mud, fogging, cleaning streaks and dust are drawn on the
+- **Rendered at 1440 px.** Water drops, mud, steamy panes, cleaning streaks and dust are drawn on the
   photo enlarged to 1440 px wide, and only their change is carried back to the original size,
   so pixels outside the contamination stay exactly as they were. The vendored blur sizes are
   fixed in pixels and were made for larger images than our 720 × 480 photos; at native size the
@@ -52,7 +52,7 @@ only, so **every light / medium / heavy level below is our design**.
 |---|---|---|
 | Water drops | Droplet refraction code, unchanged (Fig. 1 g) | Severity (droplet count, size, strength); rendering at 1440 px |
 | Mud | Mud function `add_mudByTxture` and stain shapes, unchanged (Fig. 1 b, c) | Severity (stains shrink); our names for the shapes; rendering at 1440 px |
-| Fogging | Mist shapes (`r_fog`, `thick_fog` textures); the paper's statement that mist is drawn like water stains (Fig. 1 f) | Smoothing into one veil, the blur-and-scattered-light rendering, severity |
+| Steamy pane | Mist shapes (`r_fog`, `thick_fog` textures); the paper's statement that mist is drawn like water stains (Fig. 1 f) | Smoothing into one veil, the blur-and-scattered-light rendering, severity |
 | Cleaning streaks | — | Everything (the SIDL paper's finding that fingerprint smears blur and defocus supports the rendering) |
 | Scratches | — | Sandpaper patches, haze, severity; the line drawer is this project's earlier scratch generator; sandpaper comes from the protocol |
 | Dust | Look and description (Fig. 1 e: like mud but lighter and more transparent); speck shapes (`many_dust_drop` texture); mud drawing steps | The amounts of "lighter" and "more transparent", layers, the veil, severity |
@@ -88,7 +88,7 @@ unchanged: a stain shape is thresholded into an opaque core with soft edges, the
 it is blurred and covered with a random dark mud colour.
 
 **Stain shapes** — three of the paper's textures, with our names (the fog-like textures are no
-longer used for mud, so it cannot look like fogging):
+longer used for mud, so it cannot look like a steamy pane):
 
 | Our name | Paper's texture | Stain |
 |---|---|---|
@@ -102,18 +102,18 @@ disappear — less mud on the pane.
 
 ![Mud](images/generators/dirt.jpg)
 
-### 3.3 Fogging — `add_fog`
+### 3.3 Steamy pane — `add_steam`
 
 Condensation on the pane: a milky veil in which the scene loses sharpness and contrast. The
 paper calls it water mist and draws it like its water stains with a whiter colour; the
 vendored code has no mist function. A first version that way gave white cotton-like clumps,
 which the user found unnatural, so the rendering is ours:
 
-1. a mist shape from the vendored `r_fog` (`patchy_mist`) or `thick_fog` (`dense_mist`)
+1. a mist shape from the vendored `r_fog` (`patchy_steam`) or `thick_fog` (`dense_steam`)
    texture, smoothed heavily (Gaussian, 4% of the width) into one continuous veil;
 2. inside the veil the scene is blurred and mixed with its own light spread out (Gaussian, 8% of
    the width) and lifted 45% toward white, because condensation scatters the scene's light —
-   so fog looks darker at night and brighter by day, as on a real pane.
+   so steam looks darker at night and brighter by day, as on a real pane.
 
 | Severity | Veil area kept | Density | Veil starts at texture value | Blur σ (px at 1440) |
 |---|---|---|---|---|
@@ -122,9 +122,9 @@ which the user found unnatural, so the rendering is ours:
 | heavy | 100% | 100% | 0.05 | 12 |
 
 The user asked for the three levels to differ clearly, so area, density and blur all grow
-together. A smaller veil shrinks back from its edges, as fog clears.
+together. A smaller veil shrinks back from its edges, as steam clears.
 
-![Fogging](images/generators/fogging.jpg)
+![Steamy pane](images/generators/steamy.jpg)
 
 ### 3.4 Cleaning streaks — `add_cleaning_streaks`
 
@@ -206,7 +206,7 @@ Data: [`results/generator_stats.json`](../results/generator_stats.json).
 |---|---|---|---|
 | Water drops | 5.8% (1.5–11.4%) | 19.1% (10.1–27.2%) | 39.1% (23.6–50.0%) |
 | Mud | 9.6% (1.2–20.3%) | 23.4% (3.6–37.8%) | 48.3% (27.8–64.2%) |
-| Fogging | 9.0% (1.2–14.3%) | 32.3% (14.7–38.7%) | 52.6% (27.4–59.5%) |
+| Steamy pane | 9.0% (1.2–14.3%) | 32.3% (14.7–38.7%) | 52.6% (27.4–59.5%) |
 | Cleaning streaks | 12.9% (1.7–22.3%) | 31.3% (8.7–47.0%) | 53.1% (30.6–68.7%) |
 | Scratches | 0.6% (0.3–1.3%) | 1.1% (0.6–2.0%) | 2.4% (0.9–4.5%) |
 | Dust | 1.7% (0.4–3.1%) | 26.2% (7.0–38.9%) | 77.8% (27.5–95.5%) |

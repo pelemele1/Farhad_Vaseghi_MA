@@ -2,7 +2,7 @@
 
 **Status:** ready. Tested with a simulated camera pair (24 tests). The real-camera runs (complete
 4024 × 3036 frames, no lost pairs, trigger gap 1–7 ms, about 0.4 pairs/s with the long indoor
-exposures) were done before the file-naming, fogging and two-type changes; the current version
+exposures) were done before the file-naming, steam-series and two-type changes; the current version
 still needs one real-camera test.
 
 Stereo Capture replaces Vimba X Viewer for capturing the real dataset: one window that shows both
@@ -30,10 +30,10 @@ camera with the test pane (here water drops, simulated). Rendered with a simulat
 | 6 | Link status | Connected or not, pairs per second, trigger gap between the two cameras, incomplete pairs skipped |
 | 7 | Focus check | Shows the centre of each image at full resolution instead of the whole frame, for focusing the lenses |
 | 8 | Camera settings | Profile of saved settings (e.g. `indoor`), loaded into both cameras; **Load...** picks any two settings files |
-| 9 | Session form | Session number, type, severity, second type and severity, pane distance, material, repetition, pane ID, day / night, remarks — the protocol's log fields |
-| 10 | Fog interval | Seconds between pairs of a timed fogging series (active only when the type is fogging) |
+| 9 | Session form | Session number, type, severity, second type and severity, pane distance, material, repetition, pane ID, day / night / foggy (foggy = fog in the scene), remarks — the protocol's log fields |
+| 10 | Steam interval | Seconds between pairs of a timed series for a steamy pane (active only when the type is steamy) |
 | 11 | **1. Take clean pair** | One pair with clean panes in front of both cameras |
-| 12 | **2. Take dirty pair** / **2. Start timed capture** | One pair with the contaminated test pane; for fogging, a series at the fog interval until **Stop timed capture** |
+| 12 | **2. Take dirty pair** / **2. Start timed capture** | One pair with the contaminated test pane; for a steamy pane, a series at the steam interval until **Stop timed capture** |
 | 13 | Saved count | Clean and dirty pairs saved in this session so far |
 | 14 | **Next session** | Writes any pending log entry and moves to the next free session number |
 | 15 | **Reconnect cameras** | Opens the cameras again, e.g. after a cable was re-plugged |
@@ -60,10 +60,11 @@ camera with the test pane (here water drops, simulated). Rendered with a simulat
 
 **Capturing**
 - One press = one pair. Each press adds a new pair; nothing is ever overwritten.
-- **Timed series for fogging:** the first pair at once, then one per fog interval, named by the
-  real seconds since the series began (`fogging_t015s_...`).
+- **Timed series for steamy panes:** the first pair at once, then one per steam interval, named
+  by the real seconds since the series began (`steamy_t015s_...`). ("Steamy" is the protocol's
+  "fogging": a steamed-up pane. "Foggy" is a weather condition in the Day / Night field.)
 - **Two types on one pane:** a second type and severity in the form; the file name carries both
-  (`water_drops_light_and_mud_heavy_...`). Fogging can only be the first type; the second type
+  (`water_drops_light_and_mud_heavy_...`). Steamy can only be the first type; the second type
   must differ from the first.
 - **Lossless PNG** (about 15 MB per image), saved on background threads; a slow disk slows the
   capture down instead of dropping pairs.
@@ -91,9 +92,9 @@ flowchart TD
     S[Start the app, check both live views and the readouts] --> F[Fill the form: type, severity, distance, pane ID]
     F --> C["1. Take clean pair (clean panes on both cameras)"]
     C --> D[Contaminate the right pane away from the camera, phone photo, put it back]
-    D --> T{Fogging?}
+    D --> T{Steamy pane?}
     T -- no --> P["2. Take dirty pair, once per pair wanted"]
-    T -- yes --> Q["2. Start timed capture right after fogging; Stop when the pane is clear"]
+    T -- yes --> Q["2. Start timed capture right after steaming the pane; Stop when the pane is clear"]
     P --> M{More in this session?}
     Q --> M
     M -- "other severity or type" --> F
@@ -109,7 +110,7 @@ The instruction line (5) walks through the same steps:
 | No clean pair yet | Put clean panes in front of both cameras, then take the clean pair |
 | Pane distance changed | No clean pair at this distance yet: take one first |
 | Clean pair done | Take the test pane out, contaminate it away from the camera, take the phone photo, put it back, then record |
-| Fogging selected | Fog the test pane, then press Start timed capture straight away |
+| Steamy selected | Steam the test pane, then press Start timed capture straight away |
 | During a timed series | Taking one pair every N s; press Stop when the pane is clear |
 | Second type equals the first | The second type must be different |
 | After a capture | For another severity or distance change the form and capture again; Next session when done |
@@ -130,7 +131,7 @@ data/real_captures/
         ├── water_drops_light_3cm_r1_0001_left_97.png      type_severity_distance_repetition_pair_camera
         ├── water_drops_light_3cm_r1_0001_right_2C.png
         ├── water_drops_light_and_mud_heavy_3cm_r1_0002_right_2C.png   two types
-        ├── fogging_t015s_3cm_r1_0003_right_2C.png         seconds since the fog series began
+        ├── steamy_t015s_3cm_r1_0003_right_2C.png          seconds since the steam series began
         └── pairs.csv
 ```
 
@@ -139,7 +140,7 @@ folder; the conditions are in the names, so one session can hold several types, 
 distances.
 
 **Log columns:** date and time, session, dirty camera (letter and name), material, pane distance,
-type, severity, repetition, pane ID, day / night, remarks, second type and severity, fog interval,
+type, severity, repetition, pane ID, day / night / foggy, remarks, second type and severity, steam interval,
 stage (clean / dirty), first pair number, pairs, left and right file name, settings profile, and
 exposure, gain and red / blue balance of each camera.
 
@@ -175,13 +176,13 @@ pyinstaller --noconfirm --windowed --onedir --name StereoCapture --collect-all v
 | `src/capture/app.py` | The window, the capture thread, the form and the instruction line |
 | `scripts/capture_app.py` | Start the app, or `--check` |
 | `scripts/render_capture_app_figure.py` | The screenshot above |
-| `tests/test_capture_app.py` | 24 tests with a simulated camera pair: button order, file names with severities, distances, two types and fog times, numbering within a folder, the timed series, settings matched by serial, the log surviving a locked file, cameras released on close |
+| `tests/test_capture_app.py` | 24 tests with a simulated camera pair: button order, file names with severities, distances, two types and steam times, numbering within a folder, the timed series, settings matched by serial, the log surviving a locked file, cameras released on close |
 
 ## 7. Limitations
 
 - Software trigger only; the two exposures overlap but do not start at the same instant, so a
   fast-moving object can differ slightly between the two images. A hardware trigger is not
   implemented.
-- The current version (file names, timed fogging, two types) has not yet run on the real cameras.
-- The fogging time that counts as light, medium and heavy is decided once the clearing time has
+- The current version (file names, timed steam series, two types) has not yet run on the real cameras.
+- The steam time that counts as light, medium and heavy is decided once the clearing time has
   been measured.
