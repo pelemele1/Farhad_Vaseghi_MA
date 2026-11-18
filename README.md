@@ -194,7 +194,11 @@ built on the HPC in 1 h 19 min on 32 cores (`scripts/hpc/build_visible_6class.sl
 
 ![Ground truth of the 6-class dataset, medium severity](docs/images/dataset/label_check_medium.jpg)
 *One photo of the dataset: each type at medium and a two-type image, next to its ground truth
-(light severity: [`label_check_light.jpg`](docs/images/dataset/label_check_light.jpg)).*
+(light severity: [`label_check_light.jpg`](docs/images/dataset/label_check_light.jpg)).
+Samples from many photos, day and night: every type at light / medium / heavy
+([`samples_single_types.jpg`](docs/images/dataset/samples_single_types.jpg)) and all 15 two-type
+pairs ([`samples_two_types.jpg`](docs/images/dataset/samples_two_types.jpg)), made with
+`scripts/render_dataset_samples.py`.*
 
 The 3-class datasets behind the results above (14,000 images each in `visible`, `stage_a`,
 `stage_b`; 14 variants per photo: clean, 3 classes × 3 severities, 4 combinations; splits
