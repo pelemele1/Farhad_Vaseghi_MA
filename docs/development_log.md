@@ -2707,3 +2707,150 @@ unchanged and still says "fogging"; the capture plan's decision table records th
 README, capture plan, capture app report, generator report, tests, the app screenshot and the
 packaged `StereoCapture.exe` are updated. Sessions 28–29 above keep the old name, as written at
 the time.
+
+## Session 31 — The dataset moves from 3 classes to the protocol's 6
+
+**Date:** 2026-11-16
+
+**Trigger.** The six generators were approved in Session 29 and renamed in Session 30, but the
+dataset on disk was still the 3-class one (`dirt`, `water`, `scratch`). The user asked for the
+synthetic data to be generated again with all six types and for the old dataset to be replaced,
+the build to run on the HPC.
+
+### Class names
+
+The classes are now the capture protocol's own names, in the capture app's order:
+
+| before | now |
+|---|---|
+| `dirt` | `mud` |
+| `water` | `water_drops` |
+| `scratch` | `scratches` |
+| – | `steamy`, `cleaning_streaks`, `dust` |
+
+A synthetic label and a real capture's label therefore mean the same thing, which matters as
+soon as the real images are used for fine-tuning or testing. The generator functions keep their
+shorter names; `effects.py::EFFECT_ALIASES` maps between the two, so both spellings work.
+`EFFECT_NAMES` / `CLASS_NAMES` now have one definition (`src/soiling/visible_labels.py`) that
+the dataset, the pipeline and the model heads all import, instead of three copies.
+
+### Amounts
+
+`dataset_builder.plan_variant_kinds` replaces "a fixed number of variants per photo, cycling
+through the kinds". Every source photo gets one clean variant and one per (type, severity) —
+1 + 6 × 3 = 19 — so those 19 kinds are exactly balanced by construction. The two-type variants
+are then dealt out on top: each of the **15 pairs** is used 141 times, apportioned over the
+splits (113 / 14 / 14) and spread over that split's photos, so every photo carries 2 or 3 of
+them. Three types on one image are gone — the supervisor's rule is exactly two.
+
+From the 1,000 MIO-TCD photos this gives exactly the planned amounts in the README:
+
+| | train | val | test | total |
+|---|---:|---:|---:|---:|
+| clean | 800 | 100 | 100 | 1,000 |
+| each type × severity (18 kinds) | 800 | 100 | 100 | 1,000 each |
+| two types (15 pairs) | 1,695 | 210 | 210 | 2,115 |
+| **all** | **16,895** | **2,110** | **2,110** | **21,115** |
+
+Two-type images are 10.0% of the dataset. Splits stay per source photo, so no scene is in two
+splits.
+
+### Ground truth
+
+The visible-change rule is unchanged (Session 27), only widened to 6 classes: each pixel takes
+the type whose removal changes it most, if by more than 10 gray levels, and a visible scratch
+still wins over the layers under it. Tile cutoffs keep the calibrated 3-class values for the
+renamed types (mud 20%, water drops 25%, scratches 1.5%) and use the same area-effect cutoff
+of 20% for the three new ones, to be re-checked against the built dataset's tile-positive
+rates.
+
+A check on a 3-photo pilot build (65 images): for every image the labeled types are exactly
+the types that were applied and stayed visible, no label names a type that is not in the
+image, and no tile class is missing from the pixel map. `scripts/render_label_check_sheet.py`
+renders image and ground truth side by side for one photo and all six types, for checking by
+eye.
+
+### Checking the labels
+
+`scripts/check_visible_dataset.py` checks a built dataset image by image and fails if
+anything is off:
+
+- **amounts** — clean, each (type, severity) and each pair as planned, overall and per split;
+  never three types; all variants of a photo in one split;
+- **labels** — every type in a label map was applied to that image; a type is flagged exactly
+  when it has at least 20 pixels; pixel counts, severities and the dominant type agree with the
+  map; a clean variant's map is empty;
+- **tiles** — the stored tile grid equals the one re-computed from the label map, and no tile
+  names a type missing from the pixels.
+
+It also reports, per type and severity, how many applied types stayed visible (one that never
+shows, e.g. faint dust on a black night photo, is left unlabeled by design). On the pilot it
+passes; on a copy with one mud label map rewritten as dust it reports all 8 resulting
+inconsistencies of that image.
+
+### Cost and the HPC job
+
+One source photo costs about 130 s of CPU (the droplet warps dominate: 8.3 s per render at
+720 × 480 against 0.3–1.9 s for the others), so the full build is about 37 core-hours.
+`scripts/hpc/build_visible_6class.slurm` first runs the test suite on the node, one test file
+per core (`scripts/hpc/run_tests_parallel.sh`; a few hours on one core, about the slowest file's
+time in parallel) and stops if any test fails, before the old dataset is touched. It then
+builds the dataset with one worker per core, runs the label check and renders two check sheets
+(light and medium) next to the data; any failing step fails the job. The capture-app tests are
+left out on the node (they need PySide6, the camera software and a screen) and run on the
+capture computer. It moves an existing `data/processed/visible` aside
+first, so the old 3-class files cannot be mixed into the new dataset (image and label file
+names repeat per photo). Settings reach the job only through `--export` (it runs with
+`--export=NONE`), e.g. a 20-photo test build:
+`sbatch.tinygpu --export=NONE,OUT=data/processed/visible_pilot,MAX_SOURCES=20 --time=1:00:00 scripts/hpc/build_visible_6class.slurm`.
+A new `.gitattributes` keeps LF line endings for `scripts/hpc/*.slurm` and `*.sh` on Windows
+checkouts, since Slurm rejects CRLF batch scripts.
+
+### The build on the HPC
+
+- **Tests first.** The first runs on the node found 12 more tests still written for 3 classes
+  (builder end-to-end tests, the Stage B report's column count, the Stage A low-severity
+  weights, the Stage B per-class focal alpha and its printed line, the Session 22 mask
+  migration) and one time limit too tight for the slower 6-class kinds when all test files share
+  the node (build-CLI tests: 120 s → 600 s). The job stopped before building each time, as
+  intended. Then **all tests passed** (36 files, 15 min on 32 cores; the capture-app tests run
+  on the capture computer).
+- **Where.** The group's GPU quota on TinyGPU was in use (`AssocGrpGRES`), and the build needs no
+  GPU, so it ran on the CPU cluster TinyFat (`sbatch.tinyfat -p work --gres=none
+  --cpus-per-task=32`, job 1614618).
+- **Result.** 21,115 images in 1 h 19 min, exactly the planned amounts (16,895 / 2,110 / 2,110;
+  1,000 per type and severity; 141 per pair; 10.0% two-type). `check_visible_dataset.py`: no
+  problem in any image. Of the 22,230 types applied, 22,229 are visible and labeled; one light
+  steamy pane left no visible change and stays unlabeled. Training tiles per class: water drops
+  196k, mud 268k, steamy 287k, cleaning streaks 298k, scratches 109k, dust 202k (clean 2.96M).
+  The check sheets are in `docs/images/dataset/`.
+- **Old data deleted** (user's decision): the 3-class datasets `visible`, `stage_a`, `stage_b`
+  locally and `visible_1835773`, `stage_a`, `stage_b` on the HPC. Their builder is in the git
+  history before this session.
+
+### Older code that had to follow
+
+- **Stage C pixel masks** of the older Stage B/C builder (`--save-pixel-masks`) were a
+  3-channel PNG, one channel per class. A PNG holds at most 4 channels, so they are now an
+  `.npy` array with one channel per class; `StageCDataset` reads both.
+- `scripts/build_stage_b_dataset.py` and `scripts/build_visible_dataset.py` get one
+  `--<type>-threshold` option per class (e.g. `--water-drops-threshold`) instead of the fixed
+  `--dirt/--water/--scratch-threshold`.
+- `scripts/visualize_visible.py` picks the 6 types and the two-type pairs for its figures.
+- `scripts/fix_dataset_labels.py`, the one-time repair of the 3-class datasets after the
+  Session 26 audit, stops with a message on the 6-class code: its rules (the old thin-water
+  generator's mask floor, 3-channel masks) do not apply. Its end-to-end test is skipped with
+  that reason; `scripts/audit_dataset_labels.py` is the same 3-class audit and is replaced for
+  the new dataset by `check_visible_dataset.py`.
+- Tests that named the 3 classes (dataset builder, stage datasets, losses, heads, visible
+  labels, CLI and evaluation tests) now take the classes from `EFFECT_NAMES` and count kinds
+  with `len()`; new tests cover the planned amounts and that every two-type kind is a pair.
+
+### Files
+
+changed: `src/soiling/{visible_labels,dataset_builder,visible_dataset,effects}.py`,
+`src/data/stage_c_dataset.py`, `src/pipeline.py`, `src/models/distortion_head.py`,
+`scripts/{build_visible_dataset,build_stage_a_dataset,build_stage_b_dataset,visualize_visible,fix_dataset_labels}.py`,
+the tests named above;
+new: `scripts/check_visible_dataset.py`, `scripts/render_label_check_sheet.py`,
+`scripts/hpc/build_visible_6class.slurm`, `scripts/hpc/run_tests_parallel.sh`, `.gitattributes`.

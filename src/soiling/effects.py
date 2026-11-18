@@ -590,10 +590,19 @@ def add_dust(image, severity, seed=None):
     return result, np.clip(cv.resize(mask, shrink, interpolation=cv.INTER_AREA), 0, 1)
 
 
+# The dataset's class names are the capture protocol's names (Session 31); the
+# generator functions keep the shorter names they were written with, so both are
+# accepted here and the class name is the one that reaches the labels.
+EFFECT_ALIASES = {"water_drops": "water", "mud": "dirt", "scratches": "scratch"}
+
+
 def render_effect(name, image, seed, severity):
-    """One effect at `severity`: (distorted_image, full-strength mask). Water and mud
-    (still called "dirt" in the class list) set severity through how much they cover;
-    the other effects fade toward the clean image."""
+    """One effect at `severity`: (distorted_image, full-strength mask). Accepts
+    the protocol class name ("water_drops", "mud", "scratches") or the generator's
+    own shorter name ("water", "dirt", "scratch"); the other three are the same in
+    both. Water drops and mud set severity through how much they cover; the other
+    effects fade toward the clean image."""
+    name = EFFECT_ALIASES.get(name, name)
     if name == "water":
         return add_water_droplets(image, severity, seed=seed)
     if name == "dirt":

@@ -9,7 +9,7 @@ import torch
 
 from src.models.backbone import FrozenYOLOBackbone
 from src.models.distortion_head import StageADistortionHead
-from src.soiling.dataset_builder import build_stage_a_dataset
+from src.soiling.dataset_builder import EFFECT_NAMES, build_stage_a_dataset
 
 _WEIGHTS = Path("weights/yolo11m.pt")
 
@@ -47,7 +47,7 @@ def test_evaluate_stage_a_runs_end_to_end(tmp_path):
         capture_output=True, text=True, timeout=300,
     )
     assert result.returncode == 0, result.stdout + result.stderr
-    for name in ("dirt", "water", "scratch"):
+    for name in EFFECT_NAMES:
         assert name in result.stdout
 
 

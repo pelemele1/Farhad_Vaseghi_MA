@@ -1,6 +1,10 @@
 import torch
 import torch.nn as nn
 
+from src.soiling.visible_labels import EFFECT_NAMES
+
+N_CLASSES = len(EFFECT_NAMES)
+
 from src.models.distortion_head import (
     ImpairedGateHead,
     StageADistortionHead,
@@ -13,19 +17,19 @@ def test_forward_output_shape_matches_class_count():
     head = StageADistortionHead(in_channels=512)
     features = torch.randn(4, 512, 4, 4)
     out = head(features)
-    assert out.shape == (4, 3)
+    assert out.shape == (4, N_CLASSES)
 
 
 def test_forward_is_agnostic_to_spatial_size():
     head = StageADistortionHead(in_channels=16)
     features = torch.randn(2, 16, 7, 9)
     out = head(features)
-    assert out.shape == (2, 3)
+    assert out.shape == (2, N_CLASSES)
 
 
 def test_class_names_default_and_override():
     head = StageADistortionHead(in_channels=8)
-    assert head.class_names == ("dirt", "water", "scratch")
+    assert head.class_names == EFFECT_NAMES
 
     custom = StageADistortionHead(in_channels=8, class_names=("a", "b"))
     assert custom.class_names == ("a", "b")
@@ -36,7 +40,7 @@ def test_single_optimizer_step_decreases_loss():
     torch.manual_seed(0)
     head = StageADistortionHead(in_channels=8)
     features = torch.randn(6, 8, 3, 3)
-    labels = torch.randint(0, 2, (6, 3)).float()
+    labels = torch.randint(0, 2, (6, N_CLASSES)).float()
     loss_fn = nn.BCEWithLogitsLoss()
     opt = torch.optim.SGD(head.parameters(), lr=0.1)
 
@@ -90,18 +94,18 @@ def test_stage_b_forward_output_shape_is_per_tile():
     head = StageBDistortionHead(in_channels=512)
     features = torch.randn(4, 512, 16, 16)
     out = head(features)
-    assert out.shape == (4, 3, 16, 16)  # one score per class per tile, not pooled
+    assert out.shape == (4, N_CLASSES, 16, 16)  # one score per class per tile, not pooled
 
 
 def test_stage_b_forward_tracks_feature_map_spatial_size():
     head = StageBDistortionHead(in_channels=16)
     out = head(torch.randn(2, 16, 7, 9))
-    assert out.shape == (2, 3, 7, 9)
+    assert out.shape == (2, N_CLASSES, 7, 9)
 
 
 def test_stage_b_class_names_default_and_override():
     head = StageBDistortionHead(in_channels=8)
-    assert head.class_names == ("dirt", "water", "scratch")
+    assert head.class_names == EFFECT_NAMES
 
     custom = StageBDistortionHead(in_channels=8, class_names=("a", "b"))
     assert custom.class_names == ("a", "b")
@@ -112,7 +116,7 @@ def test_stage_b_single_optimizer_step_decreases_loss():
     torch.manual_seed(0)
     head = StageBDistortionHead(in_channels=8)
     features = torch.randn(6, 8, 4, 4)
-    labels = torch.randint(0, 2, (6, 3, 4, 4)).float()
+    labels = torch.randint(0, 2, (6, N_CLASSES, 4, 4)).float()
     loss_fn = nn.BCEWithLogitsLoss()
     opt = torch.optim.SGD(head.parameters(), lr=0.1)
 
@@ -136,18 +140,18 @@ def test_stage_c_forward_upsamples_p5_back_to_input_resolution():
     head = StageCDistortionHead(in_channels=512)
     features = torch.randn(2, 512, 16, 16)
     out = head(features)
-    assert out.shape == (2, 3, 512, 512)
+    assert out.shape == (2, N_CLASSES, 512, 512)
 
 
 def test_stage_c_forward_tracks_feature_map_spatial_size():
     head = StageCDistortionHead(in_channels=16)
     out = head(torch.randn(2, 16, 4, 4))
-    assert out.shape == (2, 3, 128, 128)  # 4 * 32
+    assert out.shape == (2, N_CLASSES, 128, 128)  # 4 * 32
 
 
 def test_stage_c_class_names_default_and_override():
     head = StageCDistortionHead(in_channels=8)
-    assert head.class_names == ("dirt", "water", "scratch")
+    assert head.class_names == EFFECT_NAMES
 
     custom = StageCDistortionHead(in_channels=8, class_names=("a", "b"))
     assert custom.class_names == ("a", "b")
@@ -158,7 +162,7 @@ def test_stage_c_single_optimizer_step_decreases_loss():
     torch.manual_seed(0)
     head = StageCDistortionHead(in_channels=8)
     features = torch.randn(2, 8, 2, 2)
-    targets = torch.randint(0, 2, (2, 3, 64, 64)).float()
+    targets = torch.randint(0, 2, (2, N_CLASSES, 64, 64)).float()
     loss_fn = nn.BCEWithLogitsLoss()
     opt = torch.optim.SGD(head.parameters(), lr=0.1)
 
@@ -180,7 +184,7 @@ def test_stage_c_unet_head_outputs_input_resolution_logits():
     features = [torch.randn(2, 16, 16, 16), torch.randn(2, 32, 8, 8),
                 torch.randn(2, 32, 4, 4), torch.randn(2, 32, 2, 2)]
     out = head(features)
-    assert out.shape == (2, 3, 64, 64)
+    assert out.shape == (2, N_CLASSES, 64, 64)
     assert out.min() < 0 or out.max() > 1  # raw logits, not probabilities
 
 
@@ -190,7 +194,7 @@ def test_stage_b_multiscale_head_outputs_one_logit_per_p5_tile():
     head = StageBMultiScaleHead([16, 32, 32, 32])
     features = [torch.randn(2, 16, 16, 16), torch.randn(2, 32, 8, 8),
                 torch.randn(2, 32, 4, 4), torch.randn(2, 32, 2, 2)]
-    assert head(features).shape == (2, 3, 2, 2)
+    assert head(features).shape == (2, N_CLASSES, 2, 2)
 
 
 def test_stage_b_multiscale_head_smaller_capacity_keeps_output_shape():
@@ -203,7 +207,7 @@ def test_stage_b_multiscale_head_smaller_capacity_keeps_output_shape():
     small = StageBMultiScaleHead([16, 32, 32, 32], hidden_dim=16, fuse_kernel=1)
     features = [torch.randn(2, 16, 16, 16), torch.randn(2, 32, 8, 8),
                 torch.randn(2, 32, 4, 4), torch.randn(2, 32, 2, 2)]
-    assert small(features).shape == (2, 3, 2, 2)
+    assert small(features).shape == (2, N_CLASSES, 2, 2)
     assert n_params(small) < n_params(default) / 4
 
 
@@ -212,7 +216,7 @@ def test_stage_c_unet_head_with_stride2_tap_still_outputs_input_resolution():
 
     head = StageCUNetHead([8, 16, 32], out_stride=2)
     features = [torch.randn(1, 8, 32, 32), torch.randn(1, 16, 16, 16), torch.randn(1, 32, 2, 2)]
-    assert head(features).shape == (1, 3, 64, 64)
+    assert head(features).shape == (1, N_CLASSES, 64, 64)
 
 
 def test_stage_a_head_list_of_one_p5_map_matches_the_single_tensor_design():

@@ -8,16 +8,19 @@ build_stage_b_dataset's `save_pixel_masks` docstring for why. Image
 preprocessing matches StageADataset/StageBDataset exactly, so the same
 frozen backbone sees the input format it was trained on either way.
 
-`masks/{name}.png` is a 3-channel PNG written by cv.imwrite with channels in
-EFFECT_NAMES order (dirt, water, scratch) -- NOT a real color image, so it
-must be read back with cv.IMREAD_UNCHANGED and never passed through
-cv.cvtColor(..., COLOR_BGR2RGB) the way the actual photo is.
+`masks/{name}.npy` is an (H, W, n_classes) uint8 array, one channel per class
+in EFFECT_NAMES order -- NOT a color image, so it is never passed through
+cv.cvtColor(..., COLOR_BGR2RGB) the way the actual photo is. Datasets built
+before Session 31 have `masks/{name}.png` instead, a 3-channel PNG; PNG holds
+at most 4 channels, which is why the 6 classes needed a different container.
+Both are read here.
 """
 import csv
 import json
 from pathlib import Path
 
 import cv2 as cv
+import numpy as np
 import torch
 from torch.utils.data import Dataset
 
@@ -61,7 +64,14 @@ class StageCDataset(Dataset):
         return len(self.rows)
 
     def _mask_path(self, row):
-        return self.data_dir / "masks" / (Path(row["path"]).stem + ".png")
+        npy = self.data_dir / "masks" / (Path(row["path"]).stem + ".npy")
+        return npy if npy.exists() else npy.with_suffix(".png")
+
+    def _read_mask(self, row):
+        path = self._mask_path(row)
+        if path.suffix == ".npy":
+            return np.load(path)
+        return cv.imread(str(path), cv.IMREAD_UNCHANGED)
 
     def __getitem__(self, idx):
         row = self.rows[idx]
@@ -70,7 +80,7 @@ class StageCDataset(Dataset):
         image = cv.resize(image, (self.img_size, self.img_size))
         image_tensor = torch.from_numpy(image).permute(2, 0, 1).float() / 255.0
 
-        mask = cv.imread(str(self._mask_path(row)), cv.IMREAD_UNCHANGED)
+        mask = self._read_mask(row)
         mask = cv.resize(mask, (self.img_size, self.img_size), interpolation=cv.INTER_LINEAR)
         mask_tensor = torch.from_numpy(mask).permute(2, 0, 1).float() / 255.0
 

@@ -5,6 +5,7 @@ from pathlib import Path
 
 import cv2 as cv
 import numpy as np
+import pytest
 
 from scripts.make_gt_severity_independent import unscale_mask
 from src.soiling.dataset_builder import EFFECT_NAMES, build_stage_b_dataset
@@ -21,6 +22,10 @@ def test_unscale_mask_divides_each_channel_by_its_own_alpha():
     assert out[0, 0, 2] == 0
 
 
+@pytest.mark.skip(reason="scripts/make_gt_severity_independent.py converted the 3-class datasets "
+                         "built before Session 22 (severity-scaled 3-channel PNG masks) and was run on "
+                         "them; the builder has written severity-independent masks since, as .npy with "
+                         "6 channels since Session 31, so there is nothing left for it to convert.")
 def test_migration_restores_full_strength_masks_and_relabels_tiles(tmp_path):
     source_dir = tmp_path / "source"
     source_dir.mkdir()

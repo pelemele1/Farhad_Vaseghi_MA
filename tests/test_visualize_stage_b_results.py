@@ -16,7 +16,7 @@ from scripts.visualize_stage_b_results import (
     select_report_rows,
 )
 from src.data.stage_b_dataset import StageBDataset
-from src.soiling.dataset_builder import build_stage_b_dataset
+from src.soiling.dataset_builder import EFFECT_NAMES, build_stage_b_dataset
 
 
 def test_class_index_for_sample_active_class():
@@ -210,11 +210,11 @@ def test_plot_stage_b_eight_column_report_shows_all_classes_probability(tmp_path
 
     dataset = StageBDataset(data_dir, split="train")
     class_names = dataset.class_names
-    assert len(class_names) == 3
+    assert len(class_names) == len(EFFECT_NAMES)
     labels = dataset.tile_labels.astype(np.float32)
     probs = rng.random(labels.shape).astype(np.float32)
 
-    report_rows = [(0, "dirt", 0)]
+    report_rows = [(0, EFFECT_NAMES[0], 0)]
     labels_flat, probs_flat = flatten_tiles(labels, probs)
 
     out_dir = tmp_path / "out"
@@ -227,7 +227,8 @@ def test_plot_stage_b_eight_column_report_shows_all_classes_probability(tmp_path
             labels_flat, probs_flat, out_dir, rows_per_page=6,
         )
     n_rows, n_cols = spy.call_args[0][:2]
-    assert (n_rows, n_cols) == (1, 8)  # 1 row, 8 columns: orig/distorted/GT/3xprob/PR/gated
+    # 1 row; columns: orig/distorted/GT, one probability per class, PR curve, gated
+    assert (n_rows, n_cols) == (1, 3 + len(EFFECT_NAMES) + 2)
 
 
 def test_plot_stage_b_eight_column_report_column_8_reflects_gating(tmp_path):
@@ -252,7 +253,7 @@ def test_plot_stage_b_eight_column_report_column_8_reflects_gating(tmp_path):
     raw_probs = np.ones_like(labels) * 0.7  # nonzero everywhere
     gated_tile_probs = np.zeros_like(labels)  # this image was gated out
 
-    report_rows = [(0, "dirt", 0)]
+    report_rows = [(0, EFFECT_NAMES[0], 0)]
     labels_flat, probs_flat = flatten_tiles(labels, raw_probs)
 
     out_dir = tmp_path / "out"

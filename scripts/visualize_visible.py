@@ -135,6 +135,10 @@ def plot_training_curves(log_paths, out_path):
     plt.close(fig)
 
 
+# Every pair of types (order as in the kind strings, which follow EFFECT_NAMES).
+TWO_TYPE_COMBOS = tuple((a, b) for i, a in enumerate(EFFECT_NAMES) for b in EFFECT_NAMES[i + 1:])
+
+
 def select_report_samples(rows, seed=0):
     """Test images covering every kind: 2 clean, each distortion at each
     severity alone, and every combination."""
@@ -145,11 +149,10 @@ def select_report_samples(rows, seed=0):
         cands = [i for i, r in enumerate(rows) if r["kind"] == kind and i not in picks]
         if cands:
             picks.append(int(rng.choice(cands)))
-    for combo in (("dirt", "water"), ("dirt", "scratch"), ("water", "scratch"), ("dirt", "water", "scratch")):
+    for combo in TWO_TYPE_COMBOS:
         cands = [i for i, r in enumerate(rows)
                  if tuple(t.split(":")[0] for t in r["kind"].split("+")) == combo and i not in picks]
-        picks += [int(i) for i in rng.choice(cands, size=min(2 if len(combo) == 3 else 1, len(cands)),
-                                             replace=False)]
+        picks += [int(i) for i in rng.choice(cands, size=min(1, len(cands)), replace=False)]
     return picks
 
 
@@ -157,13 +160,17 @@ def plot_label_examples(ds, out_path, seed=1):
     """Distorted test image next to its visible-change ground truth, for the
     single distortions at every severity and the combinations."""
     rng = np.random.default_rng(seed)
-    kinds = ["dirt:low", "water:low", "scratch:low", "dirt:high", "water:high", "scratch:high"]
+    # 12 panels (4 x 3 image/ground-truth pairs): the 6 types at light -- the faint
+    # case the project aims at -- and 6 two-type images, a ring so each type is in two
+    kinds = [f"{n}:low" for n in EFFECT_NAMES]
     picks = [int(rng.choice([i for i, r in enumerate(ds.rows) if r["kind"] == k])) for k in kinds]
-    for combo in (("dirt", "water"), ("dirt", "scratch"), ("water", "scratch"), ("dirt", "water", "scratch"),
-                  ("dirt", "water"), ("dirt", "water", "scratch")):
+    ring = [(EFFECT_NAMES[i], EFFECT_NAMES[(i + 1) % len(EFFECT_NAMES)]) for i in range(len(EFFECT_NAMES))]
+    ring = [tuple(sorted(pair, key=EFFECT_NAMES.index)) for pair in ring]
+    for combo in ring:
         cands = [i for i, r in enumerate(ds.rows) if tuple(t.split(":")[0] for t in r["kind"].split("+")) == combo
                  and i not in picks]
-        picks.append(int(rng.choice(cands)))
+        if cands:
+            picks.append(int(rng.choice(cands)))
     fig, axes = plt.subplots(4, 6, figsize=(18, 12.6))
     for n, idx in enumerate(picks):
         r, c = divmod(n, 3)

@@ -10,7 +10,7 @@ import torch
 from scripts.evaluate_stage_c import pool_to_grid
 from src.models.backbone import FrozenYOLOBackbone
 from src.models.distortion_head import ImpairedGateHead, StageCDistortionHead
-from src.soiling.dataset_builder import build_stage_b_dataset
+from src.soiling.dataset_builder import EFFECT_NAMES, build_stage_b_dataset
 
 _WEIGHTS = Path("weights/yolo11m.pt")
 
@@ -75,7 +75,7 @@ def test_evaluate_stage_c_runs_end_to_end(tmp_path):
         capture_output=True, text=True, timeout=300,
     )
     assert result.returncode == 0, result.stdout + result.stderr
-    for name in ("dirt", "water", "scratch"):
+    for name in EFFECT_NAMES:
         assert name in result.stdout
 
 
@@ -182,7 +182,7 @@ def test_evaluate_stage_c_unet_checkpoint_end_to_end(tmp_path):
         ratios=(0.25, 0.25, 0.5), img_size=64, save_pixel_masks=True,
     )
 
-    backbone, head = build_stage_c_model("unet", str(_WEIGHTS), ("dirt", "water", "scratch"), torch.device("cpu"))
+    backbone, head = build_stage_c_model("unet", str(_WEIGHTS), EFFECT_NAMES, torch.device("cpu"))
     ckpt_path = tmp_path / "stage_c_head.pt"
     torch.save({"head_state_dict": head.state_dict(), "class_names": head.class_names, "arch": "unet"}, ckpt_path)
     gate_head = ImpairedGateHead(in_channels=backbone.out_channels[-1])

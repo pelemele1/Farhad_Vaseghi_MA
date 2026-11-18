@@ -4,6 +4,12 @@ import sys
 import cv2 as cv
 import numpy as np
 
+from src.soiling.dataset_builder import EFFECT_NAMES
+
+# Seconds a small test build may take. The 6 classes (Session 31) draw slower than
+# the old 3, and on the HPC every test file runs at once on a shared node.
+_BUILD_TIMEOUT = 600
+
 
 def test_build_stage_a_dataset_cli_runs_end_to_end(tmp_path):
     source_dir = tmp_path / "source"
@@ -18,11 +24,11 @@ def test_build_stage_a_dataset_cli_runs_end_to_end(tmp_path):
         [sys.executable, "scripts/build_stage_a_dataset.py",
          "--source", str(source_dir), "--out", str(out_dir),
          "--variants", "4", "--seed", "0"],
-        capture_output=True, text=True, timeout=120,
+        capture_output=True, text=True, timeout=_BUILD_TIMEOUT,
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert "Wrote 16 images" in result.stdout
-    for name in ("dirt", "water", "scratch"):
+    for name in EFFECT_NAMES:
         assert name in result.stdout
 
     assert len(list((out_dir / "images").glob("*.jpg"))) == 16
@@ -42,7 +48,7 @@ def test_build_stage_a_dataset_cli_include_combos(tmp_path):
         [sys.executable, "scripts/build_stage_a_dataset.py",
          "--source", str(source_dir), "--out", str(out_dir),
          "--variants", "8", "--seed", "0", "--include-combos"],
-        capture_output=True, text=True, timeout=120,
+        capture_output=True, text=True, timeout=_BUILD_TIMEOUT,
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert "Wrote 16 images" in result.stdout  # 2 sources * 8 variants
@@ -64,7 +70,7 @@ def test_build_stage_a_dataset_cli_include_severity(tmp_path):
         [sys.executable, "scripts/build_stage_a_dataset.py",
          "--source", str(source_dir), "--out", str(out_dir),
          "--variants", "10", "--seed", "0", "--include-severity"],
-        capture_output=True, text=True, timeout=120,
+        capture_output=True, text=True, timeout=_BUILD_TIMEOUT,
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert "Wrote 20 images" in result.stdout  # 2 sources * 10 variants

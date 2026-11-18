@@ -21,41 +21,35 @@ def main():
     parser.add_argument("--source", required=True, help="Folder of clean source images")
     parser.add_argument("--out", default="data/processed/stage_b", help="Output directory")
     parser.add_argument("--variants", type=int, default=4,
-                         help="Variants per source image (cycles clean/dirt/water/scratch, balanced)")
+                         help="Variants per source image (cycles clean and each type, balanced)")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--img-size", type=int, default=512,
                          help="Must be a multiple of 32 (P5 stride) -- sets the tile grid size (img-size // 32)")
-    parser.add_argument("--dirt-threshold", type=float, default=None,
-                         help="Override the dirt tile-coverage threshold (default "
-                         f"{DEFAULT_TILE_THRESHOLDS['dirt']}, see scripts/diagnose_tile_thresholds.py "
-                         "--effect dirt).")
-    parser.add_argument("--water-threshold", type=float, default=None,
-                         help="Override the water tile-coverage threshold (default "
-                         f"{DEFAULT_TILE_THRESHOLDS['water']}, see scripts/diagnose_tile_thresholds.py "
-                         "--effect water).")
-    parser.add_argument("--scratch-threshold", type=float, default=None,
-                         help="Override the scratch tile-coverage threshold (default "
-                         f"{DEFAULT_TILE_THRESHOLDS['scratch']}, see scripts/diagnose_tile_thresholds.py "
-                         "--effect scratch).")
+    # One override per class, e.g. --mud-threshold, --scratches-threshold.
+    for name in EFFECT_NAMES:
+        parser.add_argument(f"--{name.replace('_', '-')}-threshold", type=float, default=None,
+                             dest=f"{name}_threshold",
+                             help=f"Override the {name} tile-coverage threshold "
+                                  f"(default {DEFAULT_TILE_THRESHOLDS[name]}).")
     parser.add_argument("--include-combos", action="store_true",
-                         help="Also generate multi-distortion variants (the 3 pairs + the full triple, "
-                         "see COMBO_KINDS in src/soiling/dataset_builder.py) alongside the original "
-                         "clean/single-effect kinds -- 8 kinds total. Default: off, original behavior.")
+                         help="Also generate two-type variants (every pair of types, see COMBO_KINDS "
+                         "in src/soiling/dataset_builder.py) alongside the clean/single-type kinds. "
+                         "Default: off.")
     parser.add_argument("--include-severity", action="store_true",
-                         help="Split each single-effect kind into 3 balanced severity levels "
+                         help="Split each single-type kind into 3 balanced severity levels "
                          "(low/medium/high, see SEVERITY_VARIANT_KINDS in "
-                         "src/soiling/dataset_builder.py) -- 10 kinds total (or 14 combined with "
-                         "--include-combos). Default: off, every active class is full-strength.")
+                         "src/soiling/dataset_builder.py). Default: off, every active class is "
+                         "full-strength.")
     parser.add_argument("--save-pixel-masks", action="store_true",
                          help="Also write each variant's full-resolution per-class mask to "
-                         "masks/ (3-channel PNG, one channel per class, continuous [0,1] scaled "
+                         "masks/ (.npy, one channel per class, continuous [0,1] scaled "
                          "to uint8) -- this is Stage C's (pixel-level segmentation) ground "
                          "truth, computed for free in the same call that already builds this "
                          "Stage B dataset. Default: off, no masks/ folder written.")
     args = parser.parse_args()
 
     thresholds = None
-    overrides = {"dirt": args.dirt_threshold, "water": args.water_threshold, "scratch": args.scratch_threshold}
+    overrides = {name: getattr(args, f"{name}_threshold") for name in EFFECT_NAMES}
     if any(v is not None for v in overrides.values()):
         thresholds = dict(DEFAULT_TILE_THRESHOLDS)
         for name, value in overrides.items():
@@ -76,7 +70,7 @@ def main():
     print(f"Metadata: {Path(args.out) / 'metadata.csv'}")
     print(f"Tile labels: {Path(args.out) / 'tile_labels.npy'} (shape {tile_labels.shape}, grid {grid_h}x{grid_w})")
     if args.save_pixel_masks:
-        print(f"Pixel masks: {Path(args.out) / 'masks'} (one 3-channel PNG per image)")
+        print(f"Pixel masks: {Path(args.out) / 'masks'} (one .npy per image, a channel per class)")
     print(f"Split sizes: {dict(by_split)}")
     for i, name in enumerate(EFFECT_NAMES):
         positives = sum(r[name] for r in rows)

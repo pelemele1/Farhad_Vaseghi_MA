@@ -35,7 +35,12 @@ import numpy as np
 from src.soiling.effects import SEVERITY_LEVELS, is_visible, render_effect
 from src.soiling.tile_labels import rasterize_tile_label
 
-EFFECT_NAMES = ("dirt", "water", "scratch")
+# The 6 contamination types of the capture protocol (Session 31; before that
+# the 3 classes dirt/water/scratch). The names and their order are the capture
+# app's (src/capture/session.py::CONTAMINATION_TYPES), so a synthetic label and
+# a real capture's label mean the same thing; the generator functions keep their
+# own shorter names, mapped in effects.py::EFFECT_ALIASES.
+EFFECT_NAMES = ("water_drops", "mud", "steamy", "cleaning_streaks", "scratches", "dust")
 VARIANT_KINDS = ("clean",) + EFFECT_NAMES
 # Multi-distortion variant kinds (Session 19+, supervisor item 5): every
 # 2-way combination plus the full 3-way one. Additive, not a replacement --
@@ -46,7 +51,15 @@ VARIANT_KINDS = ("clean",) + EFFECT_NAMES
 # with no changes needed -- effects.py's module docstring says composability
 # was the design intent from day one, it just was never exercised via the
 # dataset builder until now (see docs/development_log.md Session 19).
-COMBO_KINDS = ("dirt+water", "dirt+scratch", "water+scratch", "dirt+water+scratch")
+# Session 31: exactly 2 types on one image, never 3 -- the supervisor's rule for
+# both the real and the synthetic data (docs/data_collection/capture_plan.md),
+# so the full 3-way kind of the 3-class dataset is gone and all 15 pairs of the
+# 6 types are used instead.
+COMBO_KINDS = tuple(
+    f"{a}+{b}"
+    for i, a in enumerate(EFFECT_NAMES)
+    for b in EFFECT_NAMES[i + 1:]
+)
 ALL_VARIANT_KINDS = VARIANT_KINDS + COMBO_KINDS
 # Balanced severity variant kinds (Session 20, Round 3, supervisor request):
 # "effect:level" kind strings, one per (effect, severity) pair -- e.g.
@@ -79,7 +92,10 @@ METADATA_FIELDNAMES = [
 # starting points, meant to be re-checked against the real per-class
 # tile-positive rate after the first build (same lesson as Session 5's
 # dirt/water texture-pool fix for Stage A).
-DEFAULT_TILE_THRESHOLDS = {"dirt": 0.15, "water": 0.15, "scratch": 0.03}
+DEFAULT_TILE_THRESHOLDS = {
+    "water_drops": 0.15, "mud": 0.15, "steamy": 0.15,
+    "cleaning_streaks": 0.15, "scratches": 0.03, "dust": 0.15,
+}
 
 
 def derive_seed(*parts):
@@ -202,6 +218,61 @@ def build_variant(image, source_id, variant_idx, kind, base_seed):
         for name in EFFECT_NAMES
     }
     return apply_effect_combo(image, combo, seeds, severities)
+
+
+# The planned synthetic amounts (README "Planned dataset", Session 31): every
+# source photo carries one clean variant and one variant per (type, severity)
+# -- 1 + 6*3 = 19, so each of those kinds is as numerous as there are source
+# photos -- plus two-type variants, COMBOS_PER_KIND of each of the 15 pairs,
+# spread over the photos. With the 1,000 MIO-TCD photos that is
+# 1,000 clean + 18,000 single-type + 2,115 two-type = 21,115 images, and
+# 10.0% of them carry two types, as the supervisor asked.
+PLANNED_SINGLE_KINDS = VARIANT_KINDS_WITH_SEVERITY  # 1 clean + 6 types x 3 severities
+COMBOS_PER_KIND = 141
+
+
+def _apportion(total, ratios):
+    """`total` split by `ratios` into whole numbers that still add up to
+    `total` (largest remainder), so no two-type combination is lost or
+    duplicated by rounding each split separately."""
+    exact = [total * r for r in ratios]
+    counts = [int(x) for x in exact]
+    order = sorted(range(len(ratios)), key=lambda i: exact[i] - counts[i], reverse=True)
+    for i in range(total - sum(counts)):
+        counts[order[i]] += 1
+    return counts
+
+
+def plan_variant_kinds(split_of, seed, combos_per_kind=COMBOS_PER_KIND,
+                       ratios=(0.8, 0.1, 0.1), combo_kinds=None):
+    """dict source_id -> list of variant kinds realizing the planned amounts
+    above. Every photo gets all of PLANNED_SINGLE_KINDS, so clean and each
+    (type, severity) are exactly balanced by construction. Each two-type
+    combination is used `combos_per_kind` times in total, apportioned over the
+    splits by `ratios` (so a combination is equally present in train, val and
+    test) and then dealt out as evenly as possible over that split's photos.
+    Each photo's kinds are shuffled with a seeded RNG, so a variant index does
+    not always mean the same kind."""
+    combo_kinds = COMBO_KINDS if combo_kinds is None else combo_kinds
+    splits = ("train", "val", "test")
+    per_split_per_kind = dict(zip(splits, _apportion(combos_per_kind, ratios)))
+
+    plan = {sid: list(PLANNED_SINGLE_KINDS) for sid in split_of}
+    for split in splits:
+        ids = sorted(sid for sid, s in split_of.items() if s == split)
+        if not ids:
+            continue
+        pool = [kind for kind in combo_kinds for _ in range(per_split_per_kind[split])]
+        rng = random.Random(derive_seed(seed, split, "combo_plan"))
+        rng.shuffle(pool)
+        rng.shuffle(ids)
+        # Deal the pool round by round, so the photos differ by at most one
+        # two-type variant and the kinds stay spread over different photos.
+        for i, kind in enumerate(pool):
+            plan[ids[i % len(ids)]].append(kind)
+    for sid, kinds in plan.items():
+        random.Random(derive_seed(seed, sid, "kind_order")).shuffle(kinds)
+    return plan
 
 
 def assign_splits(source_ids, seed, ratios=(0.8, 0.1, 0.1)):
@@ -419,8 +490,9 @@ def build_stage_b_dataset(source_dir, out_dir, variants_per_image=4, seed=0,
                     [np.clip(masks[name] * 255.0, 0, 255).round() for name in EFFECT_NAMES],
                     axis=-1,
                 ).astype(np.uint8)
-                mask_name = f"{source_id}_v{variant_idx:02d}.png"
-                cv.imwrite(str(masks_out / mask_name), mask_stack)
+                # .npy, not a PNG as before Session 31: a PNG holds at most 4
+                # channels and there are now 6 classes.
+                np.save(masks_out / f"{source_id}_v{variant_idx:02d}.npy", mask_stack)
 
             rows.append({
                 "path": f"images/{out_name}",

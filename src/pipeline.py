@@ -26,9 +26,20 @@ from src.eval.class_maps import decide
 from src.models.backbone import build_multiscale_backbone
 from src.models.distortion_head import StageADistortionHead, StageBMultiScaleHead, StageCUNetHead
 
-CLASS_NAMES = ("clean", "dirt", "water", "scratch")
-EFFECT_NAMES = CLASS_NAMES[1:]
-CLASS_COLORS = {"dirt": (230, 140, 20), "water": (30, 120, 255), "scratch": (235, 20, 60)}
+# The dataset's own class list (Session 31: the protocol's 6 contamination
+# types), so the pipeline cannot drift apart from the ground truth it is
+# trained on.
+from src.soiling.visible_labels import CLASS_NAMES, EFFECT_NAMES  # noqa: E402
+
+# One well-separated color per type, also distinguishable in grayscale print.
+CLASS_COLORS = {
+    "water_drops": (30, 120, 255),       # blue
+    "mud": (150, 75, 0),                 # brown
+    "steamy": (120, 220, 230),           # pale cyan
+    "cleaning_streaks": (255, 200, 0),   # yellow
+    "scratches": (235, 20, 60),          # red
+    "dust": (170, 110, 230),             # violet
+}
 # Default minimum share of the image a class needs in the pixel map to count as
 # found (512 x 512: ~130 pixels); the pipeline uses per-class values tuned on val.
 MIN_SHARE = 0.0005

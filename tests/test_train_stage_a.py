@@ -45,11 +45,17 @@ def test_smoke_test_runs_end_to_end(tmp_path):
 def test_low_severity_sample_weights_upweights_rows_with_any_low_effect():
     from scripts.train_stage_a import low_severity_sample_weights
 
+    from src.soiling.dataset_builder import EFFECT_NAMES
+    a, b, c = EFFECT_NAMES[:3]
+
+    def row(**levels):
+        return {f"{n}_severity": levels.get(n, "none") for n in EFFECT_NAMES}
+
     rows = [
-        {"dirt_severity": "low", "water_severity": "none", "scratch_severity": "none"},
-        {"dirt_severity": "high", "water_severity": "low", "scratch_severity": "none"},
-        {"dirt_severity": "none", "water_severity": "none", "scratch_severity": "none"},
-        {"dirt_severity": "medium", "water_severity": "none", "scratch_severity": "high"},
+        row(**{a: "low"}),
+        row(**{a: "high", b: "low"}),
+        row(),
+        row(**{a: "medium", c: "high"}),
     ]
     assert low_severity_sample_weights(rows, 3.0) == [3.0, 3.0, 1.0, 1.0]
 

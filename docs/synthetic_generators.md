@@ -1,7 +1,8 @@
 # Synthetic contamination generators
 
-**Status:** all six approved by the user (Session 29, 2026-11-09 – 11-12). The dataset has
-**not** been regenerated with them yet: the dataset builder is updated to 6 classes first.
+**Status:** all six approved by the user (Session 29, 2026-11-09 – 11-12). The 6-class
+dataset was built with them on 2026-11-16 (Session 31): 21,115 images, every label checked
+(README, "Datasets").
 
 One generator per contamination type of the capture protocol
 ([`data_collection/datacollection_surveilance_en.md`](data_collection/datacollection_surveilance_en.md)).

@@ -4,9 +4,10 @@ from pathlib import Path
 
 import cv2 as cv
 import numpy as np
+
 import pytest
 
-from src.soiling.dataset_builder import build_stage_b_dataset
+from src.soiling.dataset_builder import EFFECT_NAMES, build_stage_b_dataset
 
 _WEIGHTS = Path("weights/yolo11m.pt")
 
@@ -74,9 +75,9 @@ def test_smoke_test_runs_end_to_end_with_focal_loss(tmp_path):
 
 
 def test_smoke_test_runs_end_to_end_with_per_class_focal_alpha(tmp_path):
-    # Session 18 improvement #2: --focal-alpha also accepts 3 comma-separated
-    # values (one per class, dirt/water/scratch order) instead of one shared
-    # float -- exercise that parsing path end to end.
+    # Session 18 improvement #2: --focal-alpha also accepts one comma-separated
+    # value per class (EFFECT_NAMES order) instead of one shared float --
+    # exercise that parsing path end to end.
     source_dir = tmp_path / "source"
     source_dir.mkdir()
     rng = np.random.default_rng(0)
@@ -93,12 +94,14 @@ def test_smoke_test_runs_end_to_end_with_per_class_focal_alpha(tmp_path):
     result = subprocess.run(
         [sys.executable, "scripts/train_stage_b.py", "--smoke-test",
          "--data", str(data_dir), "--weights", str(_WEIGHTS), "--img-size", "64",
-         "--loss", "focal", "--focal-alpha", "0.75,0.75,0.9", "--focal-gamma", "2.0"],
+         "--loss", "focal", "--focal-alpha", ",".join(["0.75"] * (len(EFFECT_NAMES) - 1) + ["0.9"]),
+         "--focal-gamma", "2.0"],
         capture_output=True, text=True, timeout=300,
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert "epoch 1/1" in result.stdout
-    assert "loss=focal alpha=[0.75, 0.75, 0.8999999" in result.stdout  # float32 repr rounding on .9
+    # one alpha per class, the last 0.9 (printed as float32: 0.8999999...)
+    assert "loss=focal alpha=[" + "0.75, " * (len(EFFECT_NAMES) - 1) + "0.8999999" in result.stdout  # float32 repr rounding on .9
     assert "gamma=2.0" in result.stdout
 
 
@@ -146,7 +149,7 @@ def test_focal_alpha_count_mismatch_raises(tmp_path):
     result = subprocess.run(
         [sys.executable, "scripts/train_stage_b.py", "--smoke-test",
          "--data", str(data_dir), "--weights", str(_WEIGHTS), "--img-size", "64",
-         "--loss", "focal", "--focal-alpha", "0.75,0.9"],  # only 2 values for 3 classes
+         "--loss", "focal", "--focal-alpha", "0.75,0.9"],  # only 2 values for 6 classes
         capture_output=True, text=True, timeout=300,
     )
     assert result.returncode != 0
@@ -179,4 +182,4 @@ def test_multiscale_arch_trains_and_is_loaded_by_evaluate(tmp_path):
         capture_output=True, text=True, timeout=300,
     )
     assert evaluate.returncode == 0, evaluate.stdout + evaluate.stderr
-    assert "scratch" in evaluate.stdout
+    assert "scratches" in evaluate.stdout

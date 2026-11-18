@@ -1,6 +1,6 @@
 """
-One-time, in-place label fix for datasets built before the Session 26 label
-audit (scripts/audit_dataset_labels.py), applying the rules the generator now
+One-time, in-place label fix for the 3-class (dirt / water / scratch)
+datasets built before the Session 26 label audit (scripts/audit_dataset_labels.py), applying the rules the generator now
 follows (src/soiling/effects.py) without re-rendering any image:
 
   Stage B/C dataset (masks + tile labels):
@@ -52,7 +52,9 @@ from src.soiling.effects import (
 from src.soiling.tile_labels import rasterize_tile_label
 
 FLAG = "label_audit_fix"
-WATER = EFFECT_NAMES.index("water")
+# Only the 3-class datasets have a "water" class with the thin-water floor; the
+# 6-class builder (Session 31) has neither, and main() stops before any use.
+WATER = EFFECT_NAMES.index("water") if "water" in EFFECT_NAMES else None
 # A water mask whose minimum is this high carries the thin-water floor (thick
 # water and droplet masks start at 0).
 FLOOR_DETECT = 0.15
@@ -212,6 +214,11 @@ def main():
                         help="Source photos (re-rendering, Stage A scratch-mask regeneration)")
     parser.add_argument("--seed", type=int, default=0, help="Base seed the datasets were built with")
     args = parser.parse_args()
+
+    if WATER is None:
+        sys.exit("fix_dataset_labels.py repairs the 3-class datasets built before the Session 26 "
+                 "label audit, and was run on them. The current builder makes the 6 classes of "
+                 "Session 31 and writes correct labels, so there is nothing to fix.")
 
     for data in filter(None, (args.stage_b, args.stage_a)):
         log = []

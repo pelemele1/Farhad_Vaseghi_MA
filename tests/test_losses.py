@@ -21,9 +21,20 @@ from src.models.losses import (
 )
 from src.soiling.dataset_builder import EFFECT_NAMES
 
+N_CLASSES = len(EFFECT_NAMES)
+# These tests only need a few classes, so a row names the first three by
+# position; every other class is simply absent from the row (0).
+FIRST, SECOND, THIRD = EFFECT_NAMES[:3]
+
+
+def _pad(values, fill):
+    """`values` for the classes they name, `fill` for the rest."""
+    return list(values) + [fill] * (N_CLASSES - len(values))
+
 
 def _write_metadata(path, rows):
     fieldnames = ["path", "source_id", "variant_id", "split", *EFFECT_NAMES]
+    rows = [{**{name: 0 for name in EFFECT_NAMES}, **row} for row in rows]
     with open(path, "w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
@@ -32,10 +43,10 @@ def _write_metadata(path, rows):
 
 def test_compute_pos_weight_matches_hand_calculation(tmp_path):
     rows = [
-        {"path": "a", "source_id": "s0", "variant_id": 0, "split": "train", "dirt": 1, "water": 0, "scratch": 0},
-        {"path": "b", "source_id": "s0", "variant_id": 1, "split": "train", "dirt": 0, "water": 0, "scratch": 0},
-        {"path": "c", "source_id": "s0", "variant_id": 2, "split": "train", "dirt": 0, "water": 1, "scratch": 0},
-        {"path": "d", "source_id": "s0", "variant_id": 3, "split": "train", "dirt": 0, "water": 0, "scratch": 0},
+        {"path": "a", "source_id": "s0", "variant_id": 0, "split": "train", FIRST: 1, SECOND: 0, THIRD: 0},
+        {"path": "b", "source_id": "s0", "variant_id": 1, "split": "train", FIRST: 0, SECOND: 0, THIRD: 0},
+        {"path": "c", "source_id": "s0", "variant_id": 2, "split": "train", FIRST: 0, SECOND: 1, THIRD: 0},
+        {"path": "d", "source_id": "s0", "variant_id": 3, "split": "train", FIRST: 0, SECOND: 0, THIRD: 0},
     ]
     csv_path = tmp_path / "metadata.csv"
     _write_metadata(csv_path, rows)
@@ -43,13 +54,14 @@ def test_compute_pos_weight_matches_hand_calculation(tmp_path):
     pos_weight = compute_pos_weight(csv_path)
     # dirt: 1 positive / 3 negative -> 3.0; water: same -> 3.0;
     # scratch: 0 positive / 4 negative -> 4/max(0,1) = 4.0
-    assert torch.allclose(pos_weight, torch.tensor([3.0, 3.0, 4.0]))
+    # the classes no row names have 0 positives of 4 rows -> 4.0 as well
+    assert torch.allclose(pos_weight, torch.tensor(_pad([3.0, 3.0], 4.0)))
 
 
 def test_compute_pos_weight_respects_split_filter(tmp_path):
     rows = [
-        {"path": "a", "source_id": "s0", "variant_id": 0, "split": "train", "dirt": 1, "water": 0, "scratch": 0},
-        {"path": "b", "source_id": "s1", "variant_id": 0, "split": "val", "dirt": 0, "water": 0, "scratch": 0},
+        {"path": "a", "source_id": "s0", "variant_id": 0, "split": "train", FIRST: 1, SECOND: 0, THIRD: 0},
+        {"path": "b", "source_id": "s1", "variant_id": 0, "split": "val", FIRST: 0, SECOND: 0, THIRD: 0},
     ]
     csv_path = tmp_path / "metadata.csv"
     _write_metadata(csv_path, rows)
@@ -57,7 +69,7 @@ def test_compute_pos_weight_respects_split_filter(tmp_path):
     pos_weight = compute_pos_weight(csv_path, split="train")
     # only the "train" row counted: dirt 1 positive/0 negative -> 0.0;
     # water/scratch 0 positive/1 negative -> 1.0
-    assert torch.allclose(pos_weight, torch.tensor([0.0, 1.0, 1.0]))
+    assert torch.allclose(pos_weight, torch.tensor(_pad([0.0], 1.0)))
 
 
 def test_build_stage_a_loss_is_finite_and_uses_pos_weight():
@@ -74,10 +86,10 @@ def test_build_stage_a_loss_is_finite_and_uses_pos_weight():
 
 def test_compute_impaired_class_weight_matches_hand_calculation(tmp_path):
     rows = [
-        {"path": "a", "source_id": "s0", "variant_id": 0, "split": "train", "dirt": 1, "water": 0, "scratch": 0},
-        {"path": "b", "source_id": "s0", "variant_id": 1, "split": "train", "dirt": 0, "water": 0, "scratch": 0},
-        {"path": "c", "source_id": "s0", "variant_id": 2, "split": "train", "dirt": 0, "water": 1, "scratch": 0},
-        {"path": "d", "source_id": "s0", "variant_id": 3, "split": "train", "dirt": 0, "water": 0, "scratch": 0},
+        {"path": "a", "source_id": "s0", "variant_id": 0, "split": "train", FIRST: 1, SECOND: 0, THIRD: 0},
+        {"path": "b", "source_id": "s0", "variant_id": 1, "split": "train", FIRST: 0, SECOND: 0, THIRD: 0},
+        {"path": "c", "source_id": "s0", "variant_id": 2, "split": "train", FIRST: 0, SECOND: 1, THIRD: 0},
+        {"path": "d", "source_id": "s0", "variant_id": 3, "split": "train", FIRST: 0, SECOND: 0, THIRD: 0},
     ]
     csv_path = tmp_path / "metadata.csv"
     _write_metadata(csv_path, rows)
@@ -90,9 +102,9 @@ def test_compute_impaired_class_weight_matches_hand_calculation(tmp_path):
 
 def test_compute_impaired_class_weight_respects_split_filter(tmp_path):
     rows = [
-        {"path": "a", "source_id": "s0", "variant_id": 0, "split": "train", "dirt": 1, "water": 0, "scratch": 0},
-        {"path": "b", "source_id": "s1", "variant_id": 0, "split": "val", "dirt": 0, "water": 0, "scratch": 0},
-        {"path": "c", "source_id": "s1", "variant_id": 1, "split": "val", "dirt": 0, "water": 0, "scratch": 0},
+        {"path": "a", "source_id": "s0", "variant_id": 0, "split": "train", FIRST: 1, SECOND: 0, THIRD: 0},
+        {"path": "b", "source_id": "s1", "variant_id": 0, "split": "val", FIRST: 0, SECOND: 0, THIRD: 0},
+        {"path": "c", "source_id": "s1", "variant_id": 1, "split": "val", FIRST: 0, SECOND: 0, THIRD: 0},
     ]
     csv_path = tmp_path / "metadata.csv"
     _write_metadata(csv_path, rows)
@@ -116,23 +128,19 @@ def test_build_impaired_gate_loss_is_finite():
 
 
 def _write_metadata_rows(path, rows):
-    fieldnames = ["path", "source_id", "variant_id", "split", *EFFECT_NAMES]
-    with open(path, "w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
-        writer.writeheader()
-        writer.writerows(rows)
+    _write_metadata(path, rows)
 
 
 def test_compute_tile_pos_weight_matches_hand_calculation(tmp_path):
     # 2 rows, each a 2x2 grid (4 tiles). dirt: 1 positive tile total out of
     # 8 -> pos_weight = (8-1)/1 = 7.0. water: 0 positive -> (8-0)/max(0,1) = 8.0.
     # scratch: 4 positive (all of row 2's tiles) -> (8-4)/4 = 1.0.
-    tile_labels = np.zeros((2, 3, 2, 2), dtype=np.uint8)
+    tile_labels = np.zeros((2, N_CLASSES, 2, 2), dtype=np.uint8)
     tile_labels[0, 0, 0, 0] = 1  # one dirt tile in row 0
-    tile_labels[1, 2, :, :] = 1  # all 4 scratch tiles in row 1
+    tile_labels[1, 2, :, :] = 1  # all 4 tiles of the third class in row 1
     rows = [
-        {"path": "a", "source_id": "s0", "variant_id": 0, "split": "train", "dirt": 1, "water": 0, "scratch": 0},
-        {"path": "b", "source_id": "s1", "variant_id": 0, "split": "train", "dirt": 0, "water": 0, "scratch": 1},
+        {"path": "a", "source_id": "s0", "variant_id": 0, "split": "train", FIRST: 1, SECOND: 0, THIRD: 0},
+        {"path": "b", "source_id": "s1", "variant_id": 0, "split": "train", FIRST: 0, SECOND: 0, THIRD: 1},
     ]
     csv_path = tmp_path / "metadata.csv"
     _write_metadata_rows(csv_path, rows)
@@ -140,15 +148,15 @@ def test_compute_tile_pos_weight_matches_hand_calculation(tmp_path):
     np.save(npy_path, tile_labels)
 
     pos_weight = compute_tile_pos_weight(npy_path, csv_path)
-    assert torch.allclose(pos_weight, torch.tensor([7.0, 8.0, 1.0]))
+    assert torch.allclose(pos_weight, torch.tensor(_pad([7.0, 8.0, 1.0], 8.0)))
 
 
 def test_compute_tile_pos_weight_respects_split_filter(tmp_path):
-    tile_labels = np.zeros((2, 3, 2, 2), dtype=np.uint8)
+    tile_labels = np.zeros((2, N_CLASSES, 2, 2), dtype=np.uint8)
     tile_labels[0, 0, 0, 0] = 1
     rows = [
-        {"path": "a", "source_id": "s0", "variant_id": 0, "split": "train", "dirt": 1, "water": 0, "scratch": 0},
-        {"path": "b", "source_id": "s1", "variant_id": 0, "split": "val", "dirt": 0, "water": 0, "scratch": 0},
+        {"path": "a", "source_id": "s0", "variant_id": 0, "split": "train", FIRST: 1, SECOND: 0, THIRD: 0},
+        {"path": "b", "source_id": "s1", "variant_id": 0, "split": "val", FIRST: 0, SECOND: 0, THIRD: 0},
     ]
     csv_path = tmp_path / "metadata.csv"
     _write_metadata_rows(csv_path, rows)
@@ -157,13 +165,13 @@ def test_compute_tile_pos_weight_respects_split_filter(tmp_path):
 
     pos_weight = compute_tile_pos_weight(npy_path, csv_path, split="val")
     # only row "b" (all-zero, 4 tiles/class) counted -> (4-0)/max(0,1) = 4.0 for every class
-    assert torch.allclose(pos_weight, torch.tensor([4.0, 4.0, 4.0]))
+    assert torch.allclose(pos_weight, torch.tensor(_pad([], 4.0)))
 
 
 def test_build_stage_b_loss_is_finite_and_none_pos_weight_is_safe():
     loss_fn = build_stage_b_loss(None)
-    logits = torch.randn(2, 3, 4, 4)
-    labels = torch.randint(0, 2, (2, 3, 4, 4)).float()
+    logits = torch.randn(2, N_CLASSES, 4, 4)
+    labels = torch.randint(0, 2, (2, N_CLASSES, 4, 4)).float()
     assert torch.isfinite(loss_fn(logits, labels))
 
 
@@ -176,9 +184,9 @@ def test_build_stage_b_loss_reshapes_pos_weight_onto_the_channel_axis():
     # computation and differs from that naive (unreshaped) one, so this test
     # would fail if the reshape were removed.
     torch.manual_seed(0)
-    pos_weight = torch.tensor([5.0, 1.0, 1.0])
-    logits = torch.randn(2, 3, 4, 3)  # B, C=3, H=4, W=3 -- W matches C on purpose
-    labels = torch.randint(0, 2, (2, 3, 4, 3)).float()
+    pos_weight = torch.tensor([5.0] + [1.0] * (N_CLASSES - 1))
+    logits = torch.randn(2, N_CLASSES, 4, N_CLASSES)  # W matches C on purpose
+    labels = torch.randint(0, 2, (2, N_CLASSES, 4, N_CLASSES)).float()
 
     correct = nn.BCEWithLogitsLoss(pos_weight=pos_weight.view(-1, 1, 1))(logits, labels)
     naive = nn.BCEWithLogitsLoss(pos_weight=pos_weight)(logits, labels)  # wrong axis: applies along W, not C
@@ -193,8 +201,8 @@ def test_build_stage_b_loss_reshapes_pos_weight_onto_the_channel_axis():
 
 def test_focal_loss_is_finite_on_random_inputs():
     loss_fn = build_stage_b_focal_loss()
-    logits = torch.randn(2, 3, 4, 4)
-    labels = torch.randint(0, 2, (2, 3, 4, 4)).float()
+    logits = torch.randn(2, N_CLASSES, 4, 4)
+    labels = torch.randint(0, 2, (2, N_CLASSES, 4, 4)).float()
     assert torch.isfinite(loss_fn(logits, labels))
 
 
@@ -236,9 +244,9 @@ def test_focal_loss_per_class_alpha_broadcasts_onto_channel_axis():
     # tensor must land on the channel dim, not silently broadcast against a
     # same-sized last (W) dim.
     torch.manual_seed(0)
-    alpha = torch.tensor([0.9, 0.1, 0.1])  # heavily favor class 0's positives
-    logits = torch.randn(2, 3, 4, 3)  # B, C=3, H=4, W=3 -- W matches C on purpose
-    labels = torch.randint(0, 2, (2, 3, 4, 3)).float()
+    alpha = torch.tensor([0.9] + [0.1] * (N_CLASSES - 1))  # heavily favor class 0's positives
+    logits = torch.randn(2, N_CLASSES, 4, N_CLASSES)  # W matches C on purpose
+    labels = torch.randint(0, 2, (2, N_CLASSES, 4, N_CLASSES)).float()
 
     loss_fn = FocalLossWithLogits(alpha=alpha, gamma=2.0)
     got = loss_fn(logits, labels)
@@ -247,7 +255,7 @@ def test_focal_loss_per_class_alpha_broadcasts_onto_channel_axis():
     bce = F.binary_cross_entropy_with_logits(logits, labels, reduction="none")
     p = torch.sigmoid(logits)
     p_t = p * labels + (1 - p) * (1 - labels)
-    alpha_aligned = alpha.view(1, 3, 1, 1)
+    alpha_aligned = alpha.view(1, N_CLASSES, 1, 1)
     alpha_t = alpha_aligned * labels + (1 - alpha_aligned) * (1 - labels)
     expected = (alpha_t * (1 - p_t) ** 2.0 * bce).mean()
 
@@ -260,7 +268,7 @@ def test_focal_loss_single_optimizer_step_decreases_loss():
 
     head = StageBDistortionHead(in_channels=8)
     features = torch.randn(6, 8, 4, 4)
-    labels = torch.randint(0, 2, (6, 3, 4, 4)).float()
+    labels = torch.randint(0, 2, (6, N_CLASSES, 4, 4)).float()
     loss_fn = build_stage_b_focal_loss()
     opt = torch.optim.SGD(head.parameters(), lr=1.0)
 
@@ -279,8 +287,8 @@ def test_focal_loss_single_optimizer_step_decreases_loss():
 
 def test_ssd_loss_is_finite_on_random_inputs():
     loss_fn = build_stage_b_ssd_loss()
-    logits = torch.randn(2, 3, 4, 4)
-    labels = torch.randint(0, 2, (2, 3, 4, 4)).float()
+    logits = torch.randn(2, N_CLASSES, 4, 4)
+    labels = torch.randint(0, 2, (2, N_CLASSES, 4, 4)).float()
     assert torch.isfinite(loss_fn(logits, labels))
 
 
@@ -317,7 +325,7 @@ def test_ssd_loss_single_optimizer_step_decreases_loss():
 
     head = StageBDistortionHead(in_channels=8)
     features = torch.randn(6, 8, 4, 4)
-    labels = torch.randint(0, 2, (6, 3, 4, 4)).float()
+    labels = torch.randint(0, 2, (6, N_CLASSES, 4, 4)).float()
     loss_fn = build_stage_b_ssd_loss()
     opt = torch.optim.SGD(head.parameters(), lr=1.0)
 
@@ -336,8 +344,8 @@ def test_ssd_loss_single_optimizer_step_decreases_loss():
 
 def test_dice_bce_loss_is_finite_on_random_inputs():
     loss_fn = build_stage_c_loss()
-    logits = torch.randn(2, 3, 8, 8)
-    targets = torch.rand(2, 3, 8, 8)  # continuous [0,1], Stage C's actual target dtype
+    logits = torch.randn(2, N_CLASSES, 8, 8)
+    targets = torch.rand(2, N_CLASSES, 8, 8)  # continuous [0,1], Stage C's actual target dtype
     assert torch.isfinite(loss_fn(logits, targets))
 
 
@@ -375,8 +383,8 @@ def test_dice_is_batch_level_so_empty_target_samples_do_not_dominate():
 
 def test_dice_bce_loss_weight_interpolates_between_bce_and_dice():
     torch.manual_seed(0)
-    logits = torch.randn(2, 3, 8, 8)
-    targets = torch.rand(2, 3, 8, 8)
+    logits = torch.randn(2, N_CLASSES, 8, 8)
+    targets = torch.rand(2, N_CLASSES, 8, 8)
 
     only_bce = DiceBCELoss(bce_weight=1.0)(logits, targets)
     only_dice = DiceBCELoss(bce_weight=0.0)(logits, targets)
@@ -391,7 +399,7 @@ def test_dice_bce_loss_single_optimizer_step_decreases_loss():
 
     head = StageCDistortionHead(in_channels=8)
     features = torch.randn(2, 8, 2, 2)
-    targets = torch.rand(2, 3, 64, 64)
+    targets = torch.rand(2, N_CLASSES, 64, 64)
     loss_fn = build_stage_c_loss()
     opt = torch.optim.SGD(head.parameters(), lr=1.0)
 
@@ -407,18 +415,18 @@ def test_dice_bce_loss_single_optimizer_step_decreases_loss():
 
 def test_class_weights_default_to_unweighted_and_shift_emphasis():
     torch.manual_seed(0)
-    logits = torch.randn(2, 3, 8, 8)
-    targets = (torch.rand(2, 3, 8, 8) > 0.7).float()
+    logits = torch.randn(2, N_CLASSES, 8, 8)
+    targets = (torch.rand(2, N_CLASSES, 8, 8) > 0.7).float()
 
-    assert torch.allclose(DiceBCELoss(class_weights=[1, 1, 1])(logits, targets), DiceBCELoss()(logits, targets))
+    assert torch.allclose(DiceBCELoss(class_weights=[1] * N_CLASSES)(logits, targets), DiceBCELoss()(logits, targets))
     focal = build_stage_b_focal_loss(alpha=0.75)
-    focal_w = build_stage_b_focal_loss(alpha=0.75, class_weights=[1, 1, 1])
+    focal_w = build_stage_b_focal_loss(alpha=0.75, class_weights=[1] * N_CLASSES)
     assert torch.allclose(focal(logits, targets), focal_w(logits, targets))
 
-    # A wrong prediction only on the scratch channel costs more when scratch is up-weighted.
-    targets = torch.zeros(1, 3, 4, 4)
+    # A wrong prediction only on the third channel costs more when that class is up-weighted.
+    targets = torch.zeros(1, N_CLASSES, 4, 4)
     targets[0, 2] = 1.0
-    logits = torch.full((1, 3, 4, 4), -5.0)
+    logits = torch.full((1, N_CLASSES, 4, 4), -5.0)
     base = DiceBCELoss()(logits, targets)
-    heavy = DiceBCELoss(class_weights=[1, 1, 3])(logits, targets)
+    heavy = DiceBCELoss(class_weights=[1, 1, 3] + [1] * (N_CLASSES - 3))(logits, targets)
     assert heavy > base

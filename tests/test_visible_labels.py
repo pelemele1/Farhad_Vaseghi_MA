@@ -1,5 +1,8 @@
 """Session 27: visible-change labels, the one-dataset builder, 4-class losses,
-the map metrics and the gate-first pipeline's answer."""
+the map metrics and the gate-first pipeline's answer. Session 31: the dataset's
+classes are the protocol's 6 types; tests of the labeling rule, the dataset and
+the answer use them by name (V[...] is a class's label value), the tests of the
+generic metric functions keep their own small class list TOY."""
 import csv
 import json
 
@@ -24,7 +27,13 @@ from src.soiling.effects import add_dirt, add_water, apply_severity
 from src.soiling.visible_dataset import build_visible_dataset
 from src.soiling.visible_labels import clean_up_labels, render_chain, tile_class_grid, visible_label_map
 
-CLASSES = ("clean", "dirt", "water", "scratch")
+CLASSES = visible_labels.CLASS_NAMES
+V = {name: value for value, name in enumerate(CLASSES)}  # label value of each class
+# Tile cutoffs as in the dataset (src/soiling/visible_dataset.py)
+THRESHOLDS = {name: 0.20 for name in visible_labels.EFFECT_NAMES}
+THRESHOLDS.update({"water_drops": 0.25, "scratches": 0.015})
+# The metric functions take any class list; their tests use this small one.
+TOY = ("clean", "dirt", "water", "scratch")
 
 
 def _photo(seed=0, h=96, w=128):
@@ -74,7 +83,7 @@ def _fake_effects(monkeypatch):
         out[69:72] += 25
         return np.clip(out, 0, 255).astype(np.uint8), mask
 
-    effects = {"dirt": dirt, "water": water, "scratch": scratch}
+    effects = {"mud": dirt, "water_drops": water, "scratches": scratch}
 
     def render(name, image, seed, severity):
         effect_out, mask = effects[name](image, seed=seed)
@@ -86,38 +95,38 @@ def _fake_effects(monkeypatch):
 def test_single_effect_label_is_where_the_image_visibly_changed(monkeypatch):
     _fake_effects(monkeypatch)
     image = np.full((96, 128, 3), 120, np.uint8)
-    steps = [("dirt", 0, "high")]
+    steps = [("mud", 0, "high")]
     final, masks = render_chain(image, steps)
     labels = visible_label_map(image, final, steps, masks)
-    assert (labels[:, :60] == 1).all()
+    assert (labels[:, :60] == V["mud"]).all()
     assert (labels[:, 68:] == 0).all()
 
 
 def test_hidden_lower_layer_is_not_labeled(monkeypatch):
     _fake_effects(monkeypatch)
     image = np.full((96, 128, 3), 120, np.uint8)
-    steps = [("dirt", 0, "high"), ("water", 0, "high")]
+    steps = [("mud", 0, "high"), ("water_drops", 0, "high")]
     final, masks = render_chain(image, steps)
     labels = visible_label_map(image, final, steps, masks)
-    assert (labels[:28, :] == 2).all()          # water on top hides the dirt completely
-    assert (labels[36:, :60] == 1).all()        # dirt where the water isn't
+    assert (labels[:28, :] == V["water_drops"]).all()   # water on top hides the mud completely
+    assert (labels[36:, :60] == V["mud"]).all()         # mud where the water isn't
     assert (labels[36:, 68:] == 0).all()
 
 
 def test_visible_scratch_wins_over_the_dirt_under_it(monkeypatch):
     _fake_effects(monkeypatch)
     image = np.full((96, 128, 3), 120, np.uint8)
-    steps = [("dirt", 0, "high"), ("scratch", 0, "high")]
+    steps = [("mud", 0, "high"), ("scratches", 0, "high")]
     final, masks = render_chain(image, steps)
     labels = visible_label_map(image, final, steps, masks)
-    assert (labels[70, 4:124] == 3).all()       # over the dirt (change 60 < dirt's) and over clean
-    assert (labels[40, :60] == 1).all()
+    assert (labels[70, 4:124] == V["scratches"]).all()  # over the mud (change 60 < mud's) and over clean
+    assert (labels[40, :60] == V["mud"]).all()
 
 
 def test_low_severity_change_below_cutoff_is_clean(monkeypatch):
     _fake_effects(monkeypatch)
     image = np.full((96, 128, 3), 120, np.uint8)
-    steps = [("scratch", 0, "low")]             # 25 * 0.3 = 7.5 gray levels < 10
+    steps = [("scratches", 0, "low")]           # 25 * 0.3 = 7.5 gray levels < 10
     final, masks = render_chain(image, steps)
     assert visible_label_map(image, final, steps, masks).max() == 0
 
@@ -133,15 +142,16 @@ def test_clean_up_removes_speckles_and_fills_pinholes():
 
 
 def test_tile_class_uses_per_class_cutoffs():
+    mud, scratch = V["mud"], V["scratches"]
     labels = np.zeros((64, 64), np.uint8)
-    labels[:32, :32][:16] = 1                   # tile (0,0): 50% dirt
-    labels[:32, 32:][:4] = 1                    # tile (0,1): 12.5% dirt -> below 0.20
-    labels[32:, :32][:16] = 1                   # tile (1,0): 50% dirt + a 1-px scratch line
-    labels[40, :32] = 3                         # 32 px = 3.1% -> 2x the scratch cutoff, < 2.5x dirt
-    grid = tile_class_grid(labels, 2, 2, {"dirt": 0.20, "water": 0.25, "scratch": 0.015})
-    assert grid.tolist() == [[1, 0], [1, 0]]
-    labels[41:44, :32] = 3                      # now 12.5% scratch -> 8x its cutoff
-    assert tile_class_grid(labels, 2, 2, {"dirt": 0.20, "water": 0.25, "scratch": 0.015})[1, 0] == 3
+    labels[:32, :32][:16] = mud                 # tile (0,0): 50% mud
+    labels[:32, 32:][:4] = mud                  # tile (0,1): 12.5% mud -> below 0.20
+    labels[32:, :32][:16] = mud                 # tile (1,0): 50% mud + a 1-px scratch line
+    labels[40, :32] = scratch                   # 32 px = 3.1% -> 2x the scratch cutoff, < 2.5x mud
+    grid = tile_class_grid(labels, 2, 2, THRESHOLDS)
+    assert grid.tolist() == [[mud, 0], [mud, 0]]
+    labels[41:44, :32] = scratch                # now 12.5% scratch -> 8x its cutoff
+    assert tile_class_grid(labels, 2, 2, THRESHOLDS)[1, 0] == scratch
 
 
 # --- dataset build + loader on tiny photos --------------------------------------
@@ -164,13 +174,15 @@ def test_build_writes_consistent_labels(tiny_dataset):
     assert len(rows) == 42 and tiles.shape == (42, 2, 2)
     for r in rows:
         labels = read_label_map(tiny_dataset / "labels" / (r["path"][7:-4] + ".png"))
-        assert labels.shape == (160, 224) and labels.max() <= 3
+        assert labels.shape == (160, 224) and labels.max() <= len(CLASSES) - 1
         for k, name in enumerate(CLASSES[1:], start=1):
             assert int(r[f"{name}_pixels"]) == int((labels == k).sum())
             assert int(r[name]) == int(int(r[f"{name}_pixels"]) >= 20)
             assert (r[f"{name}_severity"] == "none") == (not int(r[name]))
         if r["kind"] == "clean":
             assert labels.max() == 0 and r["dominant"] == "clean"
+        else:  # never three types on one image (Session 31)
+            assert len(r["kind"].split("+")) <= 2
     assert meta["class_names"] == list(CLASSES)
 
 
@@ -187,7 +199,8 @@ def test_build_is_reproducible(tiny_dataset, tmp_path):
         assert np.array_equal(a, b)
 
 
-@pytest.mark.parametrize("target,shape,dtype", [("image", (3,), torch.float32), ("tile", (2, 2), torch.int64),
+@pytest.mark.parametrize("target,shape,dtype", [("image", (len(CLASSES) - 1,), torch.float32),
+                                                ("tile", (2, 2), torch.int64),
                                                 ("pixel", (64, 64), torch.int64)])
 def test_visible_dataset_targets(tiny_dataset, target, shape, dtype):
     ds = VisibleDataset(tiny_dataset, "train", target, hflip=True)
@@ -218,7 +231,7 @@ def test_map_stats_and_metrics_on_a_known_case():
     probs = np.zeros((4, 2, 2), np.float32)
     probs[0, 0, 0] = probs[1, 0, 1] = probs[2, 1, 0] = 1.0
     probs[1, 1, 1] = 1.0                        # scratch pixel predicted dirt
-    rows = metrics_from_stats(map_stats(probs, gt), CLASSES)
+    rows = metrics_from_stats(map_stats(probs, gt), TOY)
     by = {r["class"]: r for r in rows}
     assert by["water"]["f1"] == 1.0 and by["water"]["ap"] == pytest.approx(1.0)
     assert by["dirt"]["precision"] == 0.5 and by["dirt"]["recall"] == 1.0
@@ -243,7 +256,7 @@ def test_metrics_by_severity_uses_level_positives_and_all_negatives():
     stats = [map_stats(probs, gt_pos), map_stats(probs, gt_neg)]
     rows = [{"dirt_severity": "low", "water_severity": "none", "scratch_severity": "none"},
             {"dirt_severity": "none", "water_severity": "none", "scratch_severity": "none"}]
-    res = metrics_by_severity(rows, stats, CLASSES)
+    res = metrics_by_severity(rows, stats, TOY)
     assert res["dirt"]["low"]["recall"] == 1.0 and res["dirt"]["low"]["precision"] == 0.5
     assert sum_stats(stats)["conf"].sum() == 8
 
@@ -253,13 +266,13 @@ def test_metrics_by_severity_uses_level_positives_and_all_negatives():
 
 def test_image_answer_dominant_and_shares():
     cmap = np.zeros((100, 100), int)
-    cmap[:40] = 2
-    cmap[40:45] = 1
-    cmap[99, 99] = 3                            # a single pixel: below MIN_SHARE
+    cmap[:40] = V["water_drops"]
+    cmap[40:45] = V["mud"]
+    cmap[99, 99] = V["scratches"]               # a single pixel: below MIN_SHARE
     ans = image_answer(cmap, True)
-    assert ans["dominant"] == "water" and set(ans["shares"]) == {"water", "dirt"}
-    assert ans["shares"]["water"] == pytest.approx(0.4)
-    assert "dominant: water" in format_answer(ans)
+    assert ans["dominant"] == "water_drops" and set(ans["shares"]) == {"water_drops", "mud"}
+    assert ans["shares"]["water_drops"] == pytest.approx(0.4)
+    assert "dominant: water_drops" in format_answer(ans)
 
 
 def test_image_answer_when_gated_or_unlocated():
@@ -272,16 +285,22 @@ def test_image_answer_when_gated_or_unlocated():
 
 def test_image_answer_per_class_min_share():
     cmap = np.zeros((100, 100), int)
-    cmap[:5] = 1                                        # dirt 5%
-    cmap[50, :20] = 3                                   # scratch 0.2%
-    ans = image_answer(cmap, True, {"dirt": 0.1, "water": 0.01, "scratch": 0.001})
-    assert ans["shares"] == {"scratch": pytest.approx(0.002)} and ans["dominant"] == "scratch"
+    cmap[:5] = V["mud"]                                 # mud 5%
+    cmap[50, :20] = V["scratches"]                      # scratches 0.2%
+    min_share = {name: 0.01 for name in CLASSES[1:]}
+    min_share.update({"mud": 0.1, "scratches": 0.001})
+    ans = image_answer(cmap, True, min_share)
+    assert ans["shares"] == {"scratches": pytest.approx(0.002)} and ans["dominant"] == "scratches"
 
 
 def test_colorize_paints_each_class():
-    cmap = np.array([[0, 1], [2, 3]])
+    from src.pipeline import CLASS_COLORS
+    cmap = np.array([[0, V["water_drops"]], [V["mud"], V["scratches"]]])
     rgb = colorize(cmap)
-    assert rgb[0, 0].tolist() == [0, 0, 0] and rgb[1, 1].tolist() == [235, 20, 60]
+    assert rgb[0, 0].tolist() == [0, 0, 0]
+    assert rgb[1, 1].tolist() == list(CLASS_COLORS["scratches"])
+    # every class has its own color
+    assert len({CLASS_COLORS[name] for name in CLASSES[1:]}) == len(CLASSES) - 1
 
 
 def test_decision_offsets_shift_the_argmax():

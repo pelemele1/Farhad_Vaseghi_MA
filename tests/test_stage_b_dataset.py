@@ -10,24 +10,32 @@ from src.data.stage_b_dataset import StageBDataset
 from src.soiling.dataset_builder import EFFECT_NAMES
 
 
+def _class_labels(values):
+    """One 0/1 per class in EFFECT_NAMES order; a case that names fewer (the
+    tests only need two or three) leaves the rest at 0."""
+    values = list(values) + [0] * (len(EFFECT_NAMES) - len(values))
+    return dict(zip(EFFECT_NAMES, values))
+
+
 def _write_fake_stage_b_dataset(data_dir, rows_spec, grid=(2, 2), img_size=64):
-    """rows_spec: list of (name, split, dirt, water, scratch, tile_grid or
-    None). tile_grid, if given, is a (3, grid_h, grid_w) array; otherwise an
+    """rows_spec: list of (name, split, *class labels, tile_grid or None).
+    tile_grid, if given, is a (n_classes, grid_h, grid_w) array; otherwise an
     all-zero grid is used."""
     images_dir = data_dir / "images"
     images_dir.mkdir(parents=True)
     rng = np.random.default_rng(0)
     rows = []
     tile_labels = []
-    for name, split, dirt, water, scratch, tile_grid in rows_spec:
+    for *spec, tile_grid in rows_spec:
+        name, split, values = spec[0], spec[1], spec[2:]
         img = rng.integers(0, 255, size=(40, 60, 3), dtype=np.uint8)
         cv.imwrite(str(images_dir / f"{name}.jpg"), img)
         rows.append({
             "path": f"images/{name}.jpg", "source_id": name, "variant_id": 0,
-            "split": split, "dirt": dirt, "water": water, "scratch": scratch,
+            "split": split, **_class_labels(values),
         })
         if tile_grid is None:
-            tile_grid = np.zeros((3, *grid), dtype=np.uint8)
+            tile_grid = np.zeros((len(EFFECT_NAMES), *grid), dtype=np.uint8)
         tile_labels.append(tile_grid)
 
     with open(data_dir / "metadata.csv", "w", newline="") as f:

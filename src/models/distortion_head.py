@@ -2,7 +2,7 @@
 Stage A distortion head (architecture.md §2, §6): "Global average pooling
 over the P5 feature map -> small FC head... Custom nn.Module on P5 (Stage
 A): GAP + 2x FC + sigmoid, ~a few lines." Outputs one score per
-`{dirt, water, scratch}` (multi-label, architecture.md §2's recommended
+`EFFECT_NAMES` contamination type (multi-label, architecture.md §2's recommended
 variant).
 
 Returns raw logits, not post-sigmoid probabilities: architecture.md §4
@@ -18,9 +18,11 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from src.soiling.visible_labels import EFFECT_NAMES
+
 
 class StageADistortionHead(nn.Module):
-    def __init__(self, in_channels, hidden_dim=64, class_names=("dirt", "water", "scratch")):
+    def __init__(self, in_channels, hidden_dim=64, class_names=EFFECT_NAMES):
         super().__init__()
         self.class_names = tuple(class_names)
         # A list of in_channels (a multi-scale backbone) pools each map
@@ -56,7 +58,7 @@ class StageBDistortionHead(nn.Module):
     BCE-with-logits-expects-logits reasoning as StageADistortionHead; call
     `torch.sigmoid(head(features))` for per-tile-per-class probabilities."""
 
-    def __init__(self, in_channels, class_names=("dirt", "water", "scratch")):
+    def __init__(self, in_channels, class_names=EFFECT_NAMES):
         super().__init__()
         self.class_names = tuple(class_names)
         self.conv = nn.Conv2d(in_channels, len(self.class_names), kernel_size=1)
@@ -87,7 +89,7 @@ class StageCDistortionHead(nn.Module):
     file; call `torch.sigmoid(head(features))` for per-pixel-per-class
     probabilities."""
 
-    def __init__(self, in_channels, class_names=("dirt", "water", "scratch"),
+    def __init__(self, in_channels, class_names=EFFECT_NAMES,
                  hidden_dim=64, n_upsample_blocks=5):
         super().__init__()
         self.class_names = tuple(class_names)
@@ -132,7 +134,7 @@ class StageCUNetHead(nn.Module):
 
     Returns raw logits, shape (B, num_classes, out_stride*H_finest, out_stride*W_finest)."""
 
-    def __init__(self, in_channels_list, class_names=("dirt", "water", "scratch"), hidden_dim=64,
+    def __init__(self, in_channels_list, class_names=EFFECT_NAMES, hidden_dim=64,
                  out_stride=4):
         super().__init__()
         self.class_names = tuple(class_names)
@@ -166,7 +168,7 @@ class StageBMultiScaleHead(nn.Module):
     features: list ordered fine -> coarse, [s4, s8, s16, s32]. Returns raw
     logits, shape (B, num_classes, H_s32, W_s32)."""
 
-    def __init__(self, in_channels_list, class_names=("dirt", "water", "scratch"), hidden_dim=64, dropout=0.0,
+    def __init__(self, in_channels_list, class_names=EFFECT_NAMES, hidden_dim=64, dropout=0.0,
                  fuse_kernel=3):
         """hidden_dim / fuse_kernel set the head's capacity: fewer channels and
         a 1x1 fuse (no neighboring-tile context) leave less room to memorize

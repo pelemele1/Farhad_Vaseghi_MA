@@ -47,6 +47,11 @@ def main():
     parser.add_argument("--data", required=True)
     args = parser.parse_args()
 
+    if any(Path(args.data, "masks").glob("*.npy")):
+        sys.exit("make_gt_severity_independent.py converts the PNG masks of datasets built before "
+                 "Session 22. This dataset has .npy masks, written by a builder that already makes "
+                 "severity-independent ground truth, so there is nothing to convert.")
+
     data = Path(args.data)
     meta_path = data / "stage_b_meta.json"
     meta = json.loads(meta_path.read_text())

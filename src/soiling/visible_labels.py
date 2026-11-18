@@ -1,7 +1,8 @@
 """
-Visible-change ground truth (Session 27): one class per pixel -- clean, dirt,
-water or scratch -- given by what is actually visible in the rendered image,
-not by the generator's soft masks.
+Visible-change ground truth (Session 27): one class per pixel -- clean or one
+of the capture protocol's 6 contamination types (Session 31; 3 classes before
+that) -- given by what is actually visible in the rendered image, not by the
+generator's soft masks.
 
 For every applied effect e, the image is re-rendered with e left out (all
 other effects with the same seeds; effects are pixel-reproducible since the
@@ -22,13 +23,19 @@ import numpy as np
 
 from src.soiling.effects import MIN_PIXEL_CHANGE, render_effect
 
-EFFECT_NAMES = ("dirt", "water", "scratch")
+# The 6 contamination types of the capture protocol, in the capture app's order
+# (src/capture/session.py::CONTAMINATION_TYPES), so a synthetic label and a real
+# capture's label mean the same thing. Label value = index in CLASS_NAMES.
+EFFECT_NAMES = ("water_drops", "mud", "steamy", "cleaning_streaks", "scratches", "dust")
 CLASS_NAMES = ("clean",) + EFFECT_NAMES  # label value = index (0 = clean)
 
 # Smoothing of the change map before the cutoff (Gaussian sigma, pixels): light
 # for scratches, so a 1-px line with a change of 40 levels stays above 10, a
-# little stronger for dirt and water, whose textures flicker around the cutoff.
-CHANGE_BLUR_SIGMA = {"dirt": 1.2, "water": 1.2, "scratch": 0.7}
+# little stronger for the area effects, whose textures flicker around the cutoff.
+CHANGE_BLUR_SIGMA = {
+    "water_drops": 1.2, "mud": 1.2, "steamy": 1.2,
+    "cleaning_streaks": 1.2, "scratches": 0.7, "dust": 1.2,
+}
 # A pixel can only take an effect's class within this many pixels of where the
 # effect's own mask is non-zero: excludes faint global side effects (e.g. the
 # thin-water renderer's 20% film over the whole frame) while keeping the blur
@@ -108,8 +115,8 @@ def clean_up_labels(labels):
 
 
 def visible_label_map(image, final, steps, masks):
-    """(H, W) uint8 class map (0 clean, 1 dirt, 2 water, 3 scratch) of the
-    visible distortion at every pixel of `final`."""
+    """(H, W) uint8 class map (0 clean, then one value per EFFECT_NAMES entry)
+    of the visible distortion at every pixel of `final`."""
     labels = np.zeros(final.shape[:2], dtype=np.uint8)
     if not steps:
         return labels
@@ -121,7 +128,7 @@ def visible_label_map(image, final, steps, masks):
     # A scratch is the top layer and a thin line: wherever it visibly changes the
     # image it is what one sees there, even over a dirt patch that alone would
     # change the pixel more.
-    scratch = EFFECT_NAMES.index("scratch")
+    scratch = EFFECT_NAMES.index("scratches")
     labels[stack[scratch] > MIN_PIXEL_CHANGE] = scratch + 1
     return clean_up_labels(labels)
 

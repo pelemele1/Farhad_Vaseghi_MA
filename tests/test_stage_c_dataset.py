@@ -10,26 +10,34 @@ from src.data.stage_c_dataset import StageCDataset
 from src.soiling.dataset_builder import EFFECT_NAMES
 
 
+def _class_labels(values):
+    """One 0/1 per class in EFFECT_NAMES order; a case that names fewer (the
+    tests only need two or three) leaves the rest at 0."""
+    values = list(values) + [0] * (len(EFFECT_NAMES) - len(values))
+    return dict(zip(EFFECT_NAMES, values))
+
+
 def _write_fake_stage_c_dataset(data_dir, rows_spec, img_size=64, has_pixel_masks=True,
                                  mask_size=(40, 60)):
-    """rows_spec: list of (name, split, dirt, water, scratch, mask or None).
-    mask, if given, is a (H, W, 3) uint8 array (dirt/water/scratch channels);
-    otherwise an all-zero mask is used."""
+    """rows_spec: list of (name, split, *class labels, mask or None). mask, if
+    given, is an (H, W, n_classes) uint8 array, one channel per class in
+    EFFECT_NAMES order; otherwise an all-zero mask is used."""
     images_dir = data_dir / "images"
     images_dir.mkdir(parents=True)
     masks_dir = data_dir / "masks"
     masks_dir.mkdir(parents=True)
     rng = np.random.default_rng(0)
     rows = []
-    for name, split, dirt, water, scratch, mask in rows_spec:
+    for *spec, mask in rows_spec:
+        name, split, values = spec[0], spec[1], spec[2:]
         img = rng.integers(0, 255, size=(*mask_size, 3), dtype=np.uint8)
         cv.imwrite(str(images_dir / f"{name}.jpg"), img)
         if mask is None:
-            mask = np.zeros((*mask_size, 3), dtype=np.uint8)
-        cv.imwrite(str(masks_dir / f"{name}.png"), mask)
+            mask = np.zeros((*mask_size, len(EFFECT_NAMES)), dtype=np.uint8)
+        np.save(masks_dir / f"{name}.npy", mask)
         rows.append({
             "path": f"images/{name}.jpg", "source_id": name, "variant_id": 0,
-            "split": split, "dirt": dirt, "water": water, "scratch": scratch,
+            "split": split, **_class_labels(values),
         })
 
     with open(data_dir / "metadata.csv", "w", newline="") as f:
@@ -60,8 +68,8 @@ def test_len_and_split_filtering(tmp_path):
 
 
 def test_getitem_shape_dtype_and_mask_values(tmp_path):
-    mask = np.zeros((40, 60, 3), dtype=np.uint8)
-    mask[:, :, 0] = 255  # dirt channel fully "on"
+    mask = np.zeros((40, 60, len(EFFECT_NAMES)), dtype=np.uint8)
+    mask[:, :, 0] = 255  # the first class's channel fully "on"
     _write_fake_stage_c_dataset(tmp_path, [("a", "train", 1, 0, 0, mask)])
 
     dataset = StageCDataset(tmp_path, split="train")
@@ -71,11 +79,11 @@ def test_getitem_shape_dtype_and_mask_values(tmp_path):
     assert image.dtype == torch.float32
     assert image.min() >= 0.0 and image.max() <= 1.0
 
-    assert mask_tensor.shape == (3, 64, 64)
+    assert mask_tensor.shape == (len(EFFECT_NAMES), 64, 64)
     assert mask_tensor.dtype == torch.float32
     assert torch.allclose(mask_tensor[0], torch.ones(64, 64), atol=1e-5)
-    assert torch.allclose(mask_tensor[1], torch.zeros(64, 64), atol=1e-5)
-    assert torch.allclose(mask_tensor[2], torch.zeros(64, 64), atol=1e-5)
+    for channel in range(1, len(EFFECT_NAMES)):
+        assert torch.allclose(mask_tensor[channel], torch.zeros(64, 64), atol=1e-5)
 
 
 def test_custom_img_size_resizes_both_image_and_mask(tmp_path):
@@ -83,7 +91,7 @@ def test_custom_img_size_resizes_both_image_and_mask(tmp_path):
     dataset = StageCDataset(tmp_path, split="train", img_size=128)
     image, mask_tensor = dataset[0]
     assert image.shape == (3, 128, 128)
-    assert mask_tensor.shape == (3, 128, 128)
+    assert mask_tensor.shape == (len(EFFECT_NAMES), 128, 128)
 
 
 def test_img_size_not_multiple_of_32_raises(tmp_path):

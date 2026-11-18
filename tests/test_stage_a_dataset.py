@@ -9,18 +9,25 @@ from src.data.stage_a_dataset import ImpairedGateDataset, StageADataset
 from src.soiling.dataset_builder import EFFECT_NAMES
 
 
+def _class_labels(values):
+    """One 0/1 per class in EFFECT_NAMES order; a case that names fewer (the
+    tests only need two or three) leaves the rest at 0."""
+    values = list(values) + [0] * (len(EFFECT_NAMES) - len(values))
+    return dict(zip(EFFECT_NAMES, values))
+
+
 def _write_fake_dataset(data_dir, rows_spec):
-    """rows_spec: list of (name, split, dirt, water, scratch) tuples."""
+    """rows_spec: list of (name, split, *class labels) tuples."""
     images_dir = data_dir / "images"
     images_dir.mkdir(parents=True)
     rng = np.random.default_rng(0)
     rows = []
-    for name, split, dirt, water, scratch in rows_spec:
+    for name, split, *values in rows_spec:
         img = rng.integers(0, 255, size=(40, 60, 3), dtype=np.uint8)
         cv.imwrite(str(images_dir / f"{name}.jpg"), img)
         rows.append({
             "path": f"images/{name}.jpg", "source_id": name, "variant_id": 0,
-            "split": split, "dirt": dirt, "water": water, "scratch": scratch,
+            "split": split, **_class_labels(values),
         })
     with open(data_dir / "metadata.csv", "w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=["path", "source_id", "variant_id", "split", *EFFECT_NAMES])
@@ -48,7 +55,8 @@ def test_getitem_shape_dtype_and_labels(tmp_path):
     assert image.shape == (3, 32, 32)
     assert image.dtype == torch.float32
     assert image.min() >= 0.0 and image.max() <= 1.0
-    assert torch.equal(labels, torch.tensor([1.0, 0.0, 1.0]))
+    expected = [float(v) for v in _class_labels([1, 0, 1]).values()]
+    assert torch.equal(labels, torch.tensor(expected))
 
 
 def test_max_samples_truncates(tmp_path):

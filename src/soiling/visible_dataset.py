@@ -2,18 +2,25 @@
 One dataset for all three stages with visible-change ground truth (Session
 27; see src/soiling/visible_labels.py for the labeling rule).
 
-Same source photos, splits, 14 variants per photo (clean, 3 effects x 3
-severities, 4 combinations) and seeds as the Stage B dataset, so results stay
-comparable. Writes under `out_dir`:
+Session 31: the 6 contamination types of the capture protocol, in the planned
+amounts (README "Planned dataset") -- per source photo one clean variant and
+one per (type, severity), plus the two-type variants dealt out by
+`plan_variant_kinds`; 21,115 images from the 1,000 MIO-TCD photos, 10% of them
+with two types. Passing `variants_per_image` instead keeps the older behavior
+(that many variants per photo, cycling through the kinds).
+
+Writes under `out_dir`:
   images/<source>_vNN.jpg   distorted image (native resolution)
   labels/<source>_vNN.png   uint8 class map at native resolution,
-                            0 clean / 1 dirt / 2 water / 3 scratch
+                            0 clean, then one value per contamination type
+                            (src/soiling/visible_labels.py::CLASS_NAMES)
   tile_labels.npy           (N, grid, grid) uint8 class per tile (img_size // 32)
   metadata.csv              one row per image (see METADATA_FIELDNAMES)
   visible_meta.json         label rule parameters and class pixel counts
 """
 import csv
 import json
+from collections import Counter
 from multiprocessing import Pool
 from pathlib import Path
 
@@ -26,6 +33,7 @@ from src.soiling.dataset_builder import (
     assign_splits,
     assign_variant_kinds,
     derive_seed,
+    plan_variant_kinds,
     _resolve_severities,
 )
 from src.soiling.effects import MIN_PIXEL_CHANGE, MIN_VISIBLE_PIXELS
@@ -42,8 +50,16 @@ from src.soiling.visible_labels import (
 )
 
 # Tile cutoffs: a tile takes a class when that class's visible area covers at
-# least this fraction of it (same values as the Stage B dataset).
-DEFAULT_TILE_THRESHOLDS = {"dirt": 0.20, "water": 0.25, "scratch": 0.015}
+# least this fraction of it. The 3-class dataset used dirt 0.20 / water 0.25 /
+# scratch 0.015, calibrated on the old generators (scripts/diagnose_tile_
+# thresholds.py); the values below are those carried over to the renamed
+# classes plus the same area-effect cutoff for the three new types, and are
+# re-checked against the built dataset's own tile-positive rates
+# (scripts/diagnose_tile_thresholds.py --from-dataset).
+DEFAULT_TILE_THRESHOLDS = {
+    "water_drops": 0.25, "mud": 0.20, "steamy": 0.20,
+    "cleaning_streaks": 0.20, "scratches": 0.015, "dust": 0.20,
+}
 
 METADATA_FIELDNAMES = [
     "path", "source_id", "variant_id", "split",
@@ -85,11 +101,9 @@ def render_visible_variant(image, source_id, variant_idx, kind, base_seed):
 
 
 def _build_source(job):
-    path, split, out_dir, variants_per_image, seed, grid, thresholds = job
+    path, split, out_dir, kinds, seed, grid, thresholds = job
     source_id = Path(path).stem
     image = cv.imread(str(path))
-    kinds = assign_variant_kinds(variants_per_image, derive_seed(seed, source_id, "kind_order"),
-                                 kinds=ALL_VARIANT_KINDS_WITH_SEVERITY)
     results = []
     for variant_idx, kind in enumerate(kinds):
         out, labels, fields = render_visible_variant(image, source_id, variant_idx, kind, seed)
@@ -102,8 +116,12 @@ def _build_source(job):
     return results
 
 
-def build_visible_dataset(source_dir, out_dir, variants_per_image=14, seed=0, ratios=(0.8, 0.1, 0.1),
+def build_visible_dataset(source_dir, out_dir, variants_per_image=None, seed=0, ratios=(0.8, 0.1, 0.1),
                           img_size=512, thresholds=None, workers=1, max_sources=None, log_every=50):
+    """`variants_per_image=None` (the default since Session 31): the planned
+    amounts, `plan_variant_kinds` -- every photo gets a clean variant and one
+    per (type, severity), plus its share of the two-type variants. An integer
+    instead gives the older fixed count per photo, cycling through all kinds."""
     if img_size % 32:
         raise ValueError(f"img_size must be a multiple of 32, got {img_size}")
     grid = img_size // 32
@@ -114,9 +132,17 @@ def build_visible_dataset(source_dir, out_dir, variants_per_image=14, seed=0, ra
 
     source_paths = sorted(Path(source_dir).glob("*.jpg"))
     split_of = assign_splits([p.stem for p in source_paths], seed=seed, ratios=ratios)
+    if variants_per_image is None:
+        kinds_of = plan_variant_kinds(split_of, seed=seed, ratios=ratios)
+    else:
+        kinds_of = {
+            sid: assign_variant_kinds(variants_per_image, derive_seed(seed, sid, "kind_order"),
+                                      kinds=ALL_VARIANT_KINDS_WITH_SEVERITY)
+            for sid in split_of
+        }
     if max_sources is not None:
         source_paths = source_paths[:max_sources]
-    jobs = [(str(p), split_of[p.stem], str(out_dir), variants_per_image, seed, grid, thresholds)
+    jobs = [(str(p), split_of[p.stem], str(out_dir), kinds_of[p.stem], seed, grid, thresholds)
             for p in source_paths]
 
     rows, tiles = [], []
@@ -162,7 +188,10 @@ def build_visible_dataset(source_dir, out_dir, variants_per_image=14, seed=0, ra
         "min_visible_pixels": MIN_VISIBLE_PIXELS,
         "pixel_counts": pixel_counts,
         "tile_counts": tile_counts,
-        "seed": seed, "variants_per_image": variants_per_image,
+        "seed": seed,
+        "variants_per_image": variants_per_image,
+        "variant_plan": "planned amounts" if variants_per_image is None else "fixed per photo",
+        "kind_counts": dict(sorted(Counter(r["kind"] for r in rows).items())),
     }
     with open(out_dir / "visible_meta.json", "w") as f:
         json.dump(meta, f, indent=2)

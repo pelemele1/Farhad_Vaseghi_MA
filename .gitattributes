@@ -1,0 +1,4 @@
+# Slurm and shell scripts run on the Linux HPC and must keep LF line endings,
+# also when checked out on Windows (Slurm rejects CRLF batch scripts).
+scripts/hpc/*.slurm text eol=lf
+scripts/hpc/*.sh text eol=lf
